@@ -35,7 +35,9 @@ export interface PushConfig {
 /**
  * Push (Spec, módulo 12), no recorte do #31: o par VAPID, as inscrições por aparelho e os pushes
  * de Menção e de DM. Fica para depois, com o seam indicado:
- * - resposta de Agente, falha e Thread seguida (#32): chamam `notify` com outra `urgency`;
+ * - resposta de Agente, falha e Thread seguida (#32): chamam `notify` com outra `urgency`. Na
+ *   Thread seguida, quem avisar é `followersOf(db, message.threadRootId)` (`threads.ts`); quem
+ *   passa a seguir por esta mensagem já está gravado quando `messageCreated` roda;
  * - a lista de aparelhos e as faixas de push parado (#33): leem `devices` (`push_stopped_at`,
  *   `last_push_at`);
  * - os pushes do Admin e da Conta (#28, #34, #35, #38): `notify`.

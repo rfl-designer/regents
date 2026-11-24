@@ -248,6 +248,11 @@ export interface MessageDto {
    */
   originMessageId: string | null;
   /**
+   * Numa Thread, a mensagem-raiz em que ela pendura (do fluxo principal da mesma conversa); nulo
+   * no fluxo principal. O cliente mostra a mensagem de Thread no painel da Thread, não no Canal.
+   */
+  threadRootId: string | null;
+  /**
    * Na ordem em que aparecem no texto, uma vez por participante (pessoa ou Agente).
    * Destaca a mensagem para quem foi mencionado.
    */
@@ -259,6 +264,23 @@ export interface MessageDto {
 /** Corpo de `POST /api/conversations/:id/messages` (e de `/api/channels/:id/messages`). */
 export interface SendMessageInput {
   body: string;
+  /**
+   * Responder numa Thread: a mensagem-raiz, do fluxo principal da mesma conversa. A primeira
+   * resposta abre a Thread. Ausente ou nulo: a mensagem vai para o fluxo principal.
+   */
+  threadRootId?: string | null;
+}
+
+/**
+ * Uma Thread seguida (Spec, módulo 3): o Membro acompanha a Thread e é avisado dela. Segue,
+ * sozinho, quem escreveu a raiz, quem respondeu na Thread e quem foi mencionado nela (ou na raiz).
+ * Agentes não seguem. `GET /api/threads/followed` (as de quem pede) e `thread.followed`.
+ */
+export interface FollowedThreadDto {
+  conversationId: string;
+  rootMessageId: string;
+  /** Desde quando segue (ISO 8601): só o que chega na Thread daí em diante conta como não-lida. */
+  since: string;
 }
 
 /** Corpo de `POST /api/channels/:id/agents`: põe um Agente no Canal (quem vê o Canal pode). */
@@ -596,7 +618,9 @@ export type ServerEvent =
    * As não-lidas do Membro mudaram (chegou mensagem numa conversa dele, ou ele leu algo em
    * qualquer aba ou aparelho). Vai só para as conexões do próprio Membro.
    */
-  | { type: "unread.updated"; unread: UnreadDto };
+  | { type: "unread.updated"; unread: UnreadDto }
+  /** O Membro passou a seguir uma Thread. Vai só para as conexões dele. */
+  | { type: "thread.followed"; thread: FollowedThreadDto };
 
 export type ServerEventType = ServerEvent["type"];
 export type ServerEventOf<T extends ServerEventType> = Extract<ServerEvent, { type: T }>;
