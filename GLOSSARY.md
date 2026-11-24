@@ -27,7 +27,7 @@ O papel de Membro que configura o Workspace: a Chave do Workspace, os Agentes, o
 _Avoid_: dono, administrador do sistema
 
 **Conta**:
-A ligação de um Membro à assinatura do Claude dele, feita pela própria pessoa. Paga a IA gasta por causa das mensagens desse Membro, e de mais ninguém. Dois Membros podem ter Contas na mesma assinatura; o limite da assinatura vale para os dois.
+A ligação de um Membro à assinatura do Claude dele, feita pela própria pessoa. Paga a IA gasta por causa das mensagens desse Membro, e de mais ninguém. Dois Membros podem ter Contas na mesma assinatura; o limite da assinatura vale para os dois. A ligação vale por algumas semanas; antes do fim, o Membro é avisado e a liga de novo.
 _Avoid_: login, plano, assinatura do Workspace
 
 **Chave do Workspace**:
