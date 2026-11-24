@@ -6,7 +6,7 @@ import { conversationRoutes } from "./conversations";
 import type { Db } from "./db/client";
 import { createEventHub } from "./events";
 import type { IdentityPort } from "./identity/port";
-import { type Member, memberFor, toMeDto } from "./members";
+import { listMembers, type Member, memberFor, toMeDto } from "./members";
 
 export interface AppDeps {
   db: Db;
@@ -41,6 +41,7 @@ export function createApp(deps: AppDeps) {
   });
 
   app.get("/api/me", (c) => c.json(toMeDto(c.get("member"))));
+  app.get("/api/members", async (c) => c.json(await listMembers(db)));
   app.get(EVENTS_PATH, eventsRoute);
   app.route("/api", conversationRoutes({ db, clock, events }));
 
