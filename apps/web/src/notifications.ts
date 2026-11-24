@@ -170,10 +170,11 @@ export function usePush(enabled: boolean) {
     }
   }, []);
 
+  // Só Membro abre o WebSocket de eventos (no Pedido de entrada, não): `enabled`.
   useServerEvents((event) => {
     if (event.type === "ready") void reload();
     if (event.type === "devices.updated") setDevices(event.devices);
-  });
+  }, enabled);
 
   useEffect(() => {
     if (!enabled) return;
