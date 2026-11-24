@@ -1,0 +1,50 @@
+# Release do Shearim (Spec, módulo 13: "Imagem" e "Distribuição"). Dispara com uma tag vX.Y.Z:
+# 1. publica a imagem do app no GHCR com a tag fixa X.Y.Z (nunca latest), para amd64 e arm64 (Mac
+#    com Apple silicon), com SHEARIM_VERSION=X.Y.Z (a versão da seção Instalação);
+# 2. empacota o compose da release (deploy/release.sh) e cria a release do GitHub com o
+#    shearim-compose.tar.gz e o install.sh, que o instalador e o deploy/update.sh baixam com o gh.
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Só a tag da versão: sem latest, uma Instalação nunca troca de versão sem o Admin pedir.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: SHEARIM_VERSION=${{ steps.version.outputs.version }}
+          tags: ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
+
+      - run: deploy/release.sh "${{ steps.version.outputs.version }}" dist
+
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/shearim-compose.tar.gz dist/install.sh \
+            --title "Shearim $GITHUB_REF_NAME" --generate-notes

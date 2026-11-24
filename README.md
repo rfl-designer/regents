@@ -16,6 +16,7 @@ bun run build          # build do PWA em apps/web/dist
 bun run e2e            # build + e2e no navegador (ver "e2e" abaixo)
 bun run start          # servidor servindo o build (precisa de SHEARIM_IDENTITY, ver abaixo)
 deploy/setup.sh        # Instalação: segredos, .env e conferência da tailnet (ver "Instalação")
+deploy/release.sh 1.2.3 dist   # empacota a release (o workflow de release roda; ver "Instalador e atualização")
 (cd apps/server && bunx drizzle-kit generate --name <nome>)   # nova migração a partir do schema.ts
 ```
 
@@ -92,7 +93,8 @@ packages/contracts/ DTOs do HTTP e eventos do WebSocket (ServerEvent), compartil
 e2e/                e2e.config.ts + serve.ts (app com os dublês) + tests/*.e2e.ts (@e2e-dev/web) + support/ (pessoas pela API)
 compose.yaml        a Instalação: sidecar do Tailscale, app, Postgres e backup
 Dockerfile          imagem do app (oven/bun:1.3.11, sem root)
-deploy/             setup.sh e tailscale/serve.json
+deploy/             install.sh (instalador de uma linha), update.sh, setup.sh, release.sh e tailscale/serve.json
+.github/workflows/  release.yml: imagem no GHCR com tag fixa e a release com o que o instalador baixa
 ```
 
 ## Testes
@@ -414,6 +416,25 @@ deploy/setup.sh --check  # só as conferências (MagicDNS, HTTPS, tag do nó)
 - **Saúde:** `/api/health` é o healthcheck do app; o `stop_grace_period` é de 30 s.
 - **Backup:** o serviço `backup` faz um `pg_dump` por noite em `./backups` (ver abaixo). O backup completo é `./backups` mais `./secrets`.
 - **Testes:** o adaptador `whois` tem um teste de contrato contra uma LocalAPI falsa num Unix socket (`fakeLocalApi()` em `apps/server/test/fake-localapi.ts`), com respostas gravadas em `apps/server/test/fixtures/localapi/`. O sidecar de verdade fica no smoke manual.
+
+### Instalador e atualização (#39)
+
+Quem instala precisa do [`gh`](https://cli.github.com) logado numa conta com acesso ao repositório (`gh auth login`). Em Mac ou Linux:
+
+```sh
+gh release download --repo rfl-designer/shearim --pattern install.sh --output - | sh
+sh ~/shearim/deploy/update.sh            # atualizar para a última release (ou: update.sh v1.3.0)
+```
+
+- **O instalador** (`deploy/install.sh`, publicado na release com a tag dela gravada em `RELEASE_TAG`): confere o `gh` (e pede `read:packages`, com `gh auth refresh -s read:packages`, quando o token não tem); garante o Docker; baixa o `shearim-compose.tar.gz` da release em `~/shearim` (`--dir` muda); faz `docker login ghcr.io` com o `gh auth token` pelo stdin; roda o `deploy/setup.sh` (auth key e e-mail, ou `TS_AUTHKEY`/`SHEARIM_CONTACT_EMAIL` sem terminal); `docker compose pull`, `docker compose up -d` e espera o app ficar `healthy`. Pode rodar de novo: o setup nunca troca segredo nem `.env`. Opções: `--dir`, `--version vX.Y.Z`, `--yes` (instala ou inicia o Docker sem perguntar).
+- **Docker no Linux:** sem Docker, pergunta e instala pelo script oficial (`get.docker.com`, com sudo); parado, pergunta e roda `systemctl enable --now docker`; sem Compose, instala o `docker-compose-plugin` (apt, dnf ou yum). Se o Docker só responde com sudo, põe o usuário no grupo `docker` (vale na próxima sessão) e, nesta, roda o docker com sudo.
+- **Docker no Mac:** usa o que responde (Docker Desktop, OrbStack ou Colima). Parado, pergunta e abre (`open -a OrbStack`/`open -a Docker`, `brew services start colima`). Sem nenhum, pergunta e instala o Colima com o Homebrew (`brew install colima docker docker-compose` e `brew services start colima`, que o sobe a cada login); sem Homebrew, para e aponta https://brew.sh.
+- **Mac acordado:** o LaunchAgent `~/Library/LaunchAgents/com.shearim.acordado.plist` roda `/usr/bin/caffeinate -i -t 600` enquanto o `docker info` responde (e espera 60 s quando não). O instalador não muda nenhuma configuração de energia: só lê (`pmset -g`, `defaults read`).
+- **Checklist "Mantê-lo rodando"** no fim, com `[x]` no que o terminal verificou: Docker no login/boot (Colima pelo `brew services`, Docker Desktop pelo `AutoStart` do `settings-store.json`, Linux pelo `systemctl is-enabled docker`; OrbStack não dá para ver), Mac acordado (o LaunchAgent carregado), religar depois de falta de luz (`autorestart` do `pmset`; no Linux é a BIOS), login automático no Mac, suspensão mascarada no Linux, containers que voltam sozinhos, MagicDNS e HTTPS (do setup), o app respondendo e a cópia de `./backups` + `./secrets` (nunca marcada). Com a tailnet sem MagicDNS ou HTTPS, o app não sobe, o checklist mostra o que falta e o instalador sai 1.
+- **Atualização** (`deploy/update.sh [vX.Y.Z]`, que é o `install.sh --update`): baixa o compose da release (troca `compose.yaml` e `deploy/`; `.env`, `./secrets` e `./backups` ficam), confere com `docker compose config -q` (se o compose novo não fecha com o `.env`, volta o de antes e não reinicia nada), faz o `docker login` e roda `docker compose pull && docker compose up -d`. Avisa quando o `.env` fixa `SHEARIM_VERSION` (aí sobe essa versão, não a da release). Mudanças à mão no `compose.yaml` se perdem: configuração só no `.env`.
+- **Imagem e release** (`.github/workflows/release.yml`, numa tag `vX.Y.Z`): a imagem vai para `ghcr.io/rfl-designer/shearim:X.Y.Z` (amd64 e arm64), nunca `latest`, com `SHEARIM_VERSION=X.Y.Z`; o Claude Code fica fixado nela (`CLAUDE_CODE_VERSION` no `Dockerfile`, `DISABLE_AUTOUPDATER=1`). O `deploy/release.sh X.Y.Z dist` gera o `shearim-compose.tar.gz` (o `compose.yaml` com `${SHEARIM_VERSION:-X.Y.Z}` e sem `build:`, e o `deploy/`) e o `install.sh` com a tag; recusa `latest`. Sidecar e Postgres ficam fixados por versão e digest no compose.
+- **Testes** (`apps/server/test/deploy/`, no `bun run test`): rodam os scripts de verdade com `/bin/sh`, numa caixa de areia (`sandbox.ts`) com PATH fechado: os dublês de comando (`docker`, `gh`, `brew`, `colima`, `open`, `launchctl`, `pmset`, `defaults`, `uname`, `sudo`, `curl`, `systemctl`, `apt-get`, `sleep`) e poucos utilitários inofensivos; qualquer outro comando dá "not found". `world.ts` monta a máquina de mentira (estado em arquivos, releases empacotadas pelo `release.sh` de verdade). As variáveis `SHEARIM_TTY` (de onde vêm as respostas), `SHEARIM_EXTRA_PATH`, `SHEARIM_APPLICATIONS` e `SHEARIM_WAIT_SECONDS` existem para isso. O `shellcheck` dos scripts roda no mesmo arquivo (pulado sem o `shellcheck` instalado).
+- **Smoke manual:** instalar num Mac (com Docker Desktop ou OrbStack, e num sem Docker, aceitando o Colima) e num Linux sem Docker; conferir o checklist, que o Mac não dorme (`pmset -g assertions` mostra o `caffeinate`) e que a URL abre; depois, publicar uma segunda tag e rodar `deploy/update.sh` (o `.env` e `./secrets` iguais, a seção Instalação com a versão nova).
 
 ### Backup, restauração e migrações (#38)
 
