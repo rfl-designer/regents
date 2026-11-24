@@ -32,6 +32,10 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
       if (request.payer.kind !== "key") throw new Error("keyBrain só atende pagamento pela Chave");
       const client = new Anthropic({ apiKey: request.payer.apiKey, baseURL, maxRetries: 0 });
       let terminal: ModelEvent | undefined;
+      /** O modelo que respondeu e o uso informado até aqui (o `message_start` e o `message_delta`). */
+      let model = request.model;
+      const usage = { inputTokens: 0, outputTokens: 0 };
+      const spent = (): ModelEvent => ({ type: "usage", model, usage: { ...usage }, costUsd: costUsd(model, usage) });
       try {
         const stream = client.beta.messages.stream(
           {
@@ -48,7 +52,16 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
           { signal },
         );
         for await (const event of stream) {
-          if (event.type === "content_block_start" && event.content_block.type === "thinking") {
+          if (event.type === "message_start") {
+            model = event.message.model || model;
+            usage.inputTokens = event.message.usage.input_tokens;
+            usage.outputTokens = event.message.usage.output_tokens;
+            yield spent();
+          } else if (event.type === "message_delta") {
+            usage.inputTokens = event.usage.input_tokens ?? usage.inputTokens;
+            usage.outputTokens = event.usage.output_tokens;
+            yield spent();
+          } else if (event.type === "content_block_start" && event.content_block.type === "thinking") {
             yield { type: "thinking" };
           } else if (event.type === "content_block_delta") {
             if (event.delta.type === "text_delta") yield { type: "text", text: event.delta.text };
@@ -62,8 +75,9 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
         if (final.stop_reason === "refusal") {
           terminal = { type: "failed", reason: "o modelo se recusou a responder", retryable: false };
         } else {
-          const usage = { inputTokens: final.usage.input_tokens, outputTokens: final.usage.output_tokens };
-          terminal = { type: "done", usage, costUsd: costUsd(request.model, usage) };
+          const total = { inputTokens: final.usage.input_tokens, outputTokens: final.usage.output_tokens };
+          model = final.model || model;
+          terminal = { type: "done", usage: total, costUsd: costUsd(model, total), model };
         }
       } catch (err) {
         if (signal.aborted || err instanceof Anthropic.APIUserAbortError) return;

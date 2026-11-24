@@ -370,3 +370,95 @@ describe("a fila decide de novo quando o orçamento muda", () => {
     LONGO,
   );
 });
+
+describe("o gasto na Chave conta o que a API informou", () => {
+  /**
+   * No Sonnet, a entrada de `DOIS_DOLARES` (500 mil tokens) custa US$ 1,00: é o que o
+   * `message_start` informa (com 1 token de saída, US$ 0,00001).
+   */
+  const SO_A_ENTRADA = 1.00001;
+  const gastou = (usd: number) => Math.abs(usd - SO_A_ENTRADA) < 1e-9;
+
+  /** O `message_start` da Messages API, como o cérebro da Chave o normaliza. */
+  const entradaInformada = {
+    type: "usage",
+    model: "claude-sonnet-5-5",
+    usage: { inputTokens: 500_000, outputTokens: 1 },
+    costUsd: SO_A_ENTRADA,
+  } as const;
+
+  test(
+    "a execução cancelada no meio conta a entrada que a API informou",
+    async () => {
+      const cerebro = scriptedBrain();
+      const t = await testApp({ keyBrain: cerebro.brain });
+      const { faro, geral } = await workspace(t);
+      const origem = await enviar(t, geral.id, "@Faro um");
+      await (await cerebro.nextRun(10_000)).emit(entradaInformada);
+
+      expect((await t.as(bruno).post(`/api/conversations/${geral.id}/messages/${origem.id}/cancel`)).status).toBe(200);
+
+      await eventually("o gasto aparecer", async () =>
+        gastou((await agente(t, faro.id)).keySpendUsd!) ? true : undefined,
+      );
+    },
+    LONGO,
+  );
+
+  test(
+    "a execução que a vigia parou conta a entrada que a API informou",
+    async () => {
+      const cerebro = scriptedBrain();
+      const t = await testApp({ keyBrain: cerebro.brain });
+      const { faro, geral } = await workspace(t);
+      const doBruno = await t.socket(bruno, "aba do Bruno");
+      await enviar(t, geral.id, "@Faro um");
+      await (await cerebro.nextRun(10_000)).emit(entradaInformada);
+
+      t.clock.advance(120_000);
+      for (;;) {
+        const { execution } = await doBruno.next("execution.updated", ESPERA);
+        if (execution.state === "retrying") break;
+      }
+
+      await eventually("o gasto aparecer", async () =>
+        gastou((await agente(t, faro.id)).keySpendUsd!) ? true : undefined,
+      );
+    },
+    LONGO,
+  );
+
+  test(
+    "a execução que falha no meio do stream conta o uso que a API informou",
+    async () => {
+      const t = await testApp();
+      const { faro, geral } = await workspace(t);
+      const doBruno = await t.socket(bruno, "aba do Bruno");
+      t.anthropic.reply({
+        text: "Um dois três quatro",
+        streamError: { type: "invalid_request_error", message: "pedido ruim" },
+        usage: DOIS_DOLARES,
+      });
+
+      expect((await fim(doBruno, await enviar(t, geral.id, "@Faro um"))).state).toBe("failed");
+
+      expect((await agente(t, faro.id)).keySpendUsd).toBeCloseTo(SO_A_ENTRADA, 9);
+    },
+    LONGO,
+  );
+
+  test(
+    "o custo é o do modelo que respondeu (o fallback do servidor pode trocar de modelo)",
+    async () => {
+      const t = await testApp();
+      const { faro, geral } = await workspace(t);
+      // No Haiku (US$ 0,10 / US$ 0,50 por milhão): US$ 0,05 + US$ 0,05.
+      t.anthropic.reply({ text: "Pelo reserva.", usage: DOIS_DOLARES, model: "claude-haiku-5-5" });
+
+      await respostaA(t, geral.id, await enviar(t, geral.id, "@Faro um"));
+
+      expect((await agente(t, faro.id)).keySpendUsd).toBeCloseTo(0.1, 6);
+    },
+    LONGO,
+  );
+});

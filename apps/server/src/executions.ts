@@ -11,7 +11,7 @@ import { type EventHub, without } from "./events";
 import { type KeyLedger, monthOf } from "./key-budget";
 import { recordMentions } from "./mentions";
 import { findMessage } from "./messages";
-import type { ModelEvent, ModelPort, ModelRequest, Payer, TerminalModelEvent } from "./model/port";
+import type { ModelEvent, ModelPort, ModelRequest, ModelUsage, Payer, TerminalModelEvent } from "./model/port";
 import { outcomeOf, recordOutcome } from "./outcomes";
 import { audienceOf, type Conversation } from "./participation";
 import type { Reading } from "./reading";
@@ -428,6 +428,7 @@ export function createExecutions(deps: {
       return undefined;
     }
     let result: Awaited<ReturnType<typeof complete>>;
+    const spent: Spent = { startedAt: clock.now() };
     try {
       await db
         .update(executions)
@@ -435,16 +436,20 @@ export function createExecutions(deps: {
         .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
       await publish(job.id);
       const request = await build(payer);
-      const startedAt = clock.now();
-      result = await complete(job, controller, request);
-      if (result && payer.kind === "key") {
-        const end = result.end;
-        if (end?.type === "done") await ledger.charged(job, { model: request.model, ...end, startedAt });
+      spent.startedAt = clock.now();
+      result = await complete(job, controller, request, spent);
+      if (payer.kind === "key") {
+        const end = result?.end;
         if (end?.type === "auth_failed" || end?.type === "billing_failed") await ledger.refused(end.type);
         return result;
       }
     } finally {
       release?.();
+      // Pela Chave, conta o uso que a API informou, chegando ou não ao fim (cancelada, parada pela
+      // vigia, falha no meio), no modelo que respondeu.
+      if (payer.kind === "key" && spent.usage) {
+        await ledger.charged(job, { ...spent.usage, startedAt: spent.startedAt, succeeded: spent.succeeded === true });
+      }
     }
     if (!result || payer.kind !== "account") return result;
     if (result.end?.type === "limit" || result.end?.type === "auth_failed") {
@@ -643,7 +648,7 @@ export function createExecutions(deps: {
    * Roda um pedido sob a vigia, com o "tentando de novo (n/m)" à vista. Devolve o texto inteiro e
    * o evento que encerrou, ou nada quando a execução foi interrompida (a vigia já registrou a falha).
    */
-  async function complete(job: Row, controller: AbortController, request: ModelRequest) {
+  async function complete(job: Row, controller: AbortController, request: ModelRequest, spent: Spent) {
     const { signal } = controller;
     const step = (job.step as ExecutionStep | null) ?? "writing";
     const watchdog = stallWatch(clock, STALL_MS, () => controller.abort("stalled" satisfies Interruption));
@@ -665,7 +670,13 @@ export function createExecutions(deps: {
         if (event.type === "api_retry") await showApiRetry(event);
         else if ((event.type === "text" || event.type === "thinking") && apiRetrying) await showApiRetry(null);
         if (event.type === "text") text += event.text;
-        else if (event.type !== "thinking" && event.type !== "api_retry") end = event;
+        else if (event.type === "usage")
+          spent.usage = { model: event.model, usage: event.usage, costUsd: event.costUsd };
+        else if (event.type === "done") {
+          end = event;
+          spent.usage = { model: event.model ?? spent.usage?.model ?? request.model, ...event };
+          spent.succeeded = true;
+        } else if (event.type !== "thinking" && event.type !== "api_retry") end = event;
       }
     } finally {
       watchdog.cancel();
@@ -1040,6 +1051,15 @@ export function createExecutions(deps: {
 
 /** Quem paga uma execução, pela tabela da Spec: um pagador, "Agentes não agem" ou a fila. */
 type Choice = Payer | { kind: "none"; reason: string } | { kind: "hold"; until: Date | null };
+/**
+ * O que a API informou que a chamada gastou até agora (o gasto na Chave conta mesmo sem o fim) e
+ * se ela chegou ao `done`.
+ */
+type Spent = {
+  startedAt: Date;
+  usage?: { model: string; usage: ModelUsage; costUsd: number };
+  succeeded?: boolean;
+};
 /** Os tetos que uma execução ocupa enquanto roda. */
 type Slots = { key?: true; process?: true; account?: string };
 

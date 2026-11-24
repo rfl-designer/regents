@@ -33,6 +33,8 @@ export interface FakeReply {
   streamError?: { type: string; message: string };
   stopReason?: string;
   usage?: { input_tokens: number; output_tokens: number };
+  /** O modelo que respondeu (o `model` do `message_start`), quando não é o pedido: o fallback do servidor. */
+  model?: string;
 }
 
 /** Uma chamada que chegou ao falso. */
@@ -241,7 +243,7 @@ export async function startFakeMessagesApi(
       if (!body.stream) {
         return errorResponse(400, "invalid_request_error", "O falso só fala em streaming (stream: true).");
       }
-      return new Response(stream(reply, body.model, req.signal), {
+      return new Response(stream(reply, reply.model ?? body.model, req.signal), {
         headers: { "content-type": "text/event-stream", "cache-control": "no-cache", "request-id": "req_falso" },
       });
     },

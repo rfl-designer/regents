@@ -128,13 +128,14 @@ export function createKeyLedger(deps: { db: Db; clock: Clock; events: EventHub; 
     },
 
     /**
-     * Uma chamada que a Chave pagou terminou bem: grava o uso (Agente, pagador, custo). `startedAt`
-     * é quando ela começou: com várias rodando ao mesmo tempo (#42), só a que começou depois da
-     * recusa prova que a Chave voltou.
+     * Uma chamada que a Chave pagou acabou: grava o uso que a API informou (Agente, pagador,
+     * modelo que respondeu, custo), tenha ela terminado bem (`succeeded`) ou não (cancelada,
+     * parada pela vigia, falha no meio). `startedAt` é quando ela começou: com várias rodando ao
+     * mesmo tempo (#42), só a que terminou bem e começou depois da recusa prova que a Chave voltou.
      */
     async charged(
       execution: { id: string; agentId: string },
-      call: { model: string; usage: ModelUsage; costUsd: number; startedAt: Date },
+      call: { model: string; usage: ModelUsage; costUsd: number; startedAt: Date; succeeded: boolean },
     ) {
       const now = clock.now();
       await db.insert(executionUsage).values({
@@ -151,6 +152,7 @@ export function createKeyLedger(deps: { db: Db; clock: Clock; events: EventHub; 
       });
       const budget = await announce(execution.agentId);
       if (budget.overBudget) await overrun(budget);
+      if (!call.succeeded) return;
       // A primeira chamada bem-sucedida pela Chave, começada depois da recusa, encerra o incidente.
       const closed = await db
         .update(keyIncidents)
