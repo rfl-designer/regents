@@ -21,7 +21,7 @@ deploy/setup.sh        # Instalação: segredos, .env e conferência da tailnet 
 
 ### Desenvolvimento
 
-- `bun run dev` usa um PGlite em disco em `.data/pglite` (apague a pasta para começar de uma Instalação vazia) e a **identidade de desenvolvimento**: sem cookie, você é a "Pessoa Dev"; abra `http://localhost:5173/dev/como/<id>?nome=Fulana` para ser outra pessoa naquela aba. Essa rota só existe com `SHEARIM_IDENTITY=dev`.
+- `bun run dev` usa um PGlite em disco em `.data/pglite` (apague a pasta para começar de uma Instalação vazia) e a **identidade de desenvolvimento**: sem cookie, você é a "Pessoa Dev"; abra `http://localhost:5173/dev/como/<id>?nome=Fulana` para ser outra pessoa naquela aba (ela cai no Pedido de entrada, e a Pessoa Dev aprova no painel "Pedidos de entrada"). `/dev/sem-identidade/<tagged|funnel|unknown>` faz o navegador chegar sem identidade, para ver a página estática com o motivo. Essas rotas só existem com `SHEARIM_IDENTITY=dev`.
 - Com `DATABASE_URL` definida, o servidor fala com o Postgres em vez do PGlite.
 - O servidor sempre aplica as migrações ao subir (`serve`); `bun apps/server/src/main.ts migrate` aplica e sai.
 
@@ -48,12 +48,14 @@ apps/server/        Bun + Hono + Drizzle
   src/main.ts       entrypoint: serve | migrate
   src/db/           schema.ts (Drizzle), client.ts, connect.ts (Postgres ou PGlite)
   src/identity/     porta de identidade: whois.ts (tailnet) e dev.ts
+  src/join-requests.ts  Pedido de entrada (pedir, aprovar, recusar)
+  src/no-identity-page.ts  página estática de quem chega sem identidade
   migrations/       SQL gerado pelo drizzle-kit (commitado)
-  test/harness.ts   arnês: testApp(), testDb(), fakeClock(), fakeIdentity
+  test/harness.ts   arnês: testApp(), testDb(), fakeClock(), fakeIdentity, t.addMember()
   test/fake-localapi.ts  LocalAPI falsa do tailscaled num Unix socket (contrato do whois)
 apps/web/           PWA em React + Vite, pt-BR
 packages/contracts/ DTOs do HTTP e eventos do WebSocket (ServerEvent), compartilhados
-e2e/                e2e.config.ts + tests/*.e2e.ts (@e2e-dev/web)
+e2e/                e2e.config.ts + tests/*.e2e.ts (@e2e-dev/web) + support/ (pessoas pela API)
 compose.yaml        a Instalação: sidecar do Tailscale, app, Postgres (backup no #38)
 Dockerfile          imagem do app (oven/bun:1.3.11, sem root)
 deploy/             setup.sh e tailscale/serve.json
@@ -72,6 +74,28 @@ await t.anonymous("funnel").get("/api/me");                  // sem identidade
 ```
 
 O que cada teste abre é fechado sozinho no fim dele (`onCleanup` no arnês, executado pelo `afterEach` de `test/preload.ts`).
+
+`Person` aceita também `sharee: true` (outra tailnet), `device` e `profilePicUrl`, como o `whois` diria.
+
+### Pessoa aprovada como Membro
+
+Quem não é o primeiro só vira Membro pelo Pedido de entrada. Para pôr alguém no Workspace num teste, use o fluxo de verdade, sem gravar no banco:
+
+```ts
+const t = await testApp();
+await t.addMember(bruno, { by: juliana });   // Juliana abre a Instalação (vira Admin), Bruno pede, ela aprova
+await t.addMember(carla);                    // sem `by`: aprova o DEFAULT_ADMIN (abre a Instalação se vazia)
+```
+
+Se o teste já abriu o Workspace com outra pessoa, passe-a em `by`. Devolve o `MeDto` de quem entrou; falha com o status e o corpo se algum passo for recusado.
+
+### Pedido de entrada (#16)
+
+- `GET /api/join-request` e `POST /api/join-request`: o pedido de quem chama. São as únicas rotas que quem tem identidade mas não é Membro alcança; o resto de `/api` dá `403 not_a_member`.
+- `GET /api/join-requests`, `POST /api/join-requests/:id/approve` e `/refuse`: só Admin (`403 not_admin`). Decidir de novo dá `409 already_decided`.
+- Eventos só para Admins: `join_request.created` e `join_request.decided`.
+- `createApp({ hooks: { joinRequestCreated } })` roda a cada pedido novo, depois de gravar: é onde o push aos Admins (#34) se pendura. Nos testes, `testApp({ hooks })`.
+- Sem identidade, toda rota fora de `/api` e `/dev` responde a página estática em pt-BR com o motivo (403); os textos ficam em `NO_IDENTITY_TEXT` (`packages/contracts`), e o PWA usa os mesmos.
 
 ### WebSocket de eventos
 
@@ -119,7 +143,7 @@ bun run e2e                                   # build do PWA + todos os e2e
 (cd e2e && npx e2e run --headed)              # vendo o navegador
 ```
 
-O runner sobe o servidor de verdade (`bun apps/server/src/main.ts serve`) numa porta livre, servindo `apps/web/dist`, com `SHEARIM_IDENTITY=dev` e `SHEARIM_PGLITE_DIR=memory://`: cada execução começa de uma Instalação vazia, e a primeira aba a abrir (a "Pessoa Dev") vira Admin. Os testes da mesma execução dividem esse banco, então use textos únicos (`Date.now()`). Duas abas da mesma pessoa são `browser.newTab()` + `browser.goto("/")` e `tab.activate()`. O cookie `dev_user` vale para o contexto inteiro (todas as abas), então uma segunda pessoa no mesmo teste age pela API, num `fetch` para `${app.baseUrl}/api/...` com `cookie: dev_user=${encodeURIComponent(JSON.stringify({ id, name }))}` (a partir do #16, quando ela puder virar Membro); `/dev/como/<id>?nome=Fulana` troca a pessoa do navegador todo. Resultados e traces ficam em `e2e/.e2e/` (ignorado pelo git). Antes de escrever um teste, leia `npx e2e guide writing-tests`.
+O runner sobe o servidor de verdade (`bun apps/server/src/main.ts serve`) numa porta livre, servindo `apps/web/dist`, com `SHEARIM_IDENTITY=dev` e `SHEARIM_PGLITE_DIR=memory://`: cada execução começa de uma Instalação vazia, e a primeira aba a abrir (a "Pessoa Dev") vira Admin. Os testes da mesma execução dividem esse banco, então use textos únicos (`Date.now()`). Duas abas da mesma pessoa são `browser.newTab()` + `browser.goto("/")` e `tab.activate()`. O cookie `dev_user` vale para o contexto inteiro (todas as abas), então uma segunda pessoa no mesmo teste age pela API, com os helpers de `e2e/support/people.ts`: `newPerson("Bruno")` (id único na execução), `addMember(app.baseUrl, bruno)` (ela pede e a Pessoa Dev aprova), `requestToJoin`/`approve` separados, e `as(app.baseUrl, bruno)("/api/...", init)` para chamar a API como ela (sem pessoa, é a Pessoa Dev). `/dev/como/<id>?nome=Fulana` troca a pessoa do navegador todo; ela chega como não-Membro, no Pedido de entrada. Resultados e traces ficam em `e2e/.e2e/` (ignorado pelo git). Antes de escrever um teste, leia `npx e2e guide writing-tests`.
 
 ## Instalação
 

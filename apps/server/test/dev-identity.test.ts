@@ -32,6 +32,36 @@ describe("identidade de desenvolvimento (bun run dev)", () => {
     expect(await me.json()).toEqual({ error: "not_a_member" });
   });
 
+  test("/dev/sem-identidade/:motivo faz a aba chegar sem identidade, como um nó com tag ou o Funnel", async () => {
+    const app = await devApp();
+
+    const res = await app.request("/dev/sem-identidade/funnel");
+    const cookie = res.headers.get("set-cookie")!.split(";")[0]!;
+
+    expect(res.status).toBe(302);
+    const page = await app.request("/", { headers: { cookie } });
+    expect(page.status).toBe(403);
+    expect(await page.text()).toContain("internet aberta (Funnel)");
+    expect(await (await app.request("/api/me", { headers: { cookie } })).json()).toEqual({
+      error: "no_identity",
+      reason: "funnel",
+    });
+  });
+
+  test("a pessoa de dev entra pelo Pedido de entrada como qualquer outra", async () => {
+    const app = await devApp();
+    await app.request("/api/me"); // a pessoa padrão vira Admin
+    const bruno = { cookie: `dev_user=${encodeURIComponent(JSON.stringify({ id: "2002", name: "Bruno" }))}` };
+
+    const pedido = await (await app.request("/api/join-request", { method: "POST", headers: bruno })).json();
+    await app.request(`/api/join-requests/${pedido.id}/approve`, { method: "POST" });
+
+    expect(await (await app.request("/api/me", { headers: bruno })).json()).toMatchObject({
+      displayName: "Bruno",
+      role: "member",
+    });
+  });
+
   test("com outra porta de identidade, a rota /dev não existe", async () => {
     const { db } = await testDb();
     const { app } = createApp({ db, clock: fakeClock(), identity: fakeIdentity });

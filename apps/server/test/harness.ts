@@ -6,10 +6,17 @@
  * o que se verifica é o que um cliente veria.
  */
 import { PGlite } from "@electric-sql/pglite";
-import { EVENTS_PATH, type ServerEvent, type ServerEventOf, type ServerEventType } from "@shearim/contracts";
+import {
+  EVENTS_PATH,
+  type JoinRequestDto,
+  type MeDto,
+  type ServerEvent,
+  type ServerEventOf,
+  type ServerEventType,
+} from "@shearim/contracts";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
-import { createApp } from "../src/app";
+import { type AppDeps, createApp } from "../src/app";
 import type { Clock } from "../src/clock";
 import { type Db, migrationsFolder, schema } from "../src/db/client";
 import type { Identity, IdentityPort, NoIdentityReason } from "../src/identity/port";
@@ -76,6 +83,9 @@ export interface Person {
   login?: string;
   name?: string;
   sharee?: boolean;
+  /** Nome do aparelho que a tailnet informa. */
+  device?: string;
+  profilePicUrl?: string;
 }
 
 const H = {
@@ -83,6 +93,8 @@ const H = {
   login: "x-test-login",
   name: "x-test-name",
   sharee: "x-test-sharee",
+  device: "x-test-device",
+  pic: "x-test-profile-pic",
   none: "x-test-no-identity",
 } as const;
 
@@ -95,6 +107,8 @@ export function identityHeaders(who: Person | { none: NoIdentityReason }): Recor
     [H.name]: encodeURIComponent(who.name ?? `Pessoa ${who.id}`),
   };
   if (who.sharee) h[H.sharee] = "1";
+  if (who.device) h[H.device] = encodeURIComponent(who.device);
+  if (who.profilePicUrl) h[H.pic] = who.profilePicUrl;
   return h;
 }
 
@@ -113,9 +127,15 @@ export const fakeIdentity: IdentityPort = {
       login: req.headers.get(H.login) ?? `${userId}@exemplo.com`,
       displayName: decodeURIComponent(req.headers.get(H.name) ?? userId),
       sharee: req.headers.has(H.sharee),
+      device: optional(req.headers.get(H.device), decodeURIComponent),
+      profilePicUrl: optional(req.headers.get(H.pic), (v) => v),
     };
   },
 };
+
+function optional<T>(v: string | null, f: (v: string) => T): T | undefined {
+  return v === null ? undefined : f(v);
+}
 
 // ---------- WebSocket de eventos, como um cliente ----------
 
@@ -232,16 +252,30 @@ export interface Client {
 
 export type TestApp = Awaited<ReturnType<typeof testApp>>;
 
+/** Admin padrão do `addMember` quando o teste não diz quem aprova. */
+export const DEFAULT_ADMIN: Person = { id: "1000", login: "admin@exemplo.com", name: "Admin" };
+
+/** Falha de arranjo com o que o servidor respondeu, para não parecer falha do teste. */
+async function expectStatus(res: Response, ok: number[], what: string) {
+  if (ok.includes(res.status)) return res;
+  throw new Error(`addMember: ${what} respondeu ${res.status}: ${await res.text()}`);
+}
+
 /**
  * Um app novo com banco vazio e migrado, identidade falsa e relógio parado.
  * `identity` troca a porta (o teste do adaptador `whois` usa a de verdade); aí `as`,
- * `anonymous` e `socket` não servem, e a requisição leva os headers que o Serve poria
- * (`request`/`socketWith`/`upgradeWith`).
+ * `anonymous`, `socket` e `addMember` não servem, e a requisição leva os headers que o
+ * Serve poria (`request`/`socketWith`/`upgradeWith`).
  */
-export async function testApp(opts: { clock?: FakeClock; identity?: IdentityPort } = {}) {
+export async function testApp(opts: { clock?: FakeClock; identity?: IdentityPort; hooks?: AppDeps["hooks"] } = {}) {
   const { db } = await testDb();
   const clock = opts.clock ?? fakeClock();
-  const { app, websocket, events } = createApp({ db, identity: opts.identity ?? fakeIdentity, clock });
+  const { app, websocket, events } = createApp({
+    db,
+    identity: opts.identity ?? fakeIdentity,
+    clock,
+    hooks: opts.hooks,
+  });
 
   // O WebSocket precisa de um servidor de verdade; ele só sobe quando um teste abre conexão.
   let server: ReturnType<typeof Bun.serve> | undefined;
@@ -306,5 +340,20 @@ export async function testApp(opts: { clock?: FakeClock; identity?: IdentityPort
       fetch(`http://${origin()}${EVENTS_PATH}`, { headers: { ...UPGRADE_HEADERS, ...headers } }),
     /** O ponto único de publicação de eventos do app, para testar o envio direto. */
     events,
+    /**
+     * Põe `who` no Workspace como Membro pelo fluxo de verdade: `who` cria o Pedido de
+     * entrada e `by` (um Admin) aprova. Se a Instalação está vazia, `by` abre o Workspace
+     * e vira o primeiro Admin. Sem `by`, aprova o `DEFAULT_ADMIN`; se o teste já abriu
+     * o Workspace com outra pessoa, passe essa pessoa em `by`. Devolve o `/api/me` de `who`.
+     */
+    async addMember(who: Person, opts: { by?: Person } = {}): Promise<MeDto> {
+      const admin = opts.by ?? DEFAULT_ADMIN;
+      const adminMe: MeDto = await (await expectStatus(await this.as(admin).get("/api/me"), [200], "o Admin")).json();
+      if (adminMe.role !== "admin") throw new Error(`addMember: ${admin.id} é Membro, mas não Admin`);
+      const created = await expectStatus(await this.as(who).post("/api/join-request"), [200, 201], "o pedido");
+      const request: JoinRequestDto = await created.json();
+      await expectStatus(await this.as(admin).post(`/api/join-requests/${request.id}/approve`), [200], "a aprovação");
+      return (await this.as(who).get("/api/me")).json();
+    },
   };
 }
