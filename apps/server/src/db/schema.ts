@@ -41,3 +41,30 @@ export const messages = pgTable(
   },
   (t) => [index().on(t.channelId, t.seq)],
 );
+
+// ---------- Contas (ADR 0005) ----------
+// O login fica com o Claude Code na pasta `config_dir`; aqui só fica o que
+// `claude auth status --json` diz dele. Nenhum token, em lugar nenhum.
+
+/** "No limite" e "Precisa ligar de novo" entram com "Quem paga e fila" (#35). */
+export const accountState = pgEnum("account_state", ["not_linked", "linked"]);
+
+export const accounts = pgTable("accounts", {
+  memberId: uuid()
+    .primaryKey()
+    .references(() => members.id),
+  state: accountState().notNull(),
+  email: text(),
+  /** `orgId` da Anthropic (não é tenant: ADR 0001). */
+  claudeOrgId: text(),
+  subscriptionType: text(),
+  planTier: text(),
+  /** `loginExpiresAt` do `auth status --json`. A validade mostrada sai daqui (#35). */
+  loginExpiresAt: timestamp({ withTimezone: true }),
+  /** A pasta de `CLAUDE_CONFIG_DIR` em uso. */
+  configDir: text(),
+  linkedAt: timestamp({ withTimezone: true }),
+  /** "Agora não" na oferta do primeiro acesso. */
+  offerDismissedAt: timestamp({ withTimezone: true }),
+  updatedAt: timestamp({ withTimezone: true }).notNull(),
+});

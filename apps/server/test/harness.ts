@@ -5,6 +5,9 @@
  * o PGlite com as migrações reais e o relógio injetável. Nada de olhar tabela:
  * o que se verifica é o que um cliente veria.
  */
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { EVENTS_PATH, type ServerEvent, type ServerEventOf, type ServerEventType } from "@shearim/contracts";
 import { drizzle } from "drizzle-orm/pglite";
@@ -13,6 +16,7 @@ import { createApp } from "../src/app";
 import type { Clock } from "../src/clock";
 import { type Db, migrationsFolder, schema } from "../src/db/client";
 import type { Identity, IdentityPort, NoIdentityReason } from "../src/identity/port";
+import { type FakeClaude, fakeClaude } from "./fake-claude";
 
 // ---------- limpeza automática (o preload roda `runCleanups` no afterEach) ----------
 
@@ -51,19 +55,39 @@ export async function testDb() {
 // ---------- relógio ----------
 
 export interface FakeClock extends Clock {
+  /** Anda o relógio e dispara, em ordem, os `after` que venceram no caminho. */
   advance(ms: number): void;
   set(at: Date | string): void;
 }
 
 export function fakeClock(start: Date | string = "2026-11-24T12:00:00.000Z"): FakeClock {
   let t = new Date(start).getTime();
+  let pending: { at: number; seq: number; fn: () => void }[] = [];
+  let seq = 0;
+  const fire = () => {
+    for (;;) {
+      const due = pending.filter((p) => p.at <= t).sort((a, b) => a.at - b.at || a.seq - b.seq)[0];
+      if (!due) return;
+      pending = pending.filter((p) => p !== due);
+      due.fn();
+    }
+  };
   return {
     now: () => new Date(t),
+    after(ms, fn) {
+      const timer = { at: t + ms, seq: seq++, fn };
+      pending.push(timer);
+      return () => {
+        pending = pending.filter((p) => p !== timer);
+      };
+    },
     advance: (ms) => {
       t += ms;
+      fire();
     },
     set: (at) => {
       t = new Date(at).getTime();
+      fire();
     },
   };
 }
@@ -226,17 +250,38 @@ const UPGRADE_HEADERS = {
 
 export interface Client {
   get(path: string, init?: RequestInit): Promise<Response>;
+  delete(path: string, init?: RequestInit): Promise<Response>;
   post(path: string, body?: unknown, init?: RequestInit): Promise<Response>;
   request(path: string, init?: RequestInit): Promise<Response>;
 }
 
 export type TestApp = Awaited<ReturnType<typeof testApp>>;
 
-/** Um app novo com banco vazio e migrado, identidade falsa e relógio parado. */
+/**
+ * O `fake-claude` e uma pasta-raiz de Contas descartáveis, para quem monta o
+ * `createApp` à mão. Somem no fim do teste.
+ */
+export function throwawayAccounts() {
+  const claude = fakeClaude();
+  const root = mkdtempSync(join(tmpdir(), "shearim-contas-"));
+  onCleanup(() => {
+    claude.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+  return { claude, config: { claudeBin: claude.bin, root } };
+}
+
+/**
+ * Um app novo com banco vazio e migrado, identidade falsa, relógio parado,
+ * o `fake-claude` no lugar do binário `claude` e uma pasta-raiz de Contas descartável.
+ */
 export async function testApp(opts: { clock?: FakeClock } = {}) {
   const { db } = await testDb();
   const clock = opts.clock ?? fakeClock();
-  const { app, websocket, events } = createApp({ db, identity: fakeIdentity, clock });
+  const { claude, config } = throwawayAccounts();
+  const accountsRoot = config.root;
+  const { app, websocket, events, close } = createApp({ db, identity: fakeIdentity, clock, accounts: config });
+  onCleanup(close);
 
   // O WebSocket precisa de um servidor de verdade; ele só sobe quando um teste abre conexão.
   let server: ReturnType<typeof Bun.serve> | undefined;
@@ -258,6 +303,7 @@ export async function testApp(opts: { clock?: FakeClock } = {}) {
     return {
       request,
       get: (path, init) => request(path, { ...init, method: "GET" }),
+      delete: (path, init) => request(path, { ...init, method: "DELETE" }),
       post: (path, body, init) =>
         request(path, {
           ...init,
@@ -290,5 +336,9 @@ export async function testApp(opts: { clock?: FakeClock } = {}) {
       fetch(`http://${origin()}${EVENTS_PATH}`, { headers: { ...UPGRADE_HEADERS, ...identityHeaders(who) } }),
     /** O ponto único de publicação de eventos do app, para testar o envio direto. */
     events,
+    /** O dublê do binário `claude`: `t.claude.script({...})` e `t.claude.callsOf("auth login")`. */
+    claude: claude as FakeClaude,
+    /** Pasta-raiz das Contas (as pastas de `CLAUDE_CONFIG_DIR` ficam debaixo dela). */
+    accountsRoot,
   };
 }

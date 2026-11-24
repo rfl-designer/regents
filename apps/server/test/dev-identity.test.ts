@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { createApp } from "../src/app";
 import { createDevIdentity } from "../src/identity/dev";
-import { fakeClock, fakeIdentity, testDb } from "./harness";
+import { fakeClock, fakeIdentity, testDb, throwawayAccounts } from "./harness";
 
 async function devApp() {
   const { db } = await testDb();
   const dev = createDevIdentity({ defaultUser: { id: "dev-1", name: "Pessoa Dev" } });
-  return createApp({ db, clock: fakeClock(), identity: dev.identity, devRoutes: dev.routes }).app;
+  const accounts = throwawayAccounts().config;
+  return createApp({ db, clock: fakeClock(), identity: dev.identity, accounts, devRoutes: dev.routes }).app;
 }
 
 describe("identidade de desenvolvimento (bun run dev)", () => {
@@ -34,7 +35,7 @@ describe("identidade de desenvolvimento (bun run dev)", () => {
 
   test("com outra porta de identidade, a rota /dev não existe", async () => {
     const { db } = await testDb();
-    const { app } = createApp({ db, clock: fakeClock(), identity: fakeIdentity });
+    const { app } = createApp({ db, clock: fakeClock(), identity: fakeIdentity, accounts: throwawayAccounts().config });
 
     expect((await app.request("/dev/como/1001")).status).toBe(404);
   });

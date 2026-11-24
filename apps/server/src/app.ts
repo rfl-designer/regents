@@ -1,6 +1,7 @@
 import { EVENTS_PATH } from "@shearim/contracts";
 import { Hono } from "hono";
 import { websocket } from "hono/bun";
+import { type AccountsConfig, createAccounts } from "./accounts";
 import type { Clock } from "./clock";
 import { conversationRoutes } from "./conversations";
 import type { Db } from "./db/client";
@@ -12,6 +13,8 @@ export interface AppDeps {
   db: Db;
   identity: IdentityPort;
   clock: Clock;
+  /** Binário `claude` e pasta-raiz das Contas (nos testes, o `fake-claude` e uma pasta temporária). */
+  accounts: AccountsConfig;
   /** Rotas só de desenvolvimento (`/dev/*`), vindas do adaptador de identidade de dev. */
   devRoutes?: Hono;
 }
@@ -26,6 +29,7 @@ export function createApp(deps: AppDeps) {
   const { db, identity, clock } = deps;
   const app = new Hono<Env>();
   const { hub: events, route: eventsRoute } = createEventHub();
+  const accounts = createAccounts({ db, clock, events, config: deps.accounts });
 
   app.get("/api/health", (c) => c.json({ ok: true }));
   if (deps.devRoutes) app.route("/dev", deps.devRoutes);
@@ -43,9 +47,13 @@ export function createApp(deps: AppDeps) {
   app.get("/api/me", (c) => c.json(toMeDto(c.get("member"))));
   app.get(EVENTS_PATH, eventsRoute);
   app.route("/api", conversationRoutes({ db, clock, events }));
+  app.route("/api", accounts.routes);
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
 
-  /** `websocket` vai no `Bun.serve` junto com `app.fetch`; `events` é onde se publica. */
-  return { app, websocket, events };
+  /**
+   * `websocket` vai no `Bun.serve` junto com `app.fetch`; `events` é onde se publica.
+   * `close` encerra o que o app deixou rodando (os processos do `claude`).
+   */
+  return { app, websocket, events, close: () => accounts.close() };
 }

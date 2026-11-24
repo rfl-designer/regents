@@ -1,0 +1,350 @@
+/**
+ * Contas (Spec, módulo 8; ADR 0005). Uma pasta por Membro debaixo de `root`, onde o
+ * próprio Claude Code grava e renova o login. O Shearim nunca lê, copia nem guarda o token:
+ * entrega o código colado ao `claude auth login` que espera por ele e guarda só o que
+ * `claude auth status --json` diz (e-mail, plano, `loginExpiresAt`).
+ *
+ * Tudo aqui é do próprio Membro: as rotas não recebem id de ninguém, e os eventos vão
+ * só para `{ members: [ele] }`. Nem o Admin vê.
+ *
+ * Fora daqui por enquanto: religar e validade (#35), pushes (#34).
+ */
+import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
+import type { AccountDto, AccountLinkingDto, AccountStatusDto, SubmitAccountCodeInput } from "@shearim/contracts";
+import { and, eq, ne, sql } from "drizzle-orm";
+import { Hono } from "hono";
+import type { Clock } from "../clock";
+import { type Db, schema } from "../db/client";
+import type { EventHub } from "../events";
+import type { Member } from "../members";
+import {
+  type AuthStatus,
+  authLogout,
+  authStatus,
+  ClaudeMissing,
+  type LoginProcess,
+  processTracker,
+  startLogin,
+  type Validation,
+  validateAccount,
+} from "./claude-cli";
+
+export interface AccountsConfig {
+  /** Caminho do binário `claude` (nos testes, o `fake-claude`). */
+  claudeBin: string;
+  /** Pasta-raiz das Contas, num volume fora do backup. */
+  root: string;
+}
+
+/** Quanto a tela espera pelo código colado (Spec, história 34). */
+export const LOGIN_WAIT_MS = 10 * 60_000;
+/** Quanto o `auth login` tem para trocar o código depois de recebê-lo. */
+const CODE_EXCHANGE_TIMEOUT_MS = 2 * 60_000;
+
+/** O que a tela diz quando a ligação não dá certo. */
+export const LINKING_FAILURES = {
+  noClaudeCode: "Sua assinatura do Claude não inclui uso pelo Claude Code.",
+  orgNotAllowed: "A sua organização no Claude não permite uso pelo Claude Code.",
+  onHold: "Sua conta do Claude está suspensa. Veja os detalhes em claude.ai.",
+  verification: "O Claude pede que você confirme a sua conta. Confirme em claude.ai e comece de novo.",
+  rejected: "A Anthropic não aceitou o login. Comece de novo.",
+  badCode: "Esse código não funcionou. Comece de novo e cole o código que a página da Anthropic mostrar.",
+  couldNotStart: "Não conseguimos abrir o login da Anthropic. Tente de novo em alguns minutos.",
+  missing: "O Claude Code não está instalado neste servidor. Avise quem cuida da Instalação.",
+  unavailable: "Não conseguimos conferir a sua Conta agora. Tente de novo em alguns minutos.",
+} as const;
+
+function explainValidation(v: Extract<Validation, { ok: false }>): string {
+  switch (v.category) {
+    case "billing_error":
+      return LINKING_FAILURES.noClaudeCode;
+    case "oauth_org_not_allowed":
+      return LINKING_FAILURES.orgNotAllowed;
+    case "account_on_hold":
+      return LINKING_FAILURES.onHold;
+    case "verification_required":
+      return LINKING_FAILURES.verification;
+    case "authentication_failed":
+      return LINKING_FAILURES.rejected;
+  }
+  if (v.apiErrorStatus === 402 || v.apiErrorStatus === 403) return LINKING_FAILURES.noClaudeCode;
+  if (v.apiErrorStatus === 401) return LINKING_FAILURES.rejected;
+  return LINKING_FAILURES.unavailable;
+}
+
+const PLAN_NAMES: Record<string, string> = {
+  free: "Claude Free",
+  pro: "Claude Pro",
+  max: "Claude Max",
+  team: "Claude Team",
+  enterprise: "Claude Enterprise",
+};
+
+export function planLabel(subscriptionType: string | null): string {
+  if (!subscriptionType) return "Claude";
+  return PLAN_NAMES[subscriptionType] ?? `Claude ${subscriptionType[0]!.toUpperCase()}${subscriptionType.slice(1)}`;
+}
+
+/** Um "Ligar minha Conta do Claude" em andamento (só em memória: reiniciar o servidor o encerra). */
+interface Flow {
+  dto: AccountLinkingDto;
+  /** A pasta nova deste login. Só vira a pasta da Conta depois de validada. */
+  dir: string;
+  login?: LoginProcess;
+  stopTimer?: () => void;
+  status?: AuthStatus;
+}
+
+type Env = { Variables: { member: Member } };
+type Result = { ok: true; account: AccountDto } | { ok: false; message: string };
+
+const { accounts } = schema;
+
+export function createAccounts(deps: { db: Db; clock: Clock; events: EventHub; config: AccountsConfig }) {
+  const { db, clock, events, config } = deps;
+  const procs = processTracker();
+  const cli = { clock, procs };
+  const flows = new Map<string, Flow>();
+
+  async function row(memberId: string) {
+    const [found] = await db.select().from(accounts).where(eq(accounts.memberId, memberId));
+    return found;
+  }
+
+  async function upsert(memberId: string, values: Partial<typeof accounts.$inferInsert>) {
+    const now = clock.now();
+    await db
+      .insert(accounts)
+      .values({ memberId, state: "not_linked", ...values, updatedAt: now })
+      .onConflictDoUpdate({ target: accounts.memberId, set: { ...values, updatedAt: now } });
+  }
+
+  async function dto(memberId: string): Promise<AccountDto> {
+    const r = await row(memberId);
+    const status: AccountStatusDto =
+      r?.state === "linked" && r.email
+        ? { state: "linked", email: r.email, plan: planLabel(r.subscriptionType) }
+        : { state: "not_linked" };
+    return {
+      status,
+      linking: flows.get(memberId)?.dto ?? null,
+      offer: status.state === "not_linked" && !r?.offerDismissedAt,
+    };
+  }
+
+  async function publish(memberId: string) {
+    events.publish({ members: [memberId] }, { type: "account.updated", account: await dto(memberId) });
+  }
+
+  const isCurrent = (memberId: string, flow: Flow) => flows.get(memberId) === flow;
+
+  /** Muda o passo do fluxo, se ele ainda é o atual, e avisa as abas do Membro. */
+  async function step(memberId: string, flow: Flow, linking: AccountLinkingDto) {
+    if (!isCurrent(memberId, flow)) return;
+    flow.dto = linking;
+    await publish(memberId);
+  }
+
+  /** Mata o processo e apaga a pasta nova. Sem `auth logout`: ele revogaria o login no servidor (ADR 0005). */
+  async function release(flow: Flow) {
+    flow.stopTimer?.();
+    flow.login?.kill();
+    await flow.login?.exited;
+    await rm(flow.dir, { recursive: true, force: true });
+  }
+
+  async function end(
+    memberId: string,
+    flow: Flow,
+    linking: Extract<AccountLinkingDto, { state: "failed" | "expired" }>,
+  ) {
+    if (!isCurrent(memberId, flow)) return;
+    flow.dto = linking;
+    await release(flow);
+    await publish(memberId);
+  }
+  const fail = (memberId: string, flow: Flow, message: string) => end(memberId, flow, { state: "failed", message });
+
+  /** Algo inesperado num passo vira falha visível, nunca silêncio. */
+  const guarded = (memberId: string, flow: Flow, work: () => Promise<void>) => {
+    work().catch(() => fail(memberId, flow, LINKING_FAILURES.unavailable));
+  };
+
+  async function start(memberId: string): Promise<Result> {
+    if ((await row(memberId))?.state === "linked") {
+      return { ok: false, message: "A sua Conta já está ligada. Desligue antes de ligar outra." };
+    }
+    const old = flows.get(memberId);
+    const flow: Flow = { dto: { state: "starting" }, dir: join(config.root, memberId, crypto.randomUUID()) };
+    flows.set(memberId, flow);
+    if (old) await release(old);
+    await mkdir(flow.dir, { recursive: true, mode: 0o700 });
+
+    try {
+      flow.login = startLogin(config.claudeBin, flow.dir, procs);
+    } catch (err) {
+      await fail(
+        memberId,
+        flow,
+        err instanceof ClaudeMissing ? LINKING_FAILURES.missing : LINKING_FAILURES.couldNotStart,
+      );
+      return { ok: true, account: await dto(memberId) };
+    }
+    const login = flow.login;
+    const expiresAt = new Date(clock.now().getTime() + LOGIN_WAIT_MS);
+    const waiting = () => flow.dto.state === "starting" || flow.dto.state === "waiting_code";
+    flow.stopTimer = clock.after(LOGIN_WAIT_MS, () => {
+      if (waiting()) void end(memberId, flow, { state: "expired" });
+    });
+    guarded(memberId, flow, async () => {
+      const url = await login.url;
+      if (flow.dto.state !== "starting") return;
+      if (url) await step(memberId, flow, { state: "waiting_code", url, expiresAt: expiresAt.toISOString() });
+      else await fail(memberId, flow, LINKING_FAILURES.couldNotStart);
+    });
+    // Saiu antes de receber o código: o login não tem mais como terminar.
+    login.exited.then(() => {
+      if (waiting()) void fail(memberId, flow, LINKING_FAILURES.couldNotStart);
+    });
+
+    await publish(memberId);
+    return { ok: true, account: await dto(memberId) };
+  }
+
+  async function submitCode(memberId: string, code: string): Promise<Result> {
+    const flow = flows.get(memberId);
+    if (!flow?.login || flow.dto.state !== "waiting_code") {
+      return { ok: false, message: "Nenhum login está esperando um código. Comece de novo." };
+    }
+    const login = flow.login;
+    flow.stopTimer?.();
+    await step(memberId, flow, { state: "checking" });
+    login.submit(code);
+    guarded(memberId, flow, async () => {
+      const stop = clock.after(CODE_EXCHANGE_TIMEOUT_MS, () => login.kill());
+      const exit = await login.exited;
+      stop();
+      if (!isCurrent(memberId, flow)) return;
+      if (exit !== 0) return fail(memberId, flow, LINKING_FAILURES.badCode);
+
+      const status = await authStatus(config.claudeBin, flow.dir, cli);
+      if (!isCurrent(memberId, flow)) return;
+      if (!status) return fail(memberId, flow, LINKING_FAILURES.rejected);
+      flow.status = status;
+      if (await linkedToSomeoneElse(memberId, status.email)) return step(memberId, flow, { state: "duplicate" });
+      await validateAndLink(memberId, flow);
+    });
+    return { ok: true, account: await dto(memberId) };
+  }
+
+  async function linkedToSomeoneElse(memberId: string, email: string) {
+    const [other] = await db
+      .select({ memberId: accounts.memberId })
+      .from(accounts)
+      .where(
+        and(
+          eq(accounts.state, "linked"),
+          ne(accounts.memberId, memberId),
+          sql`lower(${accounts.email}) = lower(${email})`,
+        ),
+      )
+      .limit(1);
+    return Boolean(other);
+  }
+
+  async function validateAndLink(memberId: string, flow: Flow) {
+    const v = await validateAccount(config.claudeBin, flow.dir, cli);
+    if (!isCurrent(memberId, flow)) return;
+    if (!v.ok) return fail(memberId, flow, explainValidation(v));
+    const s = flow.status!;
+    const now = clock.now();
+    await upsert(memberId, {
+      state: "linked",
+      email: s.email,
+      claudeOrgId: s.orgId,
+      subscriptionType: s.subscriptionType,
+      planTier: s.planTier,
+      loginExpiresAt: s.loginExpiresAt,
+      configDir: flow.dir,
+      linkedAt: now,
+      offerDismissedAt: now,
+    });
+    flows.delete(memberId);
+    await publish(memberId);
+  }
+
+  async function confirmDuplicate(memberId: string): Promise<Result> {
+    const flow = flows.get(memberId);
+    if (flow?.dto.state !== "duplicate") return { ok: false, message: "Não há ligação esperando confirmação." };
+    await step(memberId, flow, { state: "checking" });
+    guarded(memberId, flow, () => validateAndLink(memberId, flow));
+    return { ok: true, account: await dto(memberId) };
+  }
+
+  /** "Cancelar" no meio, ou fechar o aviso de falha / "Começar de novo". Não mexe na Conta ligada. */
+  async function cancel(memberId: string): Promise<AccountDto> {
+    const flow = flows.get(memberId);
+    if (flow) {
+      flows.delete(memberId);
+      await release(flow);
+      await publish(memberId);
+    }
+    return dto(memberId);
+  }
+
+  /** Desligar: `claude auth logout` e a pasta apagada. Também serve à remoção do Membro (#16). */
+  async function unlink(memberId: string): Promise<AccountDto> {
+    const r = await row(memberId);
+    if (r?.state === "linked" && r.configDir) {
+      await authLogout(config.claudeBin, r.configDir, cli).catch(() => {});
+      await rm(r.configDir, { recursive: true, force: true });
+      await upsert(memberId, {
+        state: "not_linked",
+        email: null,
+        claudeOrgId: null,
+        subscriptionType: null,
+        planTier: null,
+        loginExpiresAt: null,
+        configDir: null,
+        linkedAt: null,
+      });
+      await publish(memberId);
+    }
+    return dto(memberId);
+  }
+
+  const routes = new Hono<Env>();
+  const reply = (c: { json: (body: unknown, status?: 200 | 202 | 409) => Response }, r: Result, status: 200 | 202) =>
+    r.ok ? c.json(r.account, status) : c.json({ error: "conflict", message: r.message }, 409);
+
+  routes.get("/account", async (c) => c.json(await dto(c.get("member").id)));
+  routes.post("/account/not-now", async (c) => {
+    const id = c.get("member").id;
+    await upsert(id, { offerDismissedAt: clock.now() });
+    await publish(id);
+    return c.json(await dto(id));
+  });
+  routes.post("/account/linking", async (c) => reply(c, await start(c.get("member").id), 202));
+  routes.post("/account/linking/code", async (c) => {
+    const input = (await c.req.json().catch(() => null)) as Partial<SubmitAccountCodeInput> | null;
+    const code = typeof input?.code === "string" ? input.code.trim() : "";
+    if (!code)
+      return c.json({ error: "invalid_input", message: "Cole o código que a página da Anthropic mostrou." }, 400);
+    return reply(c, await submitCode(c.get("member").id, code), 202);
+  });
+  routes.post("/account/linking/confirm", async (c) => reply(c, await confirmDuplicate(c.get("member").id), 202));
+  routes.delete("/account/linking", async (c) => c.json(await cancel(c.get("member").id)));
+  routes.delete("/account", async (c) => c.json(await unlink(c.get("member").id)));
+
+  return {
+    routes,
+    unlink,
+    /** Encerra os processos do `claude` em andamento (testes e parada do servidor). */
+    async close() {
+      for (const flow of flows.values()) flow.stopTimer?.();
+      flows.clear();
+      await procs.killAll();
+    },
+  };
+}
