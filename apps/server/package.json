@@ -1,0 +1,21 @@
+{
+  "name": "@shearim/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "SHEARIM_IDENTITY=dev HOST=127.0.0.1 bun --watch src/main.ts serve",
+    "typecheck": "tsc -p .",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.17",
+    "@shearim/contracts": "workspace:*",
+    "drizzle-orm": "0.45.4",
+    "hono": "4.13.20",
+    "postgres": "3.4.9"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.11",
+    "drizzle-kit": "0.31.11"
+  }
+}

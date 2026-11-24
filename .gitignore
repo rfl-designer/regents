@@ -1,4 +1,7 @@
-agentes-chat/
+.data/
 .DS_Store
 .env
+*.tsbuildinfo
+agentes-chat/
+dist/
 node_modules/
