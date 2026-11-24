@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createWhoisIdentity, IdentityUnavailableError } from "../src/identity/whois";
 import { fakeLocalApi, recordedWhois } from "./fake-localapi";
-import { fakeClock, testApp } from "./harness";
+import { fakeClock, onCleanup, testApp } from "./harness";
 
 /** Uma requisição como o Serve a entrega ao app: o IP tailnet do peer no `X-Forwarded-For`. */
 function fromServe(ip: string | undefined, extra: Record<string, string> = {}) {
@@ -46,6 +46,25 @@ describe("adaptador whois da LocalAPI (contrato, resposta gravada)", () => {
       device: "Celular do Bruno",
       sharee: true,
     });
+  });
+
+  test("com o sidecar nomeado, só vale o X-Forwarded-For de quem conecta a partir dele", async () => {
+    const localApi = fakeLocalApi();
+    localApi.answer("100.101.102.103", recordedWhois("whois-membro"));
+    const identity = createWhoisIdentity({
+      socketPath: localApi.socketPath,
+      clock: fakeClock(),
+      proxyHost: "localhost",
+    });
+
+    const outro = await identity.whoAmI(fromServe("100.101.102.103"), "172.18.0.9");
+    const semPeer = await identity.whoAmI(fromServe("100.101.102.103"));
+    const doSidecar = await identity.whoAmI(fromServe("100.101.102.103"), "::ffff:127.0.0.1");
+
+    expect(outro).toEqual({ kind: "none", reason: "unknown" });
+    expect(semPeer).toEqual({ kind: "none", reason: "unknown" });
+    expect(doSidecar).toMatchObject({ kind: "user", userId: "9007199254740993" });
+    expect(localApi.calls).toHaveLength(1);
   });
 
   test("sem Hostinfo.Hostname, o aparelho é o ComputedName do nó", async () => {
@@ -240,5 +259,26 @@ describe("entrada pela tailnet: o app com o whois de verdade", () => {
     localApi.stop();
 
     expect((await t.request({}).get("/api/health")).status).toBe(200);
+  });
+
+  test("num servidor de verdade, o app passa ao whois o IP de quem conectou: fora do sidecar, sem identidade", async () => {
+    for (const [proxyHost, status] of [
+      ["localhost", 200],
+      ["sidecar.invalid", 403],
+    ] as const) {
+      const localApi = fakeLocalApi();
+      localApi.answer("100.101.102.103", recordedWhois("whois-membro"));
+      const clock = fakeClock();
+      const t = await testApp({
+        clock,
+        identity: createWhoisIdentity({ socketPath: localApi.socketPath, clock, proxyHost }),
+      });
+      const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (req, srv) => t.app.fetch(req, srv) });
+      onCleanup(() => server.stop(true));
+
+      const res = await fetch(`http://127.0.0.1:${server.port}/api/me`, { headers: juliana });
+
+      expect([proxyHost, res.status]).toEqual([proxyHost, status]);
+    }
   });
 });

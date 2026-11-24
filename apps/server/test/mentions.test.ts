@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentDto, ChannelDto, ExecutionDto, MentionDto, MessageDto } from "@shearim/contracts";
+import { schema } from "../src/db/client";
 import { eventually, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana", profilePicUrl: "https://pic/j.png" };
@@ -187,6 +188,21 @@ describe("Menção a um Agente pela Chave", () => {
     const aviso = (await aba.next("execution.updated")).execution;
     expect(aviso).toMatchObject({ state: "not_acting", reason: "o Workspace não tem Chave" });
     expect(t.anthropic.requests).toHaveLength(0);
+  });
+
+  test("Chave gravada que não abre (outra chave mestra): a fila segue sem ela e o Admin vê que precisa gravá-la de novo", async () => {
+    const t = await testApp();
+    const { geral } = await workspaceComFaro(t);
+    // Outro IV: o AES-GCM recusa, como com a chave mestra de outra ./secrets.
+    await t.db.update(schema.workspaceSettings).set({ keyIv: "AAAAAAAAAAAAAAAA" });
+    const aba = await t.socket(juliana);
+
+    await enviar(t, geral.id, "@Faro alguém aí?");
+
+    await aba.next("execution.updated");
+    const aviso = (await aba.next("execution.updated")).execution;
+    expect(aviso).toMatchObject({ state: "not_acting", reason: "o Workspace não tem Chave" });
+    expect(await (await t.as(juliana).get("/api/workspace-key")).json()).toMatchObject({ configured: false });
   });
 });
 

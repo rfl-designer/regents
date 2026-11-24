@@ -36,6 +36,10 @@ export function postgresDumper(deps: { url: string; password?: string; sql: Sql;
         ]),
       ),
     async restore(file) {
+      // Lê o índice do dump antes do DROP: um arquivo que o pg_restore recusa não apaga nada.
+      await run([bin("pg_restore"), "--list", file]).catch((err: Error) => {
+        throw new Error(`o arquivo não é um dump que o pg_restore aceite (${err.message}). Nada foi restaurado.`);
+      });
       // O banco inteiro volta a ser o do dump: o que uma versão mais nova criou não pode sobrar.
       await deps.sql.unsafe(
         "DROP SCHEMA IF EXISTS drizzle CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;",

@@ -27,5 +27,6 @@ export type Identity =
   | { kind: "none"; reason: NoIdentityReason };
 
 export interface IdentityPort {
-  whoAmI(req: Request): Promise<Identity>;
+  /** `peer`: o endereço de quem abriu a conexão TCP (o `requestIP` do Bun), quando há servidor. */
+  whoAmI(req: Request, peer?: string): Promise<Identity>;
 }

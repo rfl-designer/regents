@@ -16,6 +16,17 @@ describe("Workspace e Membros", () => {
     });
   });
 
+  test("quem vem de outra tailnet (nó compartilhado) não vira o primeiro Admin: entra por Pedido, e o dono ainda é o Admin", async () => {
+    const t = await testApp();
+
+    const sharee = await t.as({ id: "9009", name: "Parente", sharee: true }).get("/api/me");
+    const dono = await t.as({ id: "1001", name: "Juliana" }).get("/api/me");
+
+    expect(sharee.status).toBe(403);
+    expect(await sharee.json()).toEqual({ error: "not_a_member" });
+    expect(await dono.json()).toMatchObject({ role: "admin" });
+  });
+
   test("quem chega depois do primeiro não vira Admin nem Membro sozinho", async () => {
     const t = await testApp();
     await t.as({ id: "1001", name: "Juliana" }).get("/api/me");

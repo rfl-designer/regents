@@ -1,3 +1,4 @@
+import { lookup } from "node:dns/promises";
 import type { Clock } from "../clock";
 import type { Identity, IdentityPort } from "./port";
 
@@ -27,6 +28,12 @@ export interface WhoisIdentityOptions {
   clock: Clock;
   /** Quanto dura a "sessão" de um peer: o tempo em que a resposta do whois vale (padrão 60 s). */
   sessionMs?: number;
+  /**
+   * Nome do sidecar na rede `interna` (`tailscale` no compose): só de uma conexão vinda dele o
+   * `X-Forwarded-For` vale, porque no Linux o próprio host alcança o app pela bridge (ADR 0008).
+   * Sem ele, vale o de qualquer conexão (os testes do adaptador).
+   */
+  proxyHost?: string;
 }
 
 export const WHOIS_SESSION_MS = 60_000;
@@ -46,8 +53,16 @@ export function createWhoisIdentity(opts: WhoisIdentityOptions): IdentityPort {
   // O WebSocket pergunta uma vez no upgrade e fixa a identidade na conexão.
   const sessions = new Map<string, { who: Identity; until: number }>();
 
+  async function fromProxy(peer: string | undefined) {
+    if (!opts.proxyHost) return true;
+    if (!peer) return false;
+    const proxy = await lookup(opts.proxyHost, { all: true }).catch(() => []);
+    return proxy.some((a) => a.address === peer.replace(/^::ffff:/, ""));
+  }
+
   return {
-    async whoAmI(req) {
+    async whoAmI(req, peer) {
+      if (!(await fromProxy(peer))) return { kind: "none", reason: "unknown" };
       if (req.headers.has("tailscale-funnel-request")) return { kind: "none", reason: "funnel" };
       const ip = peerIp(req);
       // Sem X-Forwarded-For a requisição não passou pelo Serve.

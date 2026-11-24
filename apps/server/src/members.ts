@@ -75,7 +75,7 @@ export async function createMember(
 
 /**
  * Acha o Membro de uma identidade da tailnet, pelo `UserProfile.ID`.
- * Numa Instalação vazia, a primeira identidade vira Admin, sem Pedido de entrada,
+ * Numa Instalação vazia, a primeira identidade da própria tailnet vira Admin, sem Pedido de entrada,
  * e o Workspace ganha o Canal público inicial. Fora isso, quem não é Membro fica sem.
  */
 export async function memberFor(
@@ -86,6 +86,8 @@ export async function memberFor(
   const [found] = await selectMembers(db, eq(members.tailnetUserId, who.userId));
   // Quem foi removido não é Membro: volta só pelo Pedido de entrada.
   if (found) return found.leftAt ? undefined : found;
+  // De outra tailnet só se entra por Pedido (ADR 0007), nem como o primeiro Admin.
+  if (who.sharee) return undefined;
 
   return db.transaction(async (tx) => {
     // Serializa a entrada: só um primeiro Admin, mesmo com chegadas simultâneas.

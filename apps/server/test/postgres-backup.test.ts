@@ -5,7 +5,7 @@
  * `SHEARIM_TEST_PG_BIN` aponta a pasta dos binários.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChannelDto, MessageDto } from "@shearim/contracts";
@@ -122,6 +122,34 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
     // Em dia com as migrações: subir de novo não pede dump nem migração.
     expect((await runApp(["migrate"], env)).code).toBe(0);
     expect(readdirSync(backupsDir).filter((f) => f.startsWith("shearim-pre-migracao-"))).toEqual([]);
+  }, 120_000);
+
+  test("arquivo que não é dump: `restore --sem-copia` sai com erro e não apaga o banco", async () => {
+    const url = await freshDatabase();
+    const backupsDir = mkdtempSync(join(tmpdir(), "shearim-backups-"));
+    onCleanup(() => rmSync(backupsDir, { recursive: true, force: true }));
+    const env = { DATABASE_URL: url, SHEARIM_BACKUPS_DIR: backupsDir };
+    expect((await runApp(["migrate"], env)).code).toBe(0);
+    const conn = connect({ DATABASE_URL: url, pgliteDir: "", pgBinDir: binDir });
+    const t = await testApp({ db: conn.db });
+    const channel: ChannelDto = await (
+      await t.as(juliana).post("/api/channels", { name: "vendas", kind: "public" })
+    ).json();
+    await t.as(juliana).post(`/api/channels/${channel.id}/messages`, { body: "continua aqui" });
+    await t.shutdown();
+    await conn.close();
+    const bad = join(backupsDir, "shearim-truncado.dump");
+    writeFileSync(bad, "isto não é um dump");
+
+    const run = await runApp(["restore", bad, "--sem-copia"], env);
+
+    expect(run.code).toBe(1);
+    expect(run.stderr).toContain("Nada foi restaurado");
+    const again = connect({ DATABASE_URL: url, pgliteDir: "" });
+    onCleanup(() => again.close());
+    const t2 = await testApp({ db: again.db });
+    const messages: MessageDto[] = await (await t2.as(juliana).get(`/api/channels/${channel.id}/messages`)).json();
+    expect(messages.map((m) => m.body)).toEqual(["continua aqui"]);
   }, 120_000);
 
   test("banco migrado por uma versão mais nova: `migrate` se recusa também no Postgres", async () => {

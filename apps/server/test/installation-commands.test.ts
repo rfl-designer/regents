@@ -208,6 +208,32 @@ describe("restore", () => {
     expect(run.stdout).toContain(copies[0]!);
   }, 120_000);
 
+  test("arquivo que não é backup: sai com erro e o Workspace segue como estava, mesmo com --sem-copia", async () => {
+    const dataDir = tmpDir("shearim-pg-");
+    const backupsDir = tmpDir("shearim-backups-");
+    const conn = connect({ pgliteDir: dataDir });
+    await conn.migrate();
+    const t = await testApp({ db: conn.db });
+    const channel: ChannelDto = await (
+      await t.as(juliana).post("/api/channels", { name: "vendas", kind: "public" })
+    ).json();
+    await t.as(juliana).post(`/api/channels/${channel.id}/messages`, { body: "continua aqui" });
+    await t.shutdown();
+    await conn.close();
+    const bad = join(backupsDir, "shearim-truncado.tar.gz");
+    writeFileSync(bad, "isto não é um backup");
+
+    const run = await runApp(["restore", bad, "--sem-copia"], envFor(dataDir, backupsDir));
+
+    expect(run.code).toBe(1);
+    expect(run.stderr).toContain("Nada foi restaurado");
+    const again = connect({ pgliteDir: dataDir });
+    onCleanup(() => again.close());
+    const t2 = await testApp({ db: again.db });
+    const messages: MessageDto[] = await (await t2.as(juliana).get(`/api/channels/${channel.id}/messages`)).json();
+    expect(messages.map((m) => m.body)).toEqual(["continua aqui"]);
+  }, 120_000);
+
   test("arquivo que não existe: sai com erro e não mexe no banco", async () => {
     const dataDir = tmpDir("shearim-pg-");
     const backupsDir = tmpDir("shearim-backups-");

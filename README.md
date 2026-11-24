@@ -44,6 +44,7 @@ deploy/release.sh 1.2.3 dist   # empacota a release (o workflow de release roda;
 | `SHEARIM_BACKUPS_DIR` | `.data/backups` | `./backups`: dumps de antes de migrar e de restaurar, e os backups noturnos. No compose, `/backups`. |
 | `SHEARIM_BACKUP_AT` | `03:00` | Hora do backup noturno (comando `backup`), na hora local do container (`TZ`). |
 | `SHEARIM_PG_BIN_DIR` | (o `PATH`) | Pasta do `pg_dump`/`pg_restore`. |
+| `SHEARIM_PROXY_HOST` | `tailscale` | Com `SHEARIM_IDENTITY=tailnet`, o nome do sidecar na rede do compose: só uma conexão vinda dele tem o `X-Forwarded-For` lido (ADR 0008). |
 | `SHEARIM_VERSION` | `dev` | A versão na seção Instalação (a imagem traz a tag). |
 | `SHEARIM_VAPID_CONTACT` | `mailto:shearim@example.com` (só dev) | O `sub` do VAPID do push: `mailto:` com domínio real (a Apple recusa `localhost`). O `deploy/setup.sh` grava no `.env`. |
 | `SHEARIM_MAX_PER_ACCOUNT` | `2` | Respostas ao mesmo tempo pela Conta de um Membro (o roteamento fica fora). No compose, vem do `.env`. |
@@ -441,7 +442,7 @@ O runner sobe o servidor de verdade (por `e2e/serve.ts`, que antes sobe a Messag
 
 ## Instalação
 
-O Shearim sobe com `docker compose` atrás do sidecar do Tailscale em userspace (ADRs 0007 e 0008). Quem abre `https://<TS_HOSTNAME>.<tailnet>.ts.net` passa pelo Tailscale Serve, que faz proxy para `http://app:3000`. O app pega o IP do peer no `X-Forwarded-For` e pergunta ao tailscaled de quem ele é, pelo `whois` da LocalAPI no socket comum (`ts-socket`). O Membro é o `UserProfile.ID`.
+O Shearim sobe com `docker compose` atrás do sidecar do Tailscale em userspace (ADRs 0007 e 0008). Quem abre `https://<TS_HOSTNAME>.<tailnet>.ts.net` passa pelo Tailscale Serve, que faz proxy para `http://app:3000`. O app pega o IP do peer no `X-Forwarded-For` (só numa conexão vinda do sidecar) e pergunta ao tailscaled de quem ele é, pelo `whois` da LocalAPI no socket comum (`ts-socket`). O Membro é o `UserProfile.ID`.
 
 ```sh
 deploy/setup.sh          # pede a auth key (com tag:shearim) e o e-mail de contato, gera ./secrets, confere a tailnet

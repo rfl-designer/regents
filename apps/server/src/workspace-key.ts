@@ -28,7 +28,7 @@ export function workspaceKeyRoutes(deps: {
     await next();
   });
 
-  routes.get("/workspace-key", async (c) => c.json(await keyStatus(db)));
+  routes.get("/workspace-key", async (c) => c.json(await keyStatus(db, secrets)));
 
   routes.put("/workspace-key", async (c) => {
     const input = (await c.req.json().catch(() => null)) as Partial<SetWorkspaceKeyInput> | null;
@@ -41,17 +41,17 @@ export function workspaceKeyRoutes(deps: {
       .values({ id: 1, ...values })
       .onConflictDoUpdate({ target: workspaceSettings.id, set: values });
     deps.onChanged?.();
-    return c.json(await keyStatus(db));
+    return c.json(await keyStatus(db, secrets));
   });
 
   return routes;
 }
 
-async function keyStatus(db: Db): Promise<WorkspaceKeyDto> {
+async function keyStatus(db: Db, secrets: SecretBox): Promise<WorkspaceKeyDto> {
   const [row] = await db.select().from(workspaceSettings).where(eq(workspaceSettings.id, 1));
   const incident = await openIncident(db);
-  return row?.keyCiphertext
-    ? { configured: true, updatedAt: row.keyUpdatedAt?.toISOString() ?? null, incident }
+  return (await readWorkspaceKey(db, secrets))
+    ? { configured: true, updatedAt: row?.keyUpdatedAt?.toISOString() ?? null, incident }
     : { configured: false, updatedAt: null, incident };
 }
 
@@ -64,9 +64,12 @@ export async function hasWorkspaceKey(db: Db): Promise<boolean> {
   return Boolean(row?.key);
 }
 
-/** A Chave em texto puro, para a porta de modelo, ou `null` se o Workspace não tem Chave. */
+/**
+ * A Chave em texto puro, para a porta de modelo, ou `null` se o Workspace não tem Chave. A que
+ * não abre com esta chave mestra (backup restaurado com outra ./secrets) conta como nenhuma.
+ */
 export async function readWorkspaceKey(db: Db, secrets: SecretBox): Promise<string | null> {
   const [row] = await db.select().from(workspaceSettings).where(eq(workspaceSettings.id, 1));
   if (!row?.keyCiphertext || !row.keyIv) return null;
-  return secrets.open({ ciphertext: row.keyCiphertext, iv: row.keyIv });
+  return secrets.open({ ciphertext: row.keyCiphertext, iv: row.keyIv }).catch(() => null);
 }

@@ -297,9 +297,13 @@ export function createAccounts(deps: {
   }
   const fail = (memberId: string, flow: Flow, message: string) => end(memberId, flow, { state: "failed", message });
 
+  /** Um passo que ninguém espera (timer, saída do processo) e falha de novo, com o banco fora, não derruba o processo. */
+  const logged = (p: Promise<unknown>) => {
+    p.catch((err) => console.error("shearim: o fluxo de ligar a Conta falhou", err));
+  };
   /** Algo inesperado num passo vira falha visível, nunca silêncio. */
   const guarded = (memberId: string, flow: Flow, work: () => Promise<void>) => {
-    work().catch(() => fail(memberId, flow, LINKING_FAILURES.unavailable));
+    logged(work().catch(() => fail(memberId, flow, LINKING_FAILURES.unavailable)));
   };
 
   /** Ligar, ou ligar de novo: o mesmo fluxo, numa pasta nova. A Conta atual fica como está até validar. */
@@ -325,7 +329,7 @@ export function createAccounts(deps: {
     const expiresAt = new Date(clock.now().getTime() + LOGIN_WAIT_MS);
     const waiting = () => flow.dto.state === "starting" || flow.dto.state === "waiting_code";
     flow.stopTimer = clock.after(LOGIN_WAIT_MS, () => {
-      if (waiting()) void end(memberId, flow, { state: "expired" });
+      if (waiting()) logged(end(memberId, flow, { state: "expired" }));
     });
     guarded(memberId, flow, async () => {
       const url = await login.url;
@@ -335,7 +339,7 @@ export function createAccounts(deps: {
     });
     // Saiu antes de receber o código: o login não tem mais como terminar.
     login.exited.then(() => {
-      if (waiting()) void fail(memberId, flow, LINKING_FAILURES.couldNotStart);
+      if (waiting()) logged(fail(memberId, flow, LINKING_FAILURES.couldNotStart));
     });
 
     await publish(memberId);

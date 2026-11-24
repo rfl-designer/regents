@@ -1,4 +1,5 @@
 import { EVENTS_PATH } from "@shearim/contracts";
+import type { Server } from "bun";
 import { Hono } from "hono";
 import { websocket } from "hono/bun";
 import { accountPushes } from "./account-pushes";
@@ -138,9 +139,11 @@ export function createApp(deps: AppDeps) {
   const installation = createInstallation({ db, clock, events, push, config: deps.installation });
 
   /** Pergunta à porta; tailscaled fora do ar é falha da Instalação, não "sem identidade": vai para o log. */
-  async function whoAmI(req: Request): Promise<Identity | typeof UNAVAILABLE> {
+  async function whoAmI(c: { req: { raw: Request }; env: unknown }): Promise<Identity | typeof UNAVAILABLE> {
+    // O `env` do Hono no Bun é o servidor; sem ele (testes pelo `app.fetch`), não há peer.
+    const peer = (c.env as Server<unknown> | undefined)?.requestIP?.(c.req.raw)?.address;
     try {
-      return await identity.whoAmI(req);
+      return await identity.whoAmI(c.req.raw, peer);
     } catch (err) {
       if (!(err instanceof IdentityUnavailableError)) throw err;
       console.error(`shearim: ${err.message}`);
@@ -156,7 +159,7 @@ export function createApp(deps: AppDeps) {
   app.use("*", async (c, next) => {
     const path = c.req.path;
     if (path.startsWith("/api/") || path.startsWith("/dev/")) return next();
-    const who = await whoAmI(c.req.raw);
+    const who = await whoAmI(c);
     if (who === UNAVAILABLE) return c.text("O Shearim não conseguiu falar com o tailscaled. Veja o log do app.", 503);
     if (who.kind === "none") return c.html(noIdentityPage(who.reason), 403);
     await next();
@@ -164,7 +167,7 @@ export function createApp(deps: AppDeps) {
 
   // Toda rota em /api (menos a saúde) exige identidade.
   app.use("/api/*", async (c, next) => {
-    const who = await whoAmI(c.req.raw);
+    const who = await whoAmI(c);
     if (who === UNAVAILABLE) return c.json({ error: "identity_unavailable" }, 503);
     if (who.kind === "none") return c.json({ error: "no_identity", reason: who.reason }, 403);
     c.set("who", who);

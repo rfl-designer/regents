@@ -56,7 +56,7 @@ export async function migrateSafely(deps: CommandDeps): Promise<void> {
   await deps.conn.migrate();
 }
 
-/** O `restore` não pôde nem começar (arquivo que não existe, cópia de segurança que falhou). */
+/** O `restore` falhou, com o que o Admin precisa saber (o que ficou no banco, onde está a cópia). */
 export class RestoreError extends Error {
   override name = "RestoreError";
 }
@@ -79,10 +79,11 @@ export async function restoreFrom(deps: CommandDeps, arg: string, opts: { withCo
   const file = findBackup(arg, deps.backupsDir);
   if (!file) throw new RestoreError(`não achei o arquivo ${arg} (nem em ${deps.backupsDir}). Nada foi restaurado.`);
   const state = await migrationState(deps.conn.db);
+  let copy: string | undefined;
   if (opts.withCopy && state.kind !== "empty") {
     try {
-      const copy = await dumpNow(deps, "shearim-pre-restauracao");
-      deps.log(`cópia do banco de antes da restauração em ${copy.file}`);
+      copy = (await dumpNow(deps, "shearim-pre-restauracao")).file;
+      deps.log(`cópia do banco de antes da restauração em ${copy}`);
     } catch (err) {
       throw new RestoreError(
         `não consegui guardar uma cópia do banco atual antes de restaurar (${(err as Error).message}). Nada foi restaurado. ` +
@@ -90,7 +91,12 @@ export async function restoreFrom(deps: CommandDeps, arg: string, opts: { withCo
       );
     }
   }
-  await deps.conn.dumper.restore(file);
+  try {
+    await deps.conn.dumper.restore(file);
+  } catch (err) {
+    const back = copy ? ` O banco de antes está em ${copy}: \`restore ${basename(copy)}\` o põe de volta.` : "";
+    throw new RestoreError(`a restauração falhou: ${(err as Error).message}${back}`);
+  }
   deps.log(
     `banco restaurado de ${file}. Suba o app com a mesma pasta ./secrets (sem ela, a Chave do Workspace precisa ser gravada de novo).`,
   );

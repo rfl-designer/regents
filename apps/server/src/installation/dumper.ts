@@ -40,12 +40,21 @@ export function pgliteDumper(deps: { client: () => PGlite; dataDir: string; clos
       }),
     async restore(file) {
       const data = new Blob([await Bun.file(file).arrayBuffer()], { type: "application/x-gzip" });
+      // Abre a cópia numa pasta ao lado e só troca quando ela abriu: um arquivo ruim não apaga nada.
+      const staging = `${deps.dataDir}.restaurando`;
+      rmSync(staging, { recursive: true, force: true });
+      mkdirSync(staging, { recursive: true });
+      try {
+        const restored = new PGlite(staging, { loadDataDir: data });
+        await restored.waitReady;
+        await restored.close();
+      } catch (err) {
+        rmSync(staging, { recursive: true, force: true });
+        throw new Error(`o arquivo não é um backup que o PGlite abra (${String(err)}). Nada foi restaurado.`);
+      }
       await deps.close();
       rmSync(deps.dataDir, { recursive: true, force: true });
-      mkdirSync(deps.dataDir, { recursive: true });
-      const restored = new PGlite(deps.dataDir, { loadDataDir: data });
-      await restored.waitReady;
-      await restored.close();
+      renameSync(staging, deps.dataDir);
     },
   };
 }

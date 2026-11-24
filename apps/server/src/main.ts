@@ -20,6 +20,8 @@
  *   antes de migrar e de restaurar, e os backups noturnos do comando `backup`.
  * - `SHEARIM_BACKUP_AT`: a hora do backup noturno, `HH:MM` na hora local do container (padrão 03:00).
  * - `SHEARIM_PG_BIN_DIR`: pasta do `pg_dump`/`pg_restore` (padrão: os do `PATH`).
+ * - `SHEARIM_PROXY_HOST`: o nome do sidecar na rede do compose (padrão `tailscale`). Com
+ *   `SHEARIM_IDENTITY=tailnet`, só uma conexão vinda dele tem o `X-Forwarded-For` lido.
  * - `SHEARIM_VERSION`: a versão que aparece na seção Instalação (a imagem traz a tag).
  * - `SHEARIM_VAPID_CONTACT`: o `sub` do VAPID (`mailto:` com domínio real; o `deploy/setup.sh`
  *   grava no `.env`). Sem ela, só em desenvolvimento, um `mailto:` de exemplo.
@@ -70,7 +72,11 @@ function identityFromEnv(): { identity: IdentityPort; routes?: Hono; describe: s
     // Não exige o socket já na subida: o sidecar pode estar subindo. Sem ele, a API responde 503.
     if (!existsSync(socketPath)) console.warn(`shearim: socket do tailscaled ainda não existe em ${socketPath}`);
     return {
-      identity: createWhoisIdentity({ socketPath, clock: systemClock }),
+      identity: createWhoisIdentity({
+        socketPath,
+        clock: systemClock,
+        proxyHost: process.env.SHEARIM_PROXY_HOST || "tailscale",
+      }),
       describe: `whois da tailnet em ${socketPath}`,
       nodeKey: localApiNodeKey({ socketPath }),
     };
