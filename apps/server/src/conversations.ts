@@ -26,6 +26,7 @@ import type { Reading } from "./reading";
 import { recordFollows } from "./threads";
 
 type Env = { Variables: { member: Member } };
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 /** Uma linha de `channels`: um Canal ou uma DM. */
 export type ConversationRow = typeof schema.channels.$inferSelect;
 export type Channel = ConversationRow & { kind: ChannelKind; name: string };
@@ -209,9 +210,10 @@ export function conversationRoutes(deps: {
       body: input.body,
       createdAt: clock.now(),
     };
-    // A mensagem e as Menções dela são gravadas juntas, antes de qualquer outra coisa.
-    // Numa Thread, quem passa a segui-la também (o autor, o da raiz, os mencionados).
-    const { mentions, followed } = await db.transaction(async (tx) => {
+    // A mensagem, as Menções dela e as execuções que ela dispara são gravadas juntas, antes de
+    // qualquer outra coisa: nenhuma mensagem fica sem Andamento (ADR 0003). Numa Thread, quem
+    // passa a segui-la também (o autor, o da raiz, os mencionados).
+    const { mentions, followed, queued } = await db.transaction(async (tx) => {
       await tx.insert(messages).values(values);
       const mentions = await recordMentions(tx, values.id, conversation, values.body);
       const followed = threadRootId
@@ -223,46 +225,48 @@ export function conversationRoutes(deps: {
             createdAt: values.createdAt,
           })
         : [];
-      return { mentions, followed };
-    });
-    // Escrever num Canal público é entrar nele (numa conversa fechada, quem escreve já participa).
-    const joined =
-      conversation.kind === "public" && (await addParticipants(db, conversation.id, [author.id], values.createdAt));
-    const dto: MessageDto = {
-      id: values.id,
-      channelId: values.channelId,
-      body: values.body,
-      author: {
-        kind: "member",
-        id: author.id,
-        displayName: author.displayName,
-        profilePicUrl: author.profilePicUrl,
-        leftWorkspace: false,
-      },
-      originMessageId: null,
-      threadRootId,
-      mentions,
-      createdAt: values.createdAt.toISOString(),
-    };
-    events.publish(await audienceOf(db, conversation), { type: "message.created", message: dto });
-    if (joined && isChannel(conversation)) await publishChannel(conversation);
-    for (const { memberId, thread } of followed) {
-      events.publish({ members: [memberId] }, { type: "thread.followed", thread });
-    }
-    await reading.messageCreated(dto);
-    // O push sai em segundo plano (quem escreveu não espera pelos push services); o badge dele já
-    // conta esta mensagem.
-    push.messageCreated(dto, conversation);
-    // Só depois de gravada e anunciada, a mensagem dispara os Agentes.
-    await executions.enqueue(
-      dto,
-      await whoActs(
-        db,
+      const calls = await whoActs(
+        tx,
         conversation,
         mentions.filter((m) => m.kind === "agent"),
-      ),
-    );
-    return c.json(dto, 201);
+      );
+      return { mentions, followed, queued: await executions.enqueue(tx, values, calls) };
+    });
+    try {
+      // Escrever num Canal público é entrar nele (numa conversa fechada, quem escreve já participa).
+      const joined =
+        conversation.kind === "public" && (await addParticipants(db, conversation.id, [author.id], values.createdAt));
+      const dto: MessageDto = {
+        id: values.id,
+        channelId: values.channelId,
+        body: values.body,
+        author: {
+          kind: "member",
+          id: author.id,
+          displayName: author.displayName,
+          profilePicUrl: author.profilePicUrl,
+          leftWorkspace: false,
+        },
+        originMessageId: null,
+        threadRootId,
+        mentions,
+        createdAt: values.createdAt.toISOString(),
+      };
+      events.publish(await audienceOf(db, conversation), { type: "message.created", message: dto });
+      if (joined && isChannel(conversation)) await publishChannel(conversation);
+      for (const { memberId, thread } of followed) {
+        events.publish({ members: [memberId] }, { type: "thread.followed", thread });
+      }
+      await reading.messageCreated(dto);
+      // O push sai em segundo plano (quem escreveu não espera pelos push services); o badge dele já
+      // conta esta mensagem.
+      push.messageCreated(dto, conversation);
+      return c.json(dto, 201);
+    } finally {
+      // Só depois de anunciada a mensagem (ou de o anúncio falhar), as execuções já gravadas
+      // aparecem e o trabalhador acorda para elas.
+      await executions.queued(queued);
+    }
   }
 
   // Mensagens de qualquer conversa (Canal ou DM) pelo id dela; a rota de Canal aceita só Canais.
@@ -356,7 +360,7 @@ export function conversationRoutes(deps: {
  *   dela, que dá o Desfecho (ADR 0004). Num Canal só com ela, não há Desfecho.
  */
 async function whoActs(
-  db: Db,
+  db: Db | Tx,
   conversation: ConversationRow,
   mentioned: readonly Pick<Agent, "id">[],
 ): Promise<{ agent: Pick<Agent, "id">; kind: ExecutionKind }[]> {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import { sql } from "drizzle-orm";
 import { scriptedBrain } from "./fakes/scripted-brain";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
 
@@ -39,6 +40,31 @@ async function andamento(aba: EventSocket, quando: (e: ExecutionDto) => boolean)
     if (quando(execution)) return execution;
   }
 }
+
+describe("Nenhuma mensagem no limbo (ADR 0003)", () => {
+  test("uma falha depois de gravar a mensagem não a deixa sem Andamento: a execução já está na fila e segue", async () => {
+    const t = await testApp();
+    const { geral } = await workspaceComFaro(t);
+    // Outro participante: as não-lidas dele são calculadas depois de gravar a mensagem.
+    await t.addMember(bruno, { by: juliana });
+    await t.as(bruno).post(`/api/channels/${geral.id}/join`);
+    t.anthropic.reply({ hang: true });
+
+    // O banco falha no meio, depois de gravar a mensagem (no cálculo das não-lidas).
+    await t.db.execute(sql`alter table message_reads rename to message_reads_fora`);
+    const res = await t.as(juliana).post(`/api/channels/${geral.id}/messages`, { body: "@Faro tá aí?" });
+    await t.db.execute(sql`alter table message_reads_fora rename to message_reads`);
+    expect(res.status).toBe(500);
+
+    const [origem] = (await (await t.as(juliana).get(`/api/channels/${geral.id}/messages`)).json()) as MessageDto[];
+    expect(origem).toMatchObject({ body: "@Faro tá aí?" });
+    await t.anthropic.waitForRequests(1);
+    const [execucao] = (await (
+      await t.as(juliana).get(`/api/channels/${geral.id}/executions`)
+    ).json()) as ExecutionDto[];
+    expect(execucao).toMatchObject({ originMessageId: origem!.id, state: "running", step: "writing" });
+  });
+});
 
 describe("Vigia e nova tentativa", () => {
   test("escrevendo sem progresso por 2 min falha e é tentada de novo sozinha 10 s depois, como 2ª tentativa", async () => {

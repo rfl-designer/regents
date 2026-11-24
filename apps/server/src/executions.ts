@@ -147,13 +147,17 @@ export interface ExecutionHooks {
  */
 export interface Executions {
   /**
-   * Põe na fila uma execução por chamada (Agente mencionado, Agente da DM), na ordem dada.
-   * Chame depois de gravar a mensagem.
+   * Grava na fila uma execução por chamada (Agente mencionado, Agente da DM), na ordem dada, na
+   * mesma transação `tx` que grava a mensagem: nenhuma mensagem fica sem Andamento (ADR 0003),
+   * nem se o que vem depois de gravar falhar. Devolve os ids; depois do commit, `queued(ids)`.
    */
   enqueue(
+    tx: Db | Tx,
     origin: { id: string; channelId: string },
     calls: readonly { agent: Pick<Agent, "id">; kind: ExecutionKind }[],
-  ): Promise<void>;
+  ): Promise<string[]>;
+  /** Anuncia o Andamento das execuções que `enqueue` gravou e acorda o trabalhador. */
+  queued(ids: readonly string[]): Promise<void>;
   /** O Andamento das execuções de uma conversa que ainda não viraram resposta, como `viewerId` o vê. */
   openIn(channelId: string, viewerId: string): Promise<ExecutionDto[]>;
   /**
@@ -729,7 +733,7 @@ export function createExecutions(deps: {
 
   /** Grava as chamadas na fila, chegando em `arrivedAt`; devolve os ids, na ordem. */
   async function insertRows(
-    tx: Db,
+    tx: Db | Tx,
     origin: { id: string; channelId: string },
     calls: readonly { agent: Pick<Agent, "id">; kind: ExecutionKind }[],
     arrivedAt: Date,
@@ -755,14 +759,11 @@ export function createExecutions(deps: {
     return rows.map((r) => r.id);
   }
 
-  /** Põe as chamadas na fila, chegando agora, anuncia e acorda o trabalhador. */
-  async function enqueue(
-    origin: { id: string; channelId: string },
-    calls: readonly { agent: Pick<Agent, "id">; kind: ExecutionKind }[],
-  ) {
-    const ids = await insertRows(db, origin, calls, clock.now());
+  /** Anuncia as que acabaram de entrar na fila e acorda o trabalhador (ele as pega mesmo se o anúncio falhar). */
+  async function queued(ids: readonly string[]) {
+    if (ids.length === 0) return;
+    wake();
     for (const id of ids) await publish(id);
-    if (ids.length) wake();
   }
 
   // ---------- o trabalhador ----------
@@ -920,7 +921,8 @@ export function createExecutions(deps: {
   }
 
   return {
-    enqueue,
+    enqueue: (tx, origin, calls) => insertRows(tx, origin, calls, clock.now()),
+    queued,
 
     openIn: async (channelId, viewerId) =>
       (await views(and(eq(executions.channelId, channelId), ne(executions.state, "done")))).map((v) =>
