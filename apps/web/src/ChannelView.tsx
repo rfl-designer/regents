@@ -14,6 +14,7 @@ import {
   Fragment,
   type KeyboardEvent,
   type ReactNode,
+  type RefObject,
   useCallback,
   useEffect,
   useRef,
@@ -102,7 +103,10 @@ export function ChannelView({ channel, me, onChanged }: Props) {
 /**
  * As mensagens e o campo de escrever de uma conversa qualquer (Canal ou DM), pelo id dela.
  * `label` é como a conversa se chama nos rótulos ("#vendas", "Bruno").
- * A leitura (não-lidas, linha "Novas", avisos flutuantes, a tela que não rola sozinha) fica em `useReading`.
+ * O fluxo principal fica na lista; cada Thread abre num painel ao lado (no celular, por cima),
+ * com a resposta ancorada, o Desfecho e o Andamento funcionando lá dentro.
+ * A leitura (não-lidas, linha "Novas", avisos flutuantes, a tela que não rola sozinha) fica em
+ * `useReading`, uma para o fluxo principal e outra para a Thread aberta.
  */
 export function Conversation({
   conversationId,
@@ -120,13 +124,15 @@ export function Conversation({
   const [executions, setExecutions] = useState<Record<string, ExecutionDto>>({});
   /** O Desfecho de cada mensagem que recebeu um, pela mensagem. */
   const [outcomes, setOutcomes] = useState<Record<string, OutcomeDto>>({});
+  /** As Threads desta conversa que quem vê segue, pela raiz. */
+  const [followed, setFollowed] = useState<ReadonlySet<string>>(new Set());
+  /** A raiz da Thread aberta no painel. */
+  const [openThread, setOpenThread] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState(false);
   const listRef = useRef<HTMLOListElement>(null);
+  const main = messages?.filter((m) => !m.threadRootId) ?? null;
   const count = (messages?.length ?? 0) + Object.keys(executions).length;
-  const reading = useReading({ conversationId, me, listRef, messages, contentKey: count });
+  const reading = useReading({ conversationId, me, listRef, messages: main, contentKey: count });
   const { loaded } = reading;
 
   // A lista do servidor manda; o que chegou pelo WebSocket depois dela fica no fim.
@@ -136,13 +142,19 @@ export function Conversation({
       api.executions(conversationId),
       api.conversationUnread(conversationId),
       api.outcomes(conversationId),
+      api.followedThreads(),
     ]).then(
-      ([list, running, unread, decided]) => {
+      ([list, running, unread, decided, threads]) => {
         setLoadError(false);
         setMessages((prev) => append(list, prev ?? []));
         setExecutions(Object.fromEntries(running.map((e) => [e.id, e])));
         setOutcomes(Object.fromEntries(decided.map((o) => [o.messageId, o])));
-        loaded(unread.messageIds);
+        setFollowed(
+          new Set(threads.filter((th) => th.conversationId === conversationId).map((th) => th.rootMessageId)),
+        );
+        // As não-lidas de Thread são do painel dela; o fluxo principal abre na primeira dele.
+        const inThreads = new Set(list.filter((m) => m.threadRootId).map((m) => m.id));
+        loaded(unread.messageIds.filter((id) => !inThreads.has(id)));
       },
       () => setLoadError(true),
     );
@@ -154,7 +166,7 @@ export function Conversation({
     // Cada (re)conexão começa com `ready`: recarrega o que pode ter passado enquanto ela não estava aberta.
     if (event.type === "ready") load();
     if (event.type === "message.created" && event.message.channelId === conversationId) {
-      reading.arrived(event.message);
+      if (!event.message.threadRootId) reading.arrived(event.message);
       setMessages((prev) => append(prev, [event.message]));
     }
     if (event.type === "execution.updated" && event.execution.channelId === conversationId) {
@@ -163,6 +175,10 @@ export function Conversation({
     if (event.type === "outcome.created" && event.outcome.channelId === conversationId) {
       const { outcome } = event;
       setOutcomes((prev) => ({ ...prev, [outcome.messageId]: outcome }));
+    }
+    if (event.type === "thread.followed" && event.thread.conversationId === conversationId) {
+      const root = event.thread.rootMessageId;
+      setFollowed((prev) => new Set([...prev, root]));
     }
     // Quem escreveu trocou o nome ou a foto: as mensagens dele já mostram o novo.
     if (event.type === "member.updated") {
@@ -178,18 +194,325 @@ export function Conversation({
     }
   });
 
+  async function send(body: string, threadRootId: string | null) {
+    const msg = await api.send(conversationId, { body, threadRootId });
+    onSent?.();
+    setMessages((prev) => append(prev, [msg]));
+  }
+
+  // As respostas ancoradas ficam sob a origem (no fluxo principal ou na Thread dela).
+  const replies = new Map<string, MessageDto[]>();
+  const threadSize = new Map<string, number>();
+  for (const m of messages ?? []) {
+    if (m.originMessageId) replies.set(m.originMessageId, [...(replies.get(m.originMessageId) ?? []), m]);
+    if (m.threadRootId) threadSize.set(m.threadRootId, (threadSize.get(m.threadRootId) ?? 0) + 1);
+  }
+  // O roteamento em curso fica sob a mensagem ("Sophya decidindo"); o resto, no lugar da resposta.
+  const pending = new Map<string, ExecutionDto[]>();
+  const deciding = new Map<string, ExecutionDto>();
+  for (const e of Object.values(executions)) {
+    if (e.kind === "route" && (e.state === "queued" || e.state === "running")) deciding.set(e.originMessageId, e);
+    else pending.set(e.originMessageId, [...(pending.get(e.originMessageId) ?? []), e]);
+  }
+  const now = useNow(Object.values(executions).some((e) => OPEN.includes(e.state)));
+  const ctx: GroupContext = {
+    me,
+    conversationId,
+    replies,
+    pending,
+    deciding,
+    outcomes,
+    now,
+    showExecution: (e) => setExecutions((prev) => upsertExecution(prev, e)),
+    find: (id) => messages?.find((m) => m.id === id),
+  };
+  const root = openThread ? messages?.find((m) => m.id === openThread) : undefined;
+
+  return (
+    <div className="conversation-view">
+      <div className="main-flow">
+        <Stream
+          listRef={listRef}
+          label={`Mensagens de ${label}`}
+          busy={(messages === null || reading.divider === undefined) && !loadError}
+          reading={reading}
+          ctx={ctx}
+        >
+          {loadError && <li className="notice">Não foi possível carregar as mensagens. Recarregue a página.</li>}
+          {main?.length === 0 && <li className="notice">Nenhuma mensagem ainda. Diga oi!</li>}
+          <MessageGroups
+            items={main ?? []}
+            ctx={ctx}
+            reading={reading}
+            thread={{ size: threadSize, open: setOpenThread }}
+          />
+        </Stream>
+        <Composer
+          label={`Mensagem para ${label}`}
+          onSend={async (body) => {
+            await send(body, null);
+            reading.sent(); // quem envia vai para o fim
+          }}
+        />
+      </div>
+      {root && messages && (
+        <ThreadPanel
+          key={root.id}
+          root={root}
+          messages={messages}
+          ctx={ctx}
+          following={followed.has(root.id)}
+          onSend={(body) => send(body, root.id)}
+          onClose={() => setOpenThread(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** O que os grupos de mensagem precisam saber da conversa (o mesmo no fluxo principal e na Thread). */
+interface GroupContext {
+  me: MeDto;
+  conversationId: string;
+  /** As respostas ancoradas, pela mensagem de origem. */
+  replies: Map<string, MessageDto[]>;
+  /** O Andamento no lugar da resposta, pela mensagem de origem. */
+  pending: Map<string, ExecutionDto[]>;
+  /** O roteamento em curso, pela mensagem de origem. */
+  deciding: Map<string, ExecutionDto>;
+  outcomes: Record<string, OutcomeDto>;
+  now: number;
+  showExecution(e: ExecutionDto): void;
+  find(id: string): MessageDto | undefined;
+}
+
+type Reading = ReturnType<typeof useReading>;
+
+/** A lista rolável, com os avisos flutuantes de não-lidas por cima. */
+function Stream({
+  listRef,
+  label,
+  busy,
+  reading,
+  ctx,
+  children,
+}: {
+  listRef: RefObject<HTMLOListElement | null>;
+  label: string;
+  busy: boolean;
+  reading: Reading;
+  ctx: GroupContext;
+  children: ReactNode;
+}) {
+  const { up, down } = reading.pills;
+  return (
+    <div className="stream">
+      <ol ref={listRef} className="messages" aria-label={label} aria-busy={busy} onScroll={reading.onScroll}>
+        {children}
+      </ol>
+      {up.length > 0 && (
+        <button type="button" className="pill up" onClick={() => reading.jump(up[up.length - 1]!.id)}>
+          {upLabel(up, ctx.me, ctx.find)}
+        </button>
+      )}
+      {down.length > 0 && (
+        <button type="button" className="pill down" onClick={() => reading.jump(down[0]!.id)}>
+          {downLabel(down)}
+        </button>
+      )}
+    </div>
+  );
+}
+
+const NEW_LINE = (
+  <li className="new-divider" data-divider>
+    <hr aria-label="Novas" />
+    <span aria-hidden="true">Novas</span>
+  </li>
+);
+
+/**
+ * Cada mensagem de pessoa com o Desfecho e, logo abaixo, as respostas ancoradas e o Andamento.
+ * No fluxo principal (`thread`), o resumo da Thread que pendura na mensagem, ou o convite a abrir uma.
+ */
+function MessageGroups({
+  items,
+  ctx,
+  reading,
+  thread,
+}: {
+  items: MessageDto[];
+  ctx: GroupContext;
+  reading: Reading;
+  thread?: { size: Map<string, number>; open(rootId: string): void };
+}) {
+  const { me, conversationId, replies, pending, deciding, outcomes, now, showExecution } = ctx;
+  const ids = new Set(items.map((m) => m.id));
+  const top = items.filter((m) => !m.originMessageId || !ids.has(m.originMessageId));
+  return top.map((m) => {
+    const answers = (replies.get(m.id) ?? []).filter((r) => ids.has(r.id));
+    const running = pending.get(m.id) ?? [];
+    const mine = m.author.kind === "member" && m.author.id === me.id;
+    const cancellable = mine && running.some((e) => OPEN.includes(e.state));
+    const cancel = () => api.cancelMessage(conversationId, m.id).then((list) => list.forEach(showExecution));
+    const threadLink = (id: string, always: boolean) =>
+      thread && (always || (thread.size.get(id) ?? 0) > 0) ? (
+        <ThreadLink size={thread.size.get(id) ?? 0} onOpen={() => thread.open(id)} />
+      ) : null;
+    return (
+      <Fragment key={m.id}>
+        {reading.divider === m.id && NEW_LINE}
+        <li className="message-group">
+          <MessageRow
+            message={m}
+            me={me}
+            flash={reading.flashId === m.id}
+            outcome={outcomes[m.id]}
+            deciding={deciding.get(m.id)}
+            now={now}
+            onCancel={mine && !cancellable ? cancel : undefined}
+          />
+          {(answers.length > 0 || running.length > 0) && (
+            <ul className="anchored" aria-label={`Respostas a ${m.author.displayName}`}>
+              {answers.map((r) => (
+                <Fragment key={r.id}>
+                  {reading.divider === r.id && NEW_LINE}
+                  <li>
+                    <MessageRow message={r} me={me} flash={reading.flashId === r.id} />
+                    {threadLink(r.id, false)}
+                  </li>
+                </Fragment>
+              ))}
+              {running.map((e) => (
+                <li key={e.id}>
+                  <Progress
+                    execution={e}
+                    now={now}
+                    onRetry={mine ? () => api.retryExecution(conversationId, e.id).then(showExecution) : undefined}
+                  />
+                </li>
+              ))}
+              {cancellable && (
+                <li>
+                  <CancelButton onCancel={cancel} />
+                </li>
+              )}
+            </ul>
+          )}
+          {threadLink(m.id, true)}
+        </li>
+      </Fragment>
+    );
+  });
+}
+
+/** Sob a mensagem do fluxo principal: "3 respostas" abre a Thread; sem Thread, "Responder na Thread". */
+function ThreadLink({ size, onOpen }: { size: number; onOpen(): void }) {
+  return (
+    <p className={size > 0 ? "thread-link has-thread" : "thread-link"}>
+      <button type="button" className="link" onClick={onOpen}>
+        {size === 0 ? "Responder na Thread" : size === 1 ? "1 resposta" : `${size} respostas`}
+      </button>
+    </p>
+  );
+}
+
+/**
+ * O painel da Thread: a raiz, as mensagens da Thread com as respostas ancoradas, o Desfecho e o
+ * Andamento, e o campo de responder. A leitura dele é à parte: o que aparece aqui é marcado aqui.
+ */
+function ThreadPanel({
+  root,
+  messages,
+  ctx,
+  following,
+  onSend,
+  onClose,
+}: {
+  root: MessageDto;
+  messages: MessageDto[];
+  ctx: GroupContext;
+  following: boolean;
+  onSend(body: string): Promise<void>;
+  onClose(): void;
+}) {
+  const { me, conversationId } = ctx;
+  const listRef = useRef<HTMLOListElement>(null);
+  const items = messages.filter((m) => m.threadRootId === root.id);
+  const reading = useReading({
+    conversationId,
+    me,
+    listRef,
+    messages: items,
+    contentKey: items.length + [...ctx.pending.values()].flat().length,
+  });
+  const { loaded } = reading;
+  const inThread = useRef(new Set<string>());
+  inThread.current = new Set(items.map((m) => m.id));
+
+  // As não-lidas desta Thread: abre na primeira, com a linha "Novas".
+  useEffect(() => {
+    api.conversationUnread(conversationId).then(
+      (unread) => loaded(unread.messageIds.filter((id) => inThread.current.has(id))),
+      () => loaded([]),
+    );
+  }, [conversationId, loaded]);
+
+  useServerEvents((event) => {
+    if (event.type === "message.created" && event.message.threadRootId === root.id) reading.arrived(event.message);
+  });
+
+  return (
+    <aside className="thread-panel" aria-label="Thread">
+      <header className="thread-head">
+        <strong>Thread</strong>
+        {following && <span className="muted">Você segue esta Thread</span>}
+        <button type="button" className="link" onClick={onClose}>
+          Fechar
+        </button>
+      </header>
+      <Stream
+        listRef={listRef}
+        label="Mensagens da Thread"
+        busy={reading.divider === undefined}
+        reading={reading}
+        ctx={ctx}
+      >
+        <li className="thread-root">
+          <MessageRow message={root} me={me} outcome={ctx.outcomes[root.id]} now={ctx.now} />
+        </li>
+        <MessageGroups items={items} ctx={ctx} reading={reading} />
+      </Stream>
+      <Composer
+        label="Responder na Thread"
+        onSend={async (body) => {
+          await onSend(body);
+          reading.sent();
+        }}
+      />
+    </aside>
+  );
+}
+
+/** O campo de escrever: Enter envia, Shift+Enter quebra a linha. */
+function Composer({ label, onSend }: { label: string; onSend(body: string): Promise<void> }) {
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState(false);
+
   async function send(e?: FormEvent) {
     e?.preventDefault();
     if (!draft.trim() || sending) return;
+    const body = draft;
     setSending(true);
     setSendError(false);
+    // O campo esvazia na hora (a mensagem pode chegar pelo WebSocket antes da resposta do envio);
+    // se o envio falhar, o texto volta.
+    setDraft("");
     try {
-      const msg = await api.send(conversationId, { body: draft });
-      onSent?.();
-      reading.sent(); // quem envia vai para o fim
-      setMessages((prev) => append(prev, [msg]));
-      setDraft("");
+      await onSend(body);
     } catch {
+      setDraft((now) => now || body);
       setSendError(true);
     } finally {
       setSending(false);
@@ -203,125 +526,25 @@ export function Conversation({
     }
   }
 
-  // Mensagens de pessoas em ordem de tempo; as respostas ancoradas ficam sob a origem.
-  const replies = new Map<string, MessageDto[]>();
-  for (const m of messages ?? []) {
-    if (m.originMessageId) replies.set(m.originMessageId, [...(replies.get(m.originMessageId) ?? []), m]);
-  }
-  const ids = new Set(messages?.map((m) => m.id));
-  const top = messages?.filter((m) => !m.originMessageId || !ids.has(m.originMessageId)) ?? [];
-  // O roteamento em curso fica sob a mensagem ("Sophya decidindo"); o resto, no lugar da resposta.
-  const pending = new Map<string, ExecutionDto[]>();
-  const deciding = new Map<string, ExecutionDto>();
-  for (const e of Object.values(executions)) {
-    if (e.kind === "route" && (e.state === "queued" || e.state === "running")) deciding.set(e.originMessageId, e);
-    else pending.set(e.originMessageId, [...(pending.get(e.originMessageId) ?? []), e]);
-  }
-  const now = useNow(Object.values(executions).some((e) => OPEN.includes(e.state)));
-  const showExecution = (e: ExecutionDto) => setExecutions((prev) => upsertExecution(prev, e));
-  const find = (id: string) => messages?.find((m) => m.id === id);
-  const { up, down } = reading.pills;
-  const newLine = (
-    <li className="new-divider" data-divider>
-      <hr aria-label="Novas" />
-      <span aria-hidden="true">Novas</span>
-    </li>
-  );
-
   return (
-    <>
-      <div className="stream">
-        <ol
-          ref={listRef}
-          className="messages"
-          aria-label={`Mensagens de ${label}`}
-          aria-busy={(messages === null || reading.divider === undefined) && !loadError}
-          onScroll={reading.onScroll}
-        >
-          {loadError && <li className="notice">Não foi possível carregar as mensagens. Recarregue a página.</li>}
-          {messages?.length === 0 && <li className="notice">Nenhuma mensagem ainda. Diga oi!</li>}
-          {top.map((m) => {
-            const answers = replies.get(m.id) ?? [];
-            const running = pending.get(m.id) ?? [];
-            const mine = m.author.kind === "member" && m.author.id === me.id;
-            const cancellable = mine && running.some((e) => OPEN.includes(e.state));
-            const cancel = () => api.cancelMessage(conversationId, m.id).then((list) => list.forEach(showExecution));
-            return (
-              <Fragment key={m.id}>
-                {reading.divider === m.id && newLine}
-                <li className="message-group">
-                  <MessageRow
-                    message={m}
-                    me={me}
-                    flash={reading.flashId === m.id}
-                    outcome={outcomes[m.id]}
-                    deciding={deciding.get(m.id)}
-                    now={now}
-                    onCancel={mine && !cancellable ? cancel : undefined}
-                  />
-                  {(answers.length > 0 || running.length > 0) && (
-                    <ul className="anchored" aria-label={`Respostas a ${m.author.displayName}`}>
-                      {answers.map((r) => (
-                        <Fragment key={r.id}>
-                          {reading.divider === r.id && newLine}
-                          <li>
-                            <MessageRow message={r} me={me} flash={reading.flashId === r.id} />
-                          </li>
-                        </Fragment>
-                      ))}
-                      {running.map((e) => (
-                        <li key={e.id}>
-                          <Progress
-                            execution={e}
-                            now={now}
-                            onRetry={
-                              mine ? () => api.retryExecution(conversationId, e.id).then(showExecution) : undefined
-                            }
-                          />
-                        </li>
-                      ))}
-                      {cancellable && (
-                        <li>
-                          <CancelButton onCancel={cancel} />
-                        </li>
-                      )}
-                    </ul>
-                  )}
-                </li>
-              </Fragment>
-            );
-          })}
-        </ol>
-        {up.length > 0 && (
-          <button type="button" className="pill up" onClick={() => reading.jump(up[up.length - 1]!.id)}>
-            {upLabel(up, me, find)}
-          </button>
-        )}
-        {down.length > 0 && (
-          <button type="button" className="pill down" onClick={() => reading.jump(down[0]!.id)}>
-            {downLabel(down)}
-          </button>
-        )}
-      </div>
-      <form className="composer" onSubmit={send}>
-        {sendError && (
-          <p className="error" role="alert">
-            A mensagem não foi enviada. Tente de novo.
-          </p>
-        )}
-        <textarea
-          aria-label={`Mensagem para ${label}`}
-          placeholder={`Mensagem para ${label}`}
-          rows={2}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={onKeyDown}
-        />
-        <button type="submit" disabled={sending || !draft.trim()}>
-          Enviar
-        </button>
-      </form>
-    </>
+    <form className="composer" onSubmit={send}>
+      {sendError && (
+        <p className="error" role="alert">
+          A mensagem não foi enviada. Tente de novo.
+        </p>
+      )}
+      <textarea
+        aria-label={label}
+        placeholder={label}
+        rows={2}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={onKeyDown}
+      />
+      <button type="submit" disabled={sending || !draft.trim()}>
+        Enviar
+      </button>
+    </form>
   );
 }
 

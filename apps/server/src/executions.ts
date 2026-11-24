@@ -66,7 +66,9 @@ export interface ExecutionHooks {
  * Fica para depois, com o seam indicado:
  * - quem paga (a tabela completa: no limite até HH:MM, Precisa ligar de novo, fila, orçamento) (#27):
  *   `choosePayer` e a troca no meio em `byPayer`;
- * - ordem por Agente e conversa, paralelismo e tetos (#42): `claim` e o laço em `work`;
+ * - ordem por Agente e conversa, paralelismo e tetos (#42): `claim` e o laço em `work`. A
+ *   conversa para a ordem é `(channel_id, thread_root_id)`: o fluxo principal e cada Thread
+ *   contam como conversas separadas (`seriesOf`);
  * - incidente da Chave em `auth_failed`/`billing_failed` e o gasto por Agente (#28): `settle`;
  * - push da falha ao autor (#32): `hooks.executionFailed`.
  */
@@ -309,6 +311,11 @@ export function createExecutions(deps: {
 
     // A resposta e o fim juntos: um cancelamento que chegou no último instante ganha, e nada sai.
     const reply = { id: crypto.randomUUID(), createdAt: clock.now() };
+    // A resposta ancorada a uma mensagem de Thread fica na mesma Thread.
+    const [origin] = await db
+      .select({ threadRootId: messages.threadRootId })
+      .from(messages)
+      .where(eq(messages.id, job.originMessageId));
     const delivered = await db.transaction(async (tx) => {
       const [row] = await tx
         .select({ state: executions.state })
@@ -321,6 +328,7 @@ export function createExecutions(deps: {
         channelId: job.channelId,
         authorAgentId: agent!.id,
         originMessageId: job.originMessageId,
+        threadRootId: origin?.threadRootId ?? null,
         body: text.trim(),
         createdAt: reply.createdAt,
       });
@@ -433,11 +441,16 @@ export function createExecutions(deps: {
   ) {
     if (calls.length === 0) return;
     const now = clock.now();
+    const [message] = await db
+      .select({ threadRootId: messages.threadRootId })
+      .from(messages)
+      .where(eq(messages.id, origin.id));
     const rows = calls.map(({ agent, kind }) => ({
       id: crypto.randomUUID(),
       kind,
       channelId: origin.channelId,
       originMessageId: origin.id,
+      threadRootId: message?.threadRootId ?? null,
       agentId: agent.id,
       state: "queued" as const,
       since: now,
@@ -604,6 +617,14 @@ export function createExecutions(deps: {
       await stop();
     },
   };
+}
+
+/**
+ * A conversa para a ordem (Spec, módulo 6): as respostas de um mesmo Agente numa conversa saem
+ * em série, e o fluxo principal e cada Thread contam como conversas separadas. SEAM do #42.
+ */
+export function seriesOf(job: Pick<Row, "agentId" | "channelId" | "threadRootId">) {
+  return { agentId: job.agentId, channelId: job.channelId, threadRootId: job.threadRootId };
 }
 
 /** Contam como progresso para a vigia: texto, pensamento e nova tentativa da API (nunca `ping`). */
