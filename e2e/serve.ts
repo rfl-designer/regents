@@ -12,17 +12,26 @@
  * Uma mensagem com `[falhe Nx]` no texto recebe a sobrecarga da Anthropic (529) nas N primeiras
  * chamadas e a resposta padrão depois: `[falhe 2x]` passa pelas duas tentativas e chega ao
  * cartão de falha com "Tentar de novo".
+ *
+ * O roteamento da Articuladora (o pedido com `output_config`) nunca falha: uma mensagem com
+ * `[delegar]` é passada aos dois primeiros Agentes do Canal; as outras recebem o Desfecho "nenhum".
  */
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { lastUserText, startFakeMessagesApi } from "../apps/server/test/fakes/messages-api";
+import {
+  type FakeReply,
+  lastUserText,
+  type RecordedRequest,
+  startFakeMessagesApi,
+} from "../apps/server/test/fakes/messages-api";
 import { pushServiceCert } from "../apps/server/test/fakes/push-cert";
 
 const delayMs = Number(process.env.FAKE_MESSAGES_API_DELAY_MS ?? 400);
 const failures = new Map<string, number>();
 const anthropic = await startFakeMessagesApi({
   defaultReply: (req) => {
+    if (req.body.output_config) return desfecho(req);
     // O contexto leva as mensagens recentes num só `user`, uma por parágrafo, e fecha com
     // "Responda à última mensagem…": a de origem é o penúltimo parágrafo.
     const text = lastUserText(req.body).split("\n\n").at(-2) ?? "";
@@ -35,6 +44,24 @@ const anthropic = await startFakeMessagesApi({
     return { text: "Oi! Tudo certo por aqui: o prazo é sexta-feira.", delayMs };
   },
 });
+/** O Desfecho do roteamento, pelo marcador no texto da mensagem e pelos Agentes do Canal no `system`. */
+function desfecho(req: RecordedRequest): FakeReply {
+  const system = typeof req.body.system === "string" ? req.body.system : "";
+  const canal = system.split("## Agentes do Canal")[1]?.split("\n## ")[0] ?? "";
+  const handles = [...canal.matchAll(/^- @(\w+)/gm)].map((m) => m[1]!).slice(0, 2);
+  if (lastUserText(req.body).includes("[delegar]") && handles.length) {
+    return {
+      json: {
+        decisao: "delegar",
+        agentes: handles.map((agente) => ({ agente, cobrir: `A parte de @${agente}.` })),
+        motivo: "Cada um cobre uma parte.",
+      },
+      delayMs: 0,
+    };
+  }
+  return { json: { decisao: "nenhum", agentes: [], motivo: "É conversa entre pessoas." } };
+}
+
 const secretsDir = mkdtempSync(join(tmpdir(), "shearim-e2e-secrets-"));
 const masterKeyFile = join(secretsDir, "master_key");
 writeFileSync(masterKeyFile, Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex"), { mode: 0o600 });

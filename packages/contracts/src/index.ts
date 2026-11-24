@@ -328,6 +328,12 @@ export interface AgentDto {
   photo: string | null;
   description: string;
   model: AgentModel;
+  /**
+   * A Articuladora (ADR 0004): o Agente embutido do Shearim, em todo Canal. Não se apaga nem sai
+   * de um Canal; o Admin muda o nome, a foto e o modelo, mas a descrição, as instruções e o
+   * contrato de roteamento dela são do Shearim.
+   */
+  builtin: boolean;
   instructions?: string;
 }
 
@@ -339,6 +345,13 @@ export interface CreateAgentInput {
   instructions?: string;
   model: AgentModel;
 }
+
+/**
+ * Corpo de `PATCH /api/agents/:id` (só Admin). Campo ausente fica. Da Articuladora (`builtin`),
+ * só `name`, `photo` e `model`: `description` e `instructions` dão `403 builtin_locked`.
+ * Trocar o nome troca o identificador de Menção (`handle`).
+ */
+export type UpdateAgentInput = Partial<CreateAgentInput>;
 
 /** `GET`/`PUT /api/workspace-key` (só Admin). A Chave em si nunca volta ao navegador. */
 export interface WorkspaceKeyDto {
@@ -374,16 +387,27 @@ export interface WorkspaceContextDto {
  */
 export type ExecutionState = "queued" | "running" | "retrying" | "done" | "failed" | "not_acting" | "cancelled";
 
-/** O passo de uma execução em andamento. `writing` é a bolha "escrevendo". */
-export type ExecutionStep = "writing";
+/**
+ * O passo de uma execução em andamento. `writing` é a bolha "escrevendo"; `deciding` é o
+ * roteamento da Articuladora ("Sophya decidindo quem responde").
+ */
+export type ExecutionStep = "deciding" | "writing";
 
 /**
  * O Andamento de uma execução, como todos que veem a conversa o veem.
  * Item de `GET /api/channels/:id/executions` (as que ainda não viraram resposta)
  * e de `execution.updated`.
  */
+/**
+ * Por que a execução existe: `mention` (Menção), `dm` (o Agente de uma DM com Agente), `route` (o
+ * roteamento da Articuladora: "Sophya decidindo quem responde"), `reply` (ela responde) ou
+ * `delegated` (um Agente a quem ela passou a mensagem).
+ */
+export type ExecutionKind = "mention" | "dm" | "route" | "reply" | "delegated";
+
 export interface ExecutionDto {
   id: string;
+  kind: ExecutionKind;
   channelId: string;
   /** A mensagem de pessoa que gerou a execução: a resposta entra ancorada sob ela. */
   originMessageId: string;
@@ -406,6 +430,31 @@ export interface ExecutionDto {
    */
   reason: string | null;
   replyMessageId: string | null;
+}
+
+// ---------- Desfecho (ADR 0004) ----------
+
+/** `reply`: a Articuladora responde ela mesma. `delegate`: passa para Agentes do Canal. `none`: nenhum Agente precisa agir. */
+export type OutcomeDecision = "reply" | "delegate" | "none";
+
+/**
+ * O Desfecho que a Articuladora deu a uma mensagem de pessoa num Canal com outros Agentes.
+ * Item de `GET /api/conversations/:id/outcomes` e de `outcome.created`. A Menção pula o
+ * roteamento e não tem Desfecho aqui: a resposta ancorada é o Desfecho.
+ * O PWA mostra `delegate` como "↳ Sophya passou para Faro e Prisma" e `none` como `⌀` ao lado da
+ * hora, com o motivo e as frases ao passar o mouse ou tocar; `reply` não tem linha extra.
+ */
+export interface OutcomeDto {
+  /** A mensagem de pessoa que recebeu o Desfecho. */
+  messageId: string;
+  channelId: string;
+  decision: OutcomeDecision;
+  /** O motivo, uma frase. */
+  reason: string;
+  /** A Articuladora, com o nome de agora. */
+  by: { id: string; displayName: string };
+  /** Até 2, na ordem dela, cada um com a frase do que cobrir (vazio fora de `delegate`). */
+  delegates: { agent: { id: string; displayName: string }; cover: string }[];
 }
 
 // ---------- Conta (ADR 0005) ----------
@@ -542,6 +591,8 @@ export type ServerEvent =
    * para quem vê a conversa. Quando termina, a resposta chega antes como `message.created`.
    */
   | { type: "execution.updated"; execution: ExecutionDto }
+  /** A Articuladora deu o Desfecho de uma mensagem, para quem vê a conversa. */
+  | { type: "outcome.created"; outcome: OutcomeDto }
   /**
    * As não-lidas do Membro mudaram (chegou mensagem numa conversa dele, ou ele leu algo em
    * qualquer aba ou aparelho). Vai só para as conexões do próprio Membro.
@@ -566,6 +617,8 @@ export type ApiError =
   /** O tailscaled não respondeu ao `whois` (503): problema da Instalação, não de quem chegou. */
   | { error: "identity_unavailable" }
   | { error: "not_admin" }
+  /** Mexer no que é do Shearim na Articuladora (descrição, instruções). */
+  | { error: "builtin_locked"; message: string }
   | { error: "already_member" }
   | { error: "already_decided"; status: JoinRequestStatus }
   | { error: "not_found" }
