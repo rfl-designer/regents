@@ -369,15 +369,24 @@ export const TEST_VAPID_CONTACT = "mailto:contato@exemplo.com";
  * Serve poria (`request`/`socketWith`/`upgradeWith`).
  */
 export async function testApp(
-  opts: { clock?: FakeClock; identity?: IdentityPort; hooks?: AppDeps["hooks"]; keyBrain?: AppDeps["keyBrain"] } = {},
+  opts: {
+    clock?: FakeClock;
+    identity?: IdentityPort;
+    hooks?: AppDeps["hooks"];
+    keyBrain?: AppDeps["keyBrain"];
+    /** Outro banco já migrado (ex.: um PGlite em disco, para os comandos `restore` e `migrate`). */
+    db?: Db;
+    /** A chave mestra de `./secrets` (padrão: uma aleatória). Para subir de novo com a mesma. */
+    masterKey?: Uint8Array;
+  } = {},
 ) {
-  const { db } = await testDb();
+  const db = opts.db ?? (await testDb()).db;
   const clock = opts.clock ?? fakeClock();
   const { claude, config } = throwawayAccounts();
   const accountsRoot = config.root;
   const anthropic = await fakeMessagesApi();
   const push = await pushCollector();
-  const secrets = await secretBox(crypto.getRandomValues(new Uint8Array(32)));
+  const secrets = await secretBox(opts.masterKey ?? crypto.getRandomValues(new Uint8Array(32)));
 
   function boot() {
     const built = createApp({
@@ -395,10 +404,14 @@ export async function testApp(
     return built;
   }
   let current = boot();
-  onCleanup(async () => {
+  let down = false;
+  async function shutdown() {
+    if (down) return;
+    down = true;
     await current.executions.stop();
     await current.close();
-  });
+  }
+  onCleanup(shutdown);
 
   // O WebSocket precisa de um servidor de verdade; ele só sobe quando um teste abre conexão.
   let server: ReturnType<typeof Bun.serve> | undefined;
@@ -464,6 +477,8 @@ export async function testApp(
      * Reinicia o servidor no mesmo banco: a fila para (o que estava em andamento fica sem
      * processo), as conexões de WebSocket caem e um app novo sobe com a fila rodando.
      */
+    /** Para o app (a fila e o que ele deixou rodando), para fechar o banco no meio do teste. */
+    shutdown,
     async restart() {
       await current.executions.stop();
       await current.close();
@@ -473,6 +488,7 @@ export async function testApp(
         await s.stop(true);
       }
       current = boot();
+      down = false;
     },
     /**
      * O dreno do `SIGTERM`: a fila para de pegar trabalho e espera o que está rodando até `ms`

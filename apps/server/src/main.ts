@@ -1,5 +1,5 @@
 /**
- * Entrypoint do servidor: `bun src/main.ts serve | migrate`.
+ * Entrypoint do servidor: `bun src/main.ts serve | migrate | restore <arquivo> [--sem-copia] | backup`.
  *
  * Variáveis:
  * - `SHEARIM_IDENTITY`: `tailnet` (o `whois` da LocalAPI pelo socket do tailscaled; é o da
@@ -29,6 +29,14 @@ import { connect, MEMORY } from "./db/connect";
 import { createDevIdentity } from "./identity/dev";
 import type { IdentityPort } from "./identity/port";
 import { createWhoisIdentity } from "./identity/whois";
+import {
+  type CommandDeps,
+  DumpBeforeMigrationError,
+  migrateSafely,
+  RestoreError,
+  restoreFrom,
+} from "./installation/commands";
+import { NewerDatabaseError } from "./installation/migrations";
 import { loadMasterKey, secretBox } from "./secrets";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
@@ -76,20 +84,58 @@ function pgliteDirFromEnv(raw: string | undefined) {
   return resolve(raw ?? resolve(repoRoot, ".data/pglite"));
 }
 
+/** `./backups`: os dumps de antes da migração e os backups noturnos. No compose, `/backups`. */
+const backupsDir = resolve(process.env.SHEARIM_BACKUPS_DIR || resolve(repoRoot, ".data/backups"));
+
+function commandDeps(conn: ReturnType<typeof connect>): CommandDeps {
+  return { conn, clock: systemClock, backupsDir, log: (line) => console.log(`shearim: ${line}`) };
+}
+
+/** As migrações do jeito seguro; um banco de versão mais nova encerra com a explicação. */
+async function migrateOrFail(conn: ReturnType<typeof connect>) {
+  try {
+    await migrateSafely(commandDeps(conn));
+  } catch (err) {
+    if (!(err instanceof NewerDatabaseError || err instanceof DumpBeforeMigrationError)) throw err;
+    await conn.close();
+    fail(err.message);
+  }
+}
+
 async function main(command: string | undefined) {
   const conn = connect({
     DATABASE_URL: process.env.DATABASE_URL,
     DATABASE_PASSWORD: secretFromFile(process.env.DATABASE_PASSWORD_FILE),
     pgliteDir: pgliteDirFromEnv(process.env.SHEARIM_PGLITE_DIR),
+    pgBinDir: process.env.SHEARIM_PG_BIN_DIR || undefined,
   });
 
   if (command === "migrate") {
-    await conn.migrate();
+    await migrateOrFail(conn);
     console.log(`shearim: migrações aplicadas em ${conn.describe}`);
     await conn.close();
     return;
   }
-  if (command !== "serve") fail(`comando desconhecido: ${command ?? "(nenhum)"}. Use "serve" ou "migrate".`);
+  if (command === "restore") {
+    const args = process.argv.slice(3);
+    const file = args.find((a) => !a.startsWith("--"));
+    if (!file) {
+      await conn.close();
+      fail("diga qual arquivo restaurar: restore <arquivo> (os backups ficam em ./backups).");
+    }
+    try {
+      await restoreFrom(commandDeps(conn), file, { withCopy: !args.includes("--sem-copia") });
+    } catch (err) {
+      await conn.close();
+      if (err instanceof RestoreError) fail(err.message);
+      fail(`a restauração falhou: ${(err as Error).message}`);
+    }
+    await conn.close();
+    return;
+  }
+  if (command !== "serve") {
+    fail(`comando desconhecido: ${command ?? "(nenhum)"}. Use "serve", "migrate" ou "restore <arquivo>".`);
+  }
 
   const who = identityFromEnv();
   const masterKeyFile = process.env.SHEARIM_MASTER_KEY_FILE;
@@ -103,7 +149,7 @@ async function main(command: string | undefined) {
   } catch (err) {
     fail((err as Error).message);
   }
-  await conn.migrate();
+  await migrateOrFail(conn);
   const vapidContact = process.env.SHEARIM_VAPID_CONTACT || DEV_VAPID_CONTACT;
   if (!/^(mailto:|https:)/.test(vapidContact)) fail(`SHEARIM_VAPID_CONTACT=${vapidContact} não é mailto: nem https:.`);
   const { app, websocket, executions, push, close } = createApp({
