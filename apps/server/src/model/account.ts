@@ -4,7 +4,10 @@
  *
  * - O contexto fixo vai em `--system-prompt` (no lugar do prompt de programação do Claude Code);
  *   as mensagens vão pelo stdin, que fecha em seguida.
- * - As tools, os settings, o MCP e os slash commands ficam desligados.
+ * - As tools nativas, os settings e os slash commands ficam desligados. O MCP também, menos o
+ *   endpoint do próprio Shearim (`tools/mcp.ts`) quando a execução tem Ferramentas: ele vai sozinho
+ *   no `--mcp-config` (com `--strict-mcp-config`), e as Ferramentas dele são liberadas sem pergunta
+ *   de permissão (`--allowedTools mcp__shearim`). O roteamento nunca tem Ferramentas (ADR 0009).
  * - O `env` é o de `accountEnv`: `CLAUDE_CONFIG_DIR`, as novas tentativas (3) e as esperas (90 s).
  * - A falha se lê por `result.is_error`, `assistant.error` e `terminal_reason`; nunca por
  *   `subtype` nem só pelo exit code (nota 02: token inválido sai 1 com `subtype: "success"`).
@@ -14,6 +17,7 @@
  * O parse depende da versão do Claude Code: a imagem o fixa, com `DISABLE_AUTOUPDATER=1`.
  */
 import { ClaudeMissing, type ClaudeProcess, drain, type ProcessTracker, spawnClaude } from "../accounts/claude-cli";
+import { MCP_SERVER_NAME, type McpConfig, type McpEndpoint, type McpSession } from "../tools/mcp";
 import {
   type ModelBrain,
   type ModelEvent,
@@ -41,6 +45,8 @@ export function accountBrain(opts: {
   procs: ProcessTracker;
   /** Os prazos do encerramento. Padrão: 10 s e 5 s; os testes injetam limites curtos. */
   stopGrace?: StopGrace;
+  /** O endpoint MCP do Shearim, por onde vão as Ferramentas da execução (`request.tools`). */
+  mcp?: McpEndpoint;
 }): ModelBrain {
   const grace = opts.stopGrace ?? { sigintMs: SIGINT_GRACE_MS, sigtermMs: SIGTERM_GRACE_MS };
 
@@ -58,10 +64,14 @@ export function accountBrain(opts: {
         return;
       }
 
+      if (request.tools && !opts.mcp) throw new Error("accountBrain sem endpoint MCP recebeu Ferramentas");
+      // O token da execução vale enquanto o `claude -p` dela roda.
+      const session: McpSession | undefined = request.tools ? opts.mcp!.open(request.tools, signal) : undefined;
       let proc: ClaudeProcess;
       try {
-        proc = opts.procs.track(spawnClaude(opts.claudeBin, argsFor(request), payer.configDir));
+        proc = opts.procs.track(spawnClaude(opts.claudeBin, argsFor(request, session?.config), payer.configDir));
       } catch (err) {
+        session?.close();
         if (!(err instanceof ClaudeMissing)) throw err;
         yield accountFailure(
           "o Shearim não conseguiu rodar a execução",
@@ -102,6 +112,7 @@ export function accountBrain(opts: {
         // Quem consome parou de ler antes do fim: encerra pelo mesmo caminho.
         if (proc.exitCode === null && proc.signalCode === null) stop();
         await stopped;
+        session?.close();
       }
       if (signal.aborted) return;
       yield* reading.end();
@@ -109,7 +120,7 @@ export function accountBrain(opts: {
   };
 }
 
-function argsFor(request: ModelRequest): string[] {
+function argsFor(request: ModelRequest, mcp?: McpConfig): string[] {
   const args = [
     "-p",
     "--output-format",
@@ -129,6 +140,7 @@ function argsFor(request: ModelRequest): string[] {
     request.system,
   ];
   if (request.output) args.push("--json-schema", JSON.stringify(request.output.schema));
+  if (mcp) args.push("--mcp-config", JSON.stringify(mcp), "--allowedTools", `mcp__${MCP_SERVER_NAME}`);
   return args;
 }
 
@@ -191,6 +203,9 @@ function streamReading(request: ModelRequest) {
   /** A categoria de `assistant.error`. */
   let category: string | undefined;
   let result: Json | undefined;
+  /** Já saiu texto; e um turno novo começou desde o último texto. */
+  let wrote = false;
+  let newTurn = false;
 
   return {
     /** Já chegou o `result`. */
@@ -204,10 +219,19 @@ function streamReading(request: ModelRequest) {
         return undefined;
       }
       if (line.type === "stream_event") {
-        const event = progress(line.event as Json | undefined);
+        const raw = line.event as Json | undefined;
+        // Um turno novo do modelo (depois de uma Ferramenta): o texto dele vem depois de uma linha
+        // em branco, como pela Chave.
+        if (raw?.type === "message_start") newTurn = true;
+        const event = progress(raw);
         // Com saída estruturada, a resposta é o `structured_output` do fim: o texto do caminho só
         // conta como progresso.
-        return request.output && event?.type === "text" ? { type: "thinking" } : event;
+        if (request.output && event?.type === "text") return { type: "thinking" };
+        if (event?.type !== "text") return event;
+        const text = wrote && newTurn ? `\n\n${event.text}` : event.text;
+        wrote = true;
+        newTurn = false;
+        return { type: "text", text };
       }
       if (line.type === "system" && line.subtype === "api_retry") {
         return { type: "api_retry", attempt: num(line.attempt) ?? 1, max: num(line.max_retries) ?? 1 };
