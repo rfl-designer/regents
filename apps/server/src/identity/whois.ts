@@ -9,7 +9,7 @@ const LOCALAPI_HOST = "local-tailscaled.sock";
 
 /** Forma do `apitype.WhoIsResponse` que o Shearim lê. */
 interface WhoIsResponse {
-  Node?: { Tags?: string[]; Hostinfo?: { ShareeNode?: boolean } };
+  Node?: { Tags?: string[]; ComputedName?: string; Hostinfo?: { Hostname?: string; ShareeNode?: boolean } };
   UserProfile?: { ID?: number; LoginName?: string; DisplayName?: string; ProfilePicURL?: string };
 }
 
@@ -109,6 +109,8 @@ async function whois(socketPath: string, ip: string): Promise<Identity> {
     login: p.LoginName ?? "",
     displayName: p.DisplayName || p.LoginName || userId,
     profilePicUrl: p.ProfilePicURL || undefined,
+    // O nome que a pessoa deu ao aparelho; sem ele, o nome do nó na tailnet.
+    device: body.Node?.Hostinfo?.Hostname || body.Node?.ComputedName || undefined,
     sharee: body.Node?.Hostinfo?.ShareeNode === true,
   };
 }

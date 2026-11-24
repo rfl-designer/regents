@@ -25,6 +25,7 @@ describe("adaptador whois da LocalAPI (contrato, resposta gravada)", () => {
       login: "juliana@exemplo.com",
       displayName: "Juliana Souza",
       profilePicUrl: "https://exemplo.com/juliana.png",
+      device: "Notebook da Juliana",
       sharee: false,
     });
     expect(localApi.calls).toEqual([{ addr: "100.101.102.103", host: "local-tailscaled.sock" }]);
@@ -42,8 +43,17 @@ describe("adaptador whois da LocalAPI (contrato, resposta gravada)", () => {
       userId: "51234567890123",
       login: "bruno@outra-tailnet.com",
       displayName: "Bruno Lima",
+      device: "Celular do Bruno",
       sharee: true,
     });
+  });
+
+  test("sem Hostinfo.Hostname, o aparelho é o ComputedName do nó", async () => {
+    const localApi = fakeLocalApi();
+    localApi.answer("100.101.102.103", recordedWhois("whois-membro").replace('"Hostname": "Notebook da Juliana",', ""));
+    const identity = createWhoisIdentity({ socketPath: localApi.socketPath, clock: fakeClock() });
+
+    expect(await identity.whoAmI(fromServe("100.101.102.103"))).toMatchObject({ device: "notebook-da-juliana" });
   });
 
   test("nó com tag não tem identidade, mesmo com o UserProfile tagged-devices", async () => {
@@ -200,6 +210,29 @@ describe("entrada pela tailnet: o app com o whois de verdade", () => {
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: "identity_unavailable" });
     expect((await t.upgradeWith(juliana)).status).toBe(503);
+    // A página do PWA também pergunta ao whois (#16): 503, não a página de "sem identidade".
+    expect((await t.request(juliana).get("/")).status).toBe(503);
+  });
+
+  test("o Pedido de entrada leva o aparelho, a foto e o sharee que o whois deu", async () => {
+    const { t, localApi } = await tailnetApp();
+    localApi.answer("100.101.102.103", recordedWhois("whois-membro"));
+    localApi.answer("100.90.80.70", recordedWhois("whois-sharee"));
+    const bruno = { "x-forwarded-for": "100.90.80.70" };
+    expect((await t.request(juliana).get("/api/me")).status).toBe(200);
+
+    expect([200, 201]).toContain((await t.request(bruno).post("/api/join-request")).status);
+
+    const pedidos = await (await t.request(juliana).get("/api/join-requests")).json();
+    expect(pedidos).toEqual([
+      expect.objectContaining({
+        login: "bruno@outra-tailnet.com",
+        displayName: "Bruno Lima",
+        device: "Celular do Bruno",
+        profilePicUrl: null,
+        sharee: true,
+      }),
+    ]);
   });
 
   test("/api/health responde sem perguntar ao whois (é o healthcheck do container)", async () => {
