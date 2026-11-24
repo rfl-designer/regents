@@ -40,6 +40,8 @@ bun run start          # servidor servindo o build (precisa de SHEARIM_IDENTITY,
 apps/server/        Bun + Hono + Drizzle
   src/app.ts        createApp(deps) -> { app, websocket, events }: o seam dos testes
   src/events.ts     WebSocket de eventos: EventHub.publish(audiência, evento)
+  src/conversations.ts  rotas de Canais, participantes, mensagens e Instruções do Canal
+  src/participation.ts  quem participa, quem vê (canSee) e quem recebe eventos (audienceOf)
   src/main.ts       entrypoint: serve | migrate
   src/db/           schema.ts (Drizzle), client.ts, connect.ts (Postgres ou PGlite)
   src/identity/     porta de identidade + adaptador de dev
@@ -80,6 +82,23 @@ aba.received();                                             // tudo o que chegou
 (await t.upgrade({ none: "funnel" })).status;                // 403: upgrade recusado
 t.events.publish({ members: [id] }, evento);                 // publicar direto no hub
 ```
+
+### Canais e visibilidade
+
+Um Canal público é visto por todo Membro; um privado só por quem participa. Para quem não participa de um privado (o Admin inclusive), ele não está em `GET /api/channels`, responde 404 em toda rota dele e não manda evento. A regra mora em `participation.ts`: `canSee` (HTTP) e `audienceOf` (WebSocket) são a mesma decisão vista dos dois lados; toda rota que publica evento de uma conversa passa por `audienceOf`. Quem cria um Canal participa dele; escrever num público é entrar nele.
+
+| Rota | Quem | O quê |
+|---|---|---|
+| `GET /api/channels` | Membro | Canais que ele vê (`ChannelDto`, com Instruções, N e participantes) |
+| `POST /api/channels` | Membro | `{ name, kind }`; 409 `name_taken` (sem diferença de maiúsculas) |
+| `GET /api/channels/:id` | quem vê | o Canal |
+| `POST /api/channels/:id/join` | Membro | entra num público (privado: 404) |
+| `POST /api/channels/:id/participants` | quem vê | `{ memberId }`; adiciona uma pessoa |
+| `GET /api/members` | Membro | `{ id, displayName }[]`, para escolher quem adicionar |
+| `GET /api/channel-settings` | Admin | Instruções e N de todo Canal, sem mensagens nem participantes |
+| `PATCH /api/channel-settings/:id` | Admin | `{ instructions?, recentMessages? }` (N inteiro ≥ 0, padrão 30) |
+
+Toda mudança num Canal (criado, alguém entrou, Instruções ou N) sai como `channel.updated` com o `ChannelDto` inteiro, para quem vê o Canal; o cliente insere ou troca pelo `id`.
 
 Para provar que algo **não** chegou, sem `sleep`: publique depois um evento que chega a todos e verifique que o próximo evento daquele tipo na conexão é ele (exemplo em `apps/server/test/realtime.test.ts`).
 

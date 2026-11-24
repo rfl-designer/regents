@@ -1,7 +1,10 @@
 import type { ChannelDto, MeDto } from "@shearim/contracts";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ApiFailure, api, Offline } from "./api";
+import { ChannelSettings } from "./ChannelSettings";
 import { ChannelView } from "./ChannelView";
+import { useServerEvents } from "./live";
+import { Sidebar } from "./Sidebar";
 
 type State =
   | { kind: "loading" }
@@ -39,8 +42,19 @@ function explain(err: unknown): State {
   return { kind: "blocked", title: "Algo deu errado", detail: "Recarregue a página para tentar de novo." };
 }
 
+/** Insere ou troca pelo `id`, mantendo a ordem de criação (Canal novo vai para o fim). */
+function upsert(list: ChannelDto[], channel: ChannelDto) {
+  const i = list.findIndex((c) => c.id === channel.id);
+  if (i < 0) return [...list, channel];
+  const next = [...list];
+  next[i] = channel;
+  return next;
+}
+
 export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [view, setView] = useState<"channel" | "settings">("channel");
 
   useEffect(() => {
     (async () => {
@@ -54,6 +68,20 @@ export function App() {
     })();
   }, []);
 
+  const setChannels = useCallback((change: (list: ChannelDto[]) => ChannelDto[]) => {
+    setState((s) => (s.kind === "ready" ? { ...s, channels: change(s.channels) } : s));
+  }, []);
+
+  useServerEvents((event) => {
+    // A cada (re)conexão, a lista do servidor manda: pode ter mudado enquanto a conexão caiu.
+    if (event.type === "ready")
+      api.channels().then(
+        (list) => setChannels(() => list),
+        () => {},
+      );
+    if (event.type === "channel.updated") setChannels((list) => upsert(list, event.channel));
+  });
+
   if (state.kind === "loading") return <main className="center">Carregando…</main>;
   if (state.kind === "blocked") {
     return (
@@ -64,14 +92,43 @@ export function App() {
     );
   }
 
-  const channel = state.channels[0];
+  const channel = state.channels.find((c) => c.id === selectedId) ?? state.channels[0];
+  const open = (id: string) => {
+    setSelectedId(id);
+    setView("channel");
+  };
   return (
     <div className="shell">
       <header className="topbar">
         <strong>Shearim</strong>
         <span className="whoami">Você está como {state.me.displayName}</span>
       </header>
-      {channel ? <ChannelView channel={channel} /> : <main className="center">Nenhum Canal ainda.</main>}
+      <div className="workspace">
+        <Sidebar
+          channels={state.channels}
+          selectedId={view === "channel" ? (channel?.id ?? null) : null}
+          isAdmin={state.me.role === "admin"}
+          settingsOpen={view === "settings"}
+          onOpen={open}
+          onCreated={(created) => {
+            setChannels((list) => upsert(list, created));
+            open(created.id);
+          }}
+          onOpenSettings={() => setView("settings")}
+        />
+        {view === "settings" ? (
+          <ChannelSettings />
+        ) : channel ? (
+          <ChannelView
+            key={channel.id}
+            channel={channel}
+            me={state.me}
+            onChanged={(changed) => setChannels((list) => upsert(list, changed))}
+          />
+        ) : (
+          <main className="center">Nenhum Canal ainda.</main>
+        )}
+      </div>
     </div>
   );
 }

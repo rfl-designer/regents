@@ -1,4 +1,4 @@
-import type { ChannelDto, MessageDto } from "@shearim/contracts";
+import type { ChannelDto, MeDto, MemberSummaryDto, MessageDto } from "@shearim/contracts";
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { useServerEvents } from "./live";
@@ -11,7 +11,15 @@ function append(prev: MessageDto[] | null, arrived: MessageDto[]) {
   return [...(prev ?? []), ...arrived.filter((m) => !have.has(m.id))];
 }
 
-export function ChannelView({ channel }: { channel: ChannelDto }) {
+interface Props {
+  channel: ChannelDto;
+  me: MeDto;
+  /** O Canal mudou por uma ação desta tela (entrar, adicionar alguém). */
+  onChanged(channel: ChannelDto): void;
+}
+
+export function ChannelView({ channel, me, onChanged }: Props) {
+  const joined = channel.participants.some((p) => p.kind === "member" && p.id === me.id);
   const [messages, setMessages] = useState<MessageDto[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [draft, setDraft] = useState("");
@@ -53,6 +61,8 @@ export function ChannelView({ channel }: { channel: ChannelDto }) {
     setSendError(false);
     try {
       const msg = await api.send(channel.id, { body: draft });
+      // Escrever num Canal público é entrar nele; o `channel.updated` também chega, mas a tela não espera.
+      if (!joined) api.channel(channel.id).then(onChanged, () => {});
       setMessages((prev) => append(prev, [msg]));
       setDraft("");
     } catch {
@@ -71,7 +81,7 @@ export function ChannelView({ channel }: { channel: ChannelDto }) {
 
   return (
     <main className="channel">
-      <h1 className="channel-name"># {channel.name}</h1>
+      <ChannelHeader channel={channel} joined={joined} onChanged={onChanged} />
       <ol className="messages" aria-label={`Mensagens de #${channel.name}`} aria-busy={messages === null && !loadError}>
         {loadError && <li className="notice">Não foi possível carregar as mensagens. Recarregue a página.</li>}
         {messages?.length === 0 && <li className="notice">Nenhuma mensagem ainda. Diga oi!</li>}
@@ -110,5 +120,124 @@ export function ChannelView({ channel }: { channel: ChannelDto }) {
         </button>
       </form>
     </main>
+  );
+}
+
+function ChannelHeader({ channel, joined, onChanged }: Omit<Props, "me"> & { joined: boolean }) {
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const names = channel.participants.map((p) => p.displayName).join(", ");
+
+  async function act(run: () => Promise<ChannelDto>) {
+    setError(null);
+    try {
+      onChanged(await run());
+      setAdding(false);
+    } catch {
+      setError("Não deu certo. Tente de novo.");
+    }
+  }
+
+  return (
+    <header className="channel-header">
+      <div className="row">
+        <h1 className="channel-name">
+          # {channel.name}
+          {channel.kind === "private" && (
+            <>
+              {" "}
+              <span className="tag">privado</span>
+            </>
+          )}
+        </h1>
+        <span className="hint" title={names}>
+          {channel.participants.length === 1 ? "1 participante" : `${channel.participants.length} participantes`}
+        </span>
+        {joined ? (
+          <button type="button" className="link" onClick={() => setAdding((v) => !v)}>
+            Adicionar pessoa
+          </button>
+        ) : (
+          channel.kind === "public" && (
+            <button type="button" className="link" onClick={() => act(() => api.joinChannel(channel.id))}>
+              Entrar no Canal
+            </button>
+          )
+        )}
+      </div>
+      {channel.instructions && (
+        <p className="instructions">
+          <strong>Instruções do Canal:</strong> {channel.instructions}
+        </p>
+      )}
+      {adding && (
+        <AddPerson
+          channel={channel}
+          onAdd={(memberId) => act(() => api.addParticipant(channel.id, memberId))}
+          onCancel={() => setAdding(false)}
+        />
+      )}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+    </header>
+  );
+}
+
+function AddPerson({
+  channel,
+  onAdd,
+  onCancel,
+}: {
+  channel: ChannelDto;
+  onAdd(memberId: string): void;
+  onCancel(): void;
+}) {
+  const [members, setMembers] = useState<MemberSummaryDto[] | null>(null);
+  const [choice, setChoice] = useState("");
+
+  useEffect(() => {
+    api.members().then(setMembers, () => setMembers([]));
+  }, []);
+
+  const inside = new Set(channel.participants.map((p) => p.id));
+  const outside = members?.filter((m) => !inside.has(m.id)) ?? [];
+
+  if (members && outside.length === 0) {
+    return (
+      <p className="hint">
+        Todos os Membros já participam.{" "}
+        <button type="button" className="link" onClick={onCancel}>
+          Fechar
+        </button>
+      </p>
+    );
+  }
+  return (
+    <form
+      className="row"
+      aria-label={`Adicionar pessoa a #${channel.name}`}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (choice) onAdd(choice);
+      }}
+    >
+      <select aria-label="Pessoa" value={choice} onChange={(e) => setChoice(e.target.value)}>
+        <option value="">Escolha uma pessoa…</option>
+        {outside.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.displayName}
+          </option>
+        ))}
+      </select>
+      <button type="submit" disabled={!choice}>
+        Adicionar
+      </button>
+      <button type="button" className="link" onClick={onCancel}>
+        Cancelar
+      </button>
+    </form>
   );
 }
