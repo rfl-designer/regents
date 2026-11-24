@@ -179,6 +179,36 @@ describe("depois da resposta pela Chave", () => {
   );
 });
 
+describe("Tentar de novo", () => {
+  test(
+    "com a Conta da autora no limite, o Tentar de novo segue a tabela de quem paga e sai pela Chave",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t);
+      await t.linkAccount(juliana);
+      const daJuliana = await t.socket(juliana, "aba da Juliana");
+      t.claude.script({ run: limiteAte(QUINZE_E_QUARENTA_E_CINCO) });
+      // A troca no meio leva à Chave, que recusa o pedido (falha sem nova tentativa automática).
+      t.anthropic.reply(
+        { status: 400, errorType: "invalid_request_error", errorMessage: "pedido ruim" },
+        { text: "Agora pela Chave." },
+      );
+
+      const origem = await enviar(t, geral.id, "@Faro qual o prazo?");
+      const falha = await andamento(daJuliana, (e) => e.state === "failed");
+      expect(falha.payer).toBe("key");
+
+      const res = await t.as(juliana).post(`/api/conversations/${geral.id}/executions/${falha.id}/retry`);
+      expect(res.status).toBe(200);
+
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Agora pela Chave.");
+      expect(t.anthropic.requests.filter((r) => !r.body.output_config)).toHaveLength(2);
+      expect(execucoes(t)).toHaveLength(1);
+    },
+    LONGO,
+  );
+});
+
 describe("Ligada", () => {
   test(
     "sem Chave: a Conta da autora paga",

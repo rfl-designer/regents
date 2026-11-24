@@ -274,8 +274,6 @@ export const executions = pgTable(
     /** A nova tentativa da API em curso ("tentando de novo (n/m)"), ou nulo. */
     apiRetryAttempt: integer(),
     apiRetryMax: integer(),
-    /** A tentativa atual veio do "Tentar de novo" do autor (a Spec quer a Conta dele pagando: #27). */
-    retriedByAuthor: boolean().notNull().default(false),
     /** Quem paga a tentativa atual: `account` (a Conta do autor) ou `key` (a Chave do Workspace). */
     payer: text(),
     /**

@@ -148,6 +148,13 @@
       "when": 1795533108273,
       "tag": "0020_porque-da-chave-na-resposta",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795537636768,
+      "tag": "0021_sem-tentar-de-novo-do-autor",
+      "breakpoints": true
     }
   ]
 }

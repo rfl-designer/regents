@@ -175,7 +175,7 @@ export interface Executions {
   cancelAuthoredBy(memberId: string, reason: string): Promise<ExecutionDto[]>;
   /**
    * "Tentar de novo" de uma falha: refaz só esta execução (o passo que falhou), do começo, com
-   * o contexto relido e o pagador decidido de novo (marcada como do autor, para o #27). Devolve
+   * o contexto relido e o pagador decidido de novo pela mesma tabela de quem paga. Devolve
    * o Andamento na fila, ou nada se ela não está em falha. A conferência do autor fica com quem chama.
    */
   retry(executionId: string): Promise<ExecutionDto | undefined>;
@@ -365,8 +365,8 @@ export function createExecutions(deps: {
   }
 
   /**
-   * Quem paga esta execução, pela tabela da Spec, decidido de novo a cada tentativa (inclusive o
-   * "Tentar de novo" do autor, `job.retriedByAuthor`, que a mesma tabela já põe na Conta dele):
+   * Quem paga esta execução, pela tabela da Spec, decidido de novo a cada tentativa (o "Tentar de
+   * novo" do autor também: com a Conta dele no limite, sai pela Chave):
    *
    * - Conta do autor Ligada: a Conta, com ou sem Chave;
    * - No limite até HH:MM: a Chave utilizável; sem ela, a fila até HH:MM (`hold` com `until`);
@@ -1011,7 +1011,7 @@ export function createExecutions(deps: {
       const queued = await transition(
         executionId,
         "queued",
-        { attempt: 0, payer: null, reason: null, authorReason: null, finishedAt: null, retriedByAuthor: true },
+        { attempt: 0, payer: null, reason: null, authorReason: null, finishedAt: null },
         { from: "failed" },
       );
       if (!queued) return undefined;

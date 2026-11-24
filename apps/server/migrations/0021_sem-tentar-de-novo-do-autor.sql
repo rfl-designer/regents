@@ -1,0 +1,1 @@
+ALTER TABLE "executions" DROP COLUMN "retried_by_author";
