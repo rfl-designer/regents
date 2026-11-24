@@ -5,12 +5,13 @@
  * - `SHEARIM_IDENTITY`: `tailnet` (o `whois` da LocalAPI pelo socket do tailscaled; é o da
  *   imagem Docker) ou `dev` (cookie, só desenvolvimento).
  * - `TS_SOCKET`: socket do tailscaled (padrão `/var/run/tailscale/tailscaled.sock`, o do compose).
+ * - `DATABASE_PASSWORD_FILE`: arquivo com a senha do Postgres (o segredo do compose), à parte da URL.
  * - `DATABASE_URL`: Postgres. Sem ela, PGlite em `SHEARIM_PGLITE_DIR` (padrão `.data/pglite`;
  *   `memory://` para um banco em memória que some ao parar).
  * - `HOST` (padrão `0.0.0.0`), `PORT` (padrão `3000`).
  * - `SHEARIM_WEB_DIST`: build do PWA servido em `/` (padrão `apps/web/dist`).
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
@@ -48,6 +49,15 @@ function identityFromEnv(): { identity: IdentityPort; routes?: Hono; describe: s
   fail(`SHEARIM_IDENTITY=${mode || "(vazio)"} não é suportado. Use "tailnet" (a Instalação) ou "dev".`);
 }
 
+function secretFromFile(path: string | undefined) {
+  if (!path) return undefined;
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch (err) {
+    fail(`não consegui ler o segredo em ${path}: ${String(err)}`);
+  }
+}
+
 /** `memory://` é um PGlite em memória, que some ao parar (o e2e usa para começar do zero). */
 function pgliteDirFromEnv(raw: string | undefined) {
   if (raw === MEMORY) return raw;
@@ -57,6 +67,7 @@ function pgliteDirFromEnv(raw: string | undefined) {
 async function main(command: string | undefined) {
   const conn = connect({
     DATABASE_URL: process.env.DATABASE_URL,
+    DATABASE_PASSWORD: secretFromFile(process.env.DATABASE_PASSWORD_FILE),
     pgliteDir: pgliteDirFromEnv(process.env.SHEARIM_PGLITE_DIR),
   });
 
