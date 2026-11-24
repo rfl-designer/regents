@@ -1,8 +1,10 @@
 import { EVENTS_PATH } from "@shearim/contracts";
 import { Hono } from "hono";
 import { websocket } from "hono/bun";
-import { type AccountsConfig, createAccounts } from "./accounts";
+import { accountPushes } from "./account-pushes";
+import { type AccountHooks, type AccountsConfig, createAccounts } from "./accounts";
 import { processTracker } from "./accounts/claude-cli";
+import { adminPushes } from "./admin-pushes";
 import { agentRoutes } from "./agents";
 import type { Clock } from "./clock";
 import { conversationRoutes } from "./conversations";
@@ -23,7 +25,7 @@ import { createModelPort, type ModelBrain } from "./model/port";
 import { noIdentityPage } from "./no-identity-page";
 import { createPresence } from "./presence";
 import { profileRoutes } from "./profile";
-import { createPush, type PushConfig } from "./push";
+import { createPush, type Push, type PushConfig } from "./push";
 import { createReading, unreadOf } from "./reading";
 import type { SecretBox } from "./secrets";
 import { threadRoutes } from "./threads";
@@ -48,10 +50,10 @@ export interface AppDeps {
   /** Rotas só de desenvolvimento (`/dev/*`), vindas do adaptador de identidade de dev. */
   devRoutes?: Hono;
   /**
-   * Ganchos de domínio (ex.: push aos Admins a cada Pedido de entrada, a cada incidente da Chave e
-   * no estouro de orçamento, #34; push da falha ao autor, #32).
+   * Ganchos de domínio de fora (os testes). Os do próprio app rodam antes: os pushes do Admin e
+   * da Conta (#34); o push da falha ao autor fica para o #32 (`executionFailed`).
    */
-  hooks?: JoinRequestHooks & ExecutionHooks & KeyHooks;
+  hooks?: AppHooks;
   /** O `sub` do VAPID e, nos testes, o agente HTTPS do coletor de push. */
   push: PushConfig;
   /** A versão que está rodando e de onde vem o vencimento da chave do nó (seção Instalação). */
@@ -62,6 +64,22 @@ export interface AppDeps {
 
 type Env = { Variables: { who: TailnetUser; member: Member } };
 
+export type AppHooks = JoinRequestHooks & ExecutionHooks & KeyHooks & AccountHooks;
+
+/** Os ganchos do próprio app (os pushes) e, depois deles, os que vieram de fora (os testes). */
+function chain(own: AppHooks, extra: AppHooks = {}): AppHooks {
+  type Hook = (...args: unknown[]) => void;
+  const keys = new Set([...Object.keys(own), ...Object.keys(extra)]) as Set<keyof AppHooks>;
+  const out: Record<string, Hook> = {};
+  for (const key of keys) {
+    out[key] = (...args) => {
+      (own[key] as Hook | undefined)?.(...args);
+      (extra[key] as Hook | undefined)?.(...args);
+    };
+  }
+  return out as AppHooks;
+}
+
 const UNAVAILABLE = Symbol("identity_unavailable");
 
 /**
@@ -69,15 +87,19 @@ const UNAVAILABLE = Symbol("identity_unavailable");
  * Nada de singleton global. `main.ts` monta as dependências reais.
  */
 export function createApp(deps: AppDeps) {
-  const { db, identity, clock, hooks, secrets } = deps;
+  const { db, identity, clock, secrets } = deps;
   const app = new Hono<Env>();
   const { hub: events, route: eventsRoute, closeForRestart } = createEventHub();
+  // Os pushes do Admin e da Conta (#34); o `push` só é chamado quando um gancho roda, depois da subida.
+  const notify: Push["notify"] = (memberId, n) => push.notify(memberId, n);
+  const hooks = chain({ ...adminPushes({ db, notify }), ...accountPushes({ db, notify }) }, deps.hooks);
   // A volta da Conta (ou a troca da Chave) solta quem espera por ela na fila.
   const accounts = createAccounts({
     db,
     clock,
     events,
     config: deps.accounts,
+    hooks,
     onChanged: (memberId) => void executions.reconsider(memberId).catch(() => {}),
   });
   // Pela Conta, um `claude -p` por execução (ADR 0006); os processos vivos morrem no `close`.

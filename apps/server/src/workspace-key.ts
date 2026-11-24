@@ -57,6 +57,15 @@ async function keyStatus(db: Db): Promise<WorkspaceKeyDto> {
     : { configured: false, updatedAt: null, incident };
 }
 
+/** Se o Workspace tem Chave (sem abri-la). */
+export async function hasWorkspaceKey(db: Db): Promise<boolean> {
+  const [row] = await db
+    .select({ key: workspaceSettings.keyCiphertext })
+    .from(workspaceSettings)
+    .where(eq(workspaceSettings.id, 1));
+  return Boolean(row?.key);
+}
+
 /** A Chave em texto puro, para a porta de modelo, ou `null` se o Workspace não tem Chave. */
 export async function readWorkspaceKey(db: Db, secrets: SecretBox): Promise<string | null> {
   const [row] = await db.select().from(workspaceSettings).where(eq(workspaceSettings.id, 1));

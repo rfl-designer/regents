@@ -713,6 +713,14 @@ export interface DeviceDto {
 export const conversationPath = (conversationId: string) => `/c/${conversationId}`;
 /** A seção Instalação no PWA: é para onde levam os pushes do Admin sobre o backup e a chave do nó. */
 export const INSTALLATION_PATH = "/instalacao";
+/** A seção Membros (o Admin decide os Pedidos de entrada): para onde leva o push de cada pedido. */
+export const MEMBERS_PATH = "/membros";
+/** A Chave do Workspace: para onde leva o push do incidente da Chave. */
+export const WORKSPACE_KEY_PATH = "/chave";
+/** Os Agentes (orçamento e gasto): para onde leva o push do estouro de orçamento. */
+export const AGENTS_PATH = "/agentes";
+/** "Minha Conta": para onde levam os pushes da Conta (queda, assinatura repetida). */
+export const ACCOUNT_PATH = "/conta";
 
 // ---------- eventos do WebSocket ----------
 

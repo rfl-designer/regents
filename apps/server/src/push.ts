@@ -40,7 +40,8 @@ export interface PushConfig {
  * - resposta de Agente, falha e Thread seguida (#32): chamam `notify` com outra `urgency`. Na
  *   Thread seguida, quem avisar é `followersOf(db, message.threadRootId)` (`threads.ts`); quem
  *   passa a seguir por esta mensagem já está gravado quando `messageCreated` roda;
- * - os pushes do Admin e da Conta (#28, #34, #35): `notify`, como os da Instalação (#38).
+ * - o aviso de vencimento da Conta (#35): `notify`, como os do Admin e da Conta (#34, em
+ *   `admin-pushes.ts` e `account-pushes.ts`) e os da Instalação (#38).
  */
 export function createPush(deps: {
   db: Db;
@@ -227,12 +228,13 @@ export function createPush(deps: {
   }
 
   /**
-   * Um push que não é de conversa (os do Admin sobre a Instalação; depois, os da Conta): leva a
-   * `path` do PWA, com `tag` e `Topic` próprios (o novo substitui o anterior do mesmo assunto).
+   * Um push que não é de conversa (os do Admin e os da Conta): leva a `path` do PWA, com `tag` e
+   * `Topic` próprios (o novo substitui o anterior do mesmo assunto). `icon` troca o ícone do app
+   * pela foto de alguém (o Pedido de entrada).
    */
   function notify(
     memberId: string,
-    n: { title: string; body: string; path: string; tag: string; urgency: "high" | "normal" },
+    n: { title: string; body: string; path: string; tag: string; urgency: "high" | "normal"; icon?: string },
   ) {
     enqueue(async () => {
       const [subscription] = await db
@@ -250,6 +252,7 @@ export function createPush(deps: {
             navigate: new URL(n.path, subscription.origin).href,
             tag: n.tag,
             lang: "pt-BR",
+            ...(n.icon ? { icon: n.icon } : {}),
           },
           app_badge: await badgeOf(memberId),
         },

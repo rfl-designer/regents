@@ -1,6 +1,6 @@
 /**
  * Service worker do Shearim. O push chega no JSON do Declarative Web Push (Spec, módulo 12):
- * `{ web_push: 8030, notification: { title, body, navigate, tag, lang }, app_badge }`. O Safari
+ * `{ web_push: 8030, notification: { title, body, navigate, tag, lang, icon? }, app_badge }`. O Safari
  * que entende o formato mostra a notificação sozinho; nos outros navegadores, este service worker
  * lê o mesmo JSON e monta a notificação. A mesma `tag` substitui a anterior da conversa.
  * (O `setAppBadge` é do #32.)
@@ -23,14 +23,15 @@ self.addEventListener("push", (event) => {
         body: n.body,
         tag: n.tag,
         lang: n.lang || "pt-BR",
-        icon: "/icon-192.png",
+        // A foto de quem pede para entrar (o push do Pedido de entrada); senão, o ícone do app.
+        icon: n.icon || "/icon-192.png",
         data: { navigate: n.navigate || "/", conversationId: n.tag },
       });
     })(),
   );
 });
 
-/** Tocar na notificação abre a conversa: numa janela do Shearim que já esteja aberta, ou numa nova. */
+/** Tocar na notificação abre a conversa (ou a tela do push do Admin e da Conta): numa janela do Shearim que já esteja aberta, ou numa nova. */
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const { navigate, conversationId } = event.notification.data || {};
