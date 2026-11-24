@@ -1,10 +1,11 @@
 import type { ChannelDto, MeDto } from "@shearim/contracts";
 import { useCallback, useEffect, useState } from "react";
+import { AgentsSettings, WorkspaceKeySettings } from "./AgentsAdmin";
 import { ApiFailure, api, Offline } from "./api";
 import { ChannelSettings } from "./ChannelSettings";
 import { ChannelView } from "./ChannelView";
 import { useServerEvents } from "./live";
-import { Sidebar } from "./Sidebar";
+import { type AdminView, Sidebar } from "./Sidebar";
 
 type State =
   | { kind: "loading" }
@@ -54,7 +55,7 @@ function upsert(list: ChannelDto[], channel: ChannelDto) {
 export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<"channel" | "settings">("channel");
+  const [view, setView] = useState<"channel" | AdminView>("channel");
 
   useEffect(() => {
     (async () => {
@@ -108,16 +109,20 @@ export function App() {
           channels={state.channels}
           selectedId={view === "channel" ? (channel?.id ?? null) : null}
           isAdmin={state.me.role === "admin"}
-          settingsOpen={view === "settings"}
+          adminView={view === "channel" ? null : view}
           onOpen={open}
           onCreated={(created) => {
             setChannels((list) => upsert(list, created));
             open(created.id);
           }}
-          onOpenSettings={() => setView("settings")}
+          onOpenAdmin={setView}
         />
         {view === "settings" ? (
           <ChannelSettings />
+        ) : view === "agents" ? (
+          <AgentsSettings />
+        ) : view === "key" ? (
+          <WorkspaceKeySettings />
         ) : channel ? (
           <ChannelView
             key={channel.id}

@@ -1,13 +1,17 @@
 import type {
+  AgentDto,
   ApiError,
   ChannelDto,
   ChannelSettingsDto,
+  CreateAgentInput,
   CreateChannelInput,
+  ExecutionDto,
   MeDto,
   MemberSummaryDto,
   MessageDto,
   SendMessageInput,
   UpdateChannelSettingsInput,
+  WorkspaceKeyDto,
 } from "@shearim/contracts";
 
 /** Falha de uma chamada à API, já com o que a tela precisa para explicar. */
@@ -58,4 +62,11 @@ export const api = {
   messages: (channelId: string) => call<MessageDto[]>(`/api/channels/${channelId}/messages`),
   send: (channelId: string, input: SendMessageInput) =>
     call<MessageDto>(`/api/channels/${channelId}/messages`, json("POST", input)),
+  executions: (channelId: string) => call<ExecutionDto[]>(`/api/channels/${channelId}/executions`),
+  agents: () => call<AgentDto[]>("/api/agents"),
+  createAgent: (input: CreateAgentInput) => call<AgentDto>("/api/agents", json("POST", input)),
+  addAgent: (channelId: string, agentId: string) =>
+    call<ChannelDto>(`/api/channels/${channelId}/agents`, json("POST", { agentId })),
+  workspaceKey: () => call<WorkspaceKeyDto>("/api/workspace-key"),
+  setWorkspaceKey: (apiKey: string) => call<WorkspaceKeyDto>("/api/workspace-key", json("PUT", { apiKey })),
 };

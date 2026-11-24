@@ -6,11 +6,20 @@ interface Props {
   channels: ChannelDto[];
   selectedId: string | null;
   isAdmin: boolean;
-  settingsOpen: boolean;
+  /** Qual tela do Admin está aberta, se alguma. */
+  adminView: AdminView | null;
   onOpen(id: string): void;
   onCreated(channel: ChannelDto): void;
-  onOpenSettings(): void;
+  onOpenAdmin(view: AdminView): void;
 }
+
+export type AdminView = "settings" | "agents" | "key";
+
+const ADMIN_LINKS: [AdminView, string][] = [
+  ["settings", "Instruções dos Canais"],
+  ["agents", "Agentes"],
+  ["key", "Chave do Workspace"],
+];
 
 /** A lista de conversas: os Canais que o Membro vê (as DMs do #18 entram aqui, em outra seção). */
 export function Sidebar(props: Props) {
@@ -52,16 +61,18 @@ export function Sidebar(props: Props) {
           + Novo Canal
         </button>
       )}
-      {props.isAdmin && (
-        <button
-          type="button"
-          className="link"
-          aria-current={props.settingsOpen ? "page" : undefined}
-          onClick={props.onOpenSettings}
-        >
-          Instruções dos Canais
-        </button>
-      )}
+      {props.isAdmin &&
+        ADMIN_LINKS.map(([view, label]) => (
+          <button
+            key={view}
+            type="button"
+            className="link"
+            aria-current={props.adminView === view ? "page" : undefined}
+            onClick={() => props.onOpenAdmin(view)}
+          >
+            {label}
+          </button>
+        ))}
     </nav>
   );
 }
