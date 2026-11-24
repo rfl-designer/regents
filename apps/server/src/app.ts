@@ -8,13 +8,13 @@ import { conversationRoutes } from "./conversations";
 import type { Db } from "./db/client";
 import { dmRoutes } from "./dms";
 import { createEventHub } from "./events";
-import { createExecutions } from "./executions";
+import { createExecutions, type ExecutionHooks } from "./executions";
 import type { Identity, IdentityPort } from "./identity/port";
 import { IdentityUnavailableError } from "./identity/whois";
 import { type JoinRequestHooks, joinRequestAdminRoutes, myJoinRequestRoutes, type TailnetUser } from "./join-requests";
 import { listMembers, type Member, memberFor, toMeDto } from "./members";
 import { keyBrain } from "./model/key";
-import { createModelPort } from "./model/port";
+import { createModelPort, type ModelBrain } from "./model/port";
 import { noIdentityPage } from "./no-identity-page";
 import type { SecretBox } from "./secrets";
 import { workspaceKeyRoutes } from "./workspace-key";
@@ -29,10 +29,15 @@ export interface AppDeps {
   secrets: SecretBox;
   /** Onde fica a Messages API (padrão: a da Anthropic). Os testes apontam para a falsa. */
   anthropicBaseUrl?: string;
+  /**
+   * Troca o cérebro da Chave (padrão: a Messages API em `anthropicBaseUrl`). Só para os testes
+   * do que a Messages API falsa não sabe dizer (o `api_retry` do Claude Code, o progresso no meio).
+   */
+  keyBrain?: ModelBrain;
   /** Rotas só de desenvolvimento (`/dev/*`), vindas do adaptador de identidade de dev. */
   devRoutes?: Hono;
-  /** Ganchos de domínio (ex.: push aos Admins a cada Pedido de entrada, #34). */
-  hooks?: JoinRequestHooks;
+  /** Ganchos de domínio (ex.: push aos Admins a cada Pedido de entrada, #34; push da falha ao autor, #32). */
+  hooks?: JoinRequestHooks & ExecutionHooks;
 }
 
 type Env = { Variables: { who: TailnetUser; member: Member } };
@@ -48,8 +53,8 @@ export function createApp(deps: AppDeps) {
   const app = new Hono<Env>();
   const { hub: events, route: eventsRoute } = createEventHub();
   const accounts = createAccounts({ db, clock, events, config: deps.accounts });
-  const model = createModelPort({ key: keyBrain({ baseURL: deps.anthropicBaseUrl }) });
-  const executions = createExecutions({ db, clock, events, model, secrets });
+  const model = createModelPort({ key: deps.keyBrain ?? keyBrain({ baseURL: deps.anthropicBaseUrl }) });
+  const executions = createExecutions({ db, clock, events, model, secrets, hooks });
 
   /** Pergunta à porta; tailscaled fora do ar é falha da Instalação, não "sem identidade": vai para o log. */
   async function whoAmI(req: Request): Promise<Identity | typeof UNAVAILABLE> {

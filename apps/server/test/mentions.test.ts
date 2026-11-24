@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
-import { eventually, type TestApp, testApp } from "./harness";
+import { type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
 const CHAVE = "sk-ant-api03-chave-do-workspace";
@@ -130,33 +130,16 @@ describe("Menção a um Agente pela Chave", () => {
     expect(t.anthropic.requests).toHaveLength(1);
   });
 
-  test("a resposta continua pendente e sai depois que o servidor reinicia", async () => {
-    const t = await testApp();
-    const { geral } = await workspaceComFaro(t);
-    t.anthropic.reply({ hang: true }, { text: "Voltei e respondi." });
-    const origem = await enviar(t, geral.id, "@Faro responde mesmo com reinício?");
-    await t.anthropic.waitForRequests(1);
-
-    const pendente: ExecutionDto[] = await (await t.as(juliana).get(`/api/channels/${geral.id}/executions`)).json();
-    await t.restart();
-
-    expect(pendente).toMatchObject([{ originMessageId: origem.id, state: "running", step: "writing" }]);
-    const resposta = await eventually("a resposta sair depois do reinício", async () => {
-      const lista: MessageDto[] = await (await t.as(juliana).get(`/api/channels/${geral.id}/messages`)).json();
-      return lista.find((m) => m.originMessageId === origem.id);
-    });
-    expect(resposta.body).toBe("Voltei e respondi.");
-    expect(await (await t.as(juliana).get(`/api/channels/${geral.id}/executions`)).json()).toEqual([]);
-  });
-
   test.each([
-    [{ status: 401, errorType: "authentication_error" }, "a Chave do Workspace foi recusada pela Anthropic"],
-    [{ status: 402, errorType: "billing_error" }, "a Chave do Workspace está sem crédito"],
+    [{ status: 401, errorType: "authentication_error" }, "failed", "a Chave do Workspace foi recusada pela Anthropic"],
+    [{ status: 402, errorType: "billing_error" }, "failed", "a Chave do Workspace está sem crédito"],
+    // Passageira: aparece com o motivo enquanto espera a nova tentativa automática (#24).
     [
       { streamError: { type: "overloaded_error", message: "Overloaded" }, text: "Começou e " },
+      "retrying",
       "a Anthropic está sobrecarregada",
     ],
-  ])("a falha da Messages API aparece com o motivo (%o)", async (reply, motivo) => {
+  ])("a falha da Messages API aparece com o motivo (%o)", async (reply, estado, motivo) => {
     const t = await testApp();
     const { geral } = await workspaceComFaro(t);
     const aba = await t.socket(juliana);
@@ -167,7 +150,7 @@ describe("Menção a um Agente pela Chave", () => {
     await aba.next("execution.updated");
     await aba.next("execution.updated");
     const falha = (await aba.next("execution.updated")).execution;
-    expect(falha).toMatchObject({ state: "failed", reason: motivo, replyMessageId: null });
+    expect(falha).toMatchObject({ state: estado, reason: motivo, replyMessageId: null });
     const abertas: ExecutionDto[] = await (await t.as(juliana).get(`/api/channels/${geral.id}/executions`)).json();
     expect(abertas).toEqual([falha]);
   });

@@ -43,6 +43,13 @@
       "when": 1795516284920,
       "tag": "0005_agentes-chave-e-execucoes",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795517309990,
+      "tag": "0006_vigia-falha-e-cancelamento",
+      "breakpoints": true
     }
   ]
 }
