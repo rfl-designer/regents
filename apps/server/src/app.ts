@@ -82,6 +82,7 @@ export function createApp(deps: AppDeps) {
   // A Presença avisa o push quando uma conversa fica à vista; o push pergunta a ela antes de mandar.
   const presence = createPresence({ db, events, onOpened: (m, conv) => push.conversationOpened(m, conv) });
   const push = createPush({
+    events,
     db,
     clock,
     presence: presence.presence,

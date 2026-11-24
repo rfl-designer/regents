@@ -603,8 +603,9 @@ export interface PushSubscriptionInput {
 }
 
 /**
- * `GET /api/devices`: os aparelhos do Membro em que ele já ligou o push. A lista na tela de
- * Notificações e as faixas de push parado são do #33.
+ * `GET /api/devices`: os aparelhos do Membro em que ele já ligou o push, na ordem em que foram
+ * ligados. É a lista da tela de Notificações e a base das faixas de push parado; `DELETE
+ * /api/devices/:id` remove um. Mudanças chegam em `devices.updated`.
  */
 export interface DeviceDto {
   /** O id que o PWA gerou para o aparelho. */
@@ -692,6 +693,13 @@ export type ServerEvent =
    * qualquer aba ou aparelho). Vai só para as conexões do próprio Membro.
    */
   | { type: "unread.updated"; unread: UnreadDto }
+  /**
+   * Os aparelhos do Membro mudaram: um parou de receber push (404/410 do push service), ligou o
+   * push de novo, passou a ser de outra pessoa ou foi removido. A lista inteira, como em
+   * `GET /api/devices` (o último push entregue não gera evento). Só para as conexões do próprio
+   * Membro: é o que faz as faixas de push parado aparecerem e sumirem em todo aparelho.
+   */
+  | { type: "devices.updated"; devices: DeviceDto[] }
   /** O Membro passou a seguir uma Thread. Vai só para as conexões dele. */
   | { type: "thread.followed"; thread: FollowedThreadDto };
 

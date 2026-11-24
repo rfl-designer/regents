@@ -7,6 +7,7 @@ import type {
   ChannelSettingsDto,
   CreateAgentInput,
   CreateChannelInput,
+  DeviceDto,
   DmDto,
   ExecutionDto,
   FollowedThreadDto,
@@ -72,6 +73,8 @@ export const api = {
   pushKey: () => call<PushKeyDto>("/api/push/key"),
   putPushSubscription: (deviceId: string, input: PushSubscriptionInput) =>
     call<void>(`/api/push/subscriptions/${deviceId}`, json("PUT", input)),
+  devices: () => call<DeviceDto[]>("/api/devices"),
+  removeDevice: (id: string) => call<void>(`/api/devices/${id}`, { method: "DELETE" }),
   setPresence: (input: SetPresenceInput) => call<void>("/api/presence", json("PUT", input)),
   me: () => call<MeDto>("/api/me"),
   updateProfile: (input: UpdateProfileInput) => call<MeDto>("/api/me", json("PATCH", input)),

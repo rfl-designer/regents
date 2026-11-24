@@ -13,6 +13,7 @@ import { ApiFailure, api } from "./api";
 import { ChannelSettings } from "./ChannelSettings";
 import { ChannelView } from "./ChannelView";
 import { type Notice, notice, reachOf, useConnectionNotice, useOnline } from "./connection";
+import { DevicesView } from "./DevicesView";
 import { DmView } from "./DmView";
 import { EntryView } from "./EntryView";
 import { JoinRequestsPanel } from "./JoinRequestsPanel";
@@ -20,8 +21,9 @@ import { setPresence, useServerEvents } from "./live";
 import { MembersSettings } from "./MembersAdmin";
 import { AccountOffer, MyAccount, useAccount } from "./MyAccount";
 import { NotificationsOnboarding } from "./NotificationsOnboarding";
-import { closeNotificationsOf } from "./notifications";
+import { closeNotificationsOf, usePush } from "./notifications";
 import { ProfileView } from "./ProfileView";
+import { InstallOnIphone, PushBanners } from "./PushBanners";
 import { type AdminView, Sidebar } from "./Sidebar";
 import { WorkspaceContextSettings } from "./WorkspaceContext";
 
@@ -86,8 +88,9 @@ function upsert<T extends { id: string }>(list: T[], item: T) {
 export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selectedId, setSelectedId] = useState<string | null>(conversationFromUrl);
-  const [view, setView] = useState<"channel" | "account" | "profile" | AdminView>("channel");
+  const [view, setView] = useState<"channel" | "account" | "profile" | "notifications" | AdminView>("channel");
   const account = useAccount(state.kind === "ready");
+  const push = usePush(state.kind === "ready");
   /** As não-lidas do Membro. O `total` é o badge do ícone (o `setAppBadge` é do #32). */
   const [unread, setUnread] = useState<UnreadDto | null>(null);
 
@@ -235,6 +238,14 @@ export function App() {
           <button
             type="button"
             className="link"
+            aria-pressed={view === "notifications"}
+            onClick={() => setView(view === "notifications" ? "channel" : "notifications")}
+          >
+            Notificações
+          </button>
+          <button
+            type="button"
+            className="link"
             aria-pressed={view === "account"}
             onClick={() => setView(view === "account" ? "channel" : "account")}
           >
@@ -244,7 +255,9 @@ export function App() {
       </header>
       {state.me.role === "admin" && <JoinRequestsPanel />}
       {view !== "account" && <AccountOffer state={account} onOpen={() => setView("account")} />}
-      <NotificationsOnboarding />
+      <InstallOnIphone />
+      <NotificationsOnboarding push={push} />
+      <PushBanners push={push} onOpenDevices={() => setView("notifications")} />
       <div className="workspace">
         <Sidebar
           me={state.me}
@@ -253,7 +266,9 @@ export function App() {
           unread={unread}
           selectedId={view === "channel" ? (dm?.id ?? channel?.id ?? null) : null}
           isAdmin={state.me.role === "admin"}
-          adminView={view === "channel" || view === "account" || view === "profile" ? null : view}
+          adminView={
+            view === "channel" || view === "account" || view === "profile" || view === "notifications" ? null : view
+          }
           onOpen={open}
           onCreated={(created) => {
             setChannels((list) => upsert(list, created));
@@ -271,6 +286,8 @@ export function App() {
           <MyAccount state={account} />
         ) : view === "members" ? (
           <MembersSettings me={state.me} />
+        ) : view === "notifications" ? (
+          <DevicesView push={push} />
         ) : view === "context" ? (
           <WorkspaceContextSettings />
         ) : view === "settings" ? (
