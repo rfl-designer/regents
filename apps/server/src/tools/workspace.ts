@@ -2,6 +2,7 @@ import { asc, desc, eq } from "drizzle-orm";
 import { withBuiltinText } from "../articuladora";
 import { schema } from "../db/client";
 import type { ToolDefinition } from "./port";
+import { WORKSPACE_READ_TOOLS } from "./workspace-read";
 import { WORKSPACE_WRITES } from "./workspace-writes";
 
 const { agents, agentTools, mentionHandles } = schema;
@@ -48,4 +49,4 @@ const listAgents: ToolDefinition = {
 };
 
 /** As Ferramentas do Workspace (Spec #44), na ordem em que o Admin as vê. */
-export const WORKSPACE_TOOLS: readonly ToolDefinition[] = [listAgents, ...WORKSPACE_WRITES];
+export const WORKSPACE_TOOLS: readonly ToolDefinition[] = [...WORKSPACE_READ_TOOLS, listAgents, ...WORKSPACE_WRITES];
