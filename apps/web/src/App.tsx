@@ -10,6 +10,7 @@ import { JoinRequestsPanel } from "./JoinRequestsPanel";
 import { useServerEvents } from "./live";
 import { AccountOffer, MyAccount, useAccount } from "./MyAccount";
 import { type AdminView, Sidebar } from "./Sidebar";
+import { WorkspaceContextSettings } from "./WorkspaceContext";
 
 type State =
   | { kind: "loading" }
@@ -142,6 +143,8 @@ export function App() {
         />
         {view === "account" ? (
           <MyAccount state={account} />
+        ) : view === "context" ? (
+          <WorkspaceContextSettings />
         ) : view === "settings" ? (
           <ChannelSettings />
         ) : view === "agents" ? (

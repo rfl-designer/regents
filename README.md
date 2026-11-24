@@ -52,7 +52,9 @@ apps/server/        Bun + Hono + Drizzle
   src/dms.ts        rotas de DMs (abrir, listar)
   src/participation.ts  quem participa, quem vê (canSee) e quem recebe eventos (audienceOf)
   src/agents.ts     rotas de Agentes; src/workspace-key.ts a Chave do Workspace (cifrada por src/secrets.ts)
-  src/mentions.ts   extração de `@nome` (seam do #19); src/context.ts montagem de contexto (seam do #21)
+  src/mentions.ts   extração de `@nome` (seam do #19)
+  src/context.ts    montagem de contexto: as 6 camadas que cada execução recebe (buildContext)
+  src/workspace-context.ts  o Contexto do Workspace (só Admin)
   src/executions.ts fila de execuções no Postgres e o trabalhador que a esvazia
   src/model/        porta de modelo (port.ts: eventos normalizados) e o cérebro da Chave (key.ts)
   src/main.ts       entrypoint: serve | migrate
@@ -185,8 +187,14 @@ t.claude.callsOf("auth login")[0]!.env.CLAUDE_CONFIG_DIR;     // o que cada star
 | `POST /api/agents` | Admin | `{ name, photo?, description?, instructions?, model }`; 409 `name_taken` |
 | `POST /api/channels/:id/agents` | quem vê | `{ agentId }`: o Agente vira participante `kind: "agent"` |
 | `GET /api/conversations/:id/executions` | quem vê | o Andamento do que ainda não virou resposta (também em `/api/channels/:id/executions`) |
+| `GET`/`PUT /api/workspace-context` | Admin | `{ context }`: o Contexto do Workspace (até 4000 caracteres, `WORKSPACE_CONTEXT_MAX`) |
+| `PUT /api/me/about` | Membro | `{ aboutMe }`: o "sobre mim" de quem chama (até 500 caracteres; mínimo do #21, o perfil do #19 o absorve) |
 
 Uma mensagem de pessoa num Canal com `@Nome` de um Agente (qualquer Agente do Workspace, sem diferença de maiúsculas nem acentos; em DM é do #23) é gravada e anunciada; depois, uma execução por Agente mencionado entra na fila (tabela `executions`). O trabalhador (`executions.start()`, um por processo, uma execução por vez) paga pela Chave, chama a porta de modelo e grava a resposta com `originMessageId` (a resposta ancorada). O Andamento sai como `execution.updated` (`queued` → `running`/`writing` → `done`, `failed` com `reason`, ou `not_acting` sem Chave); a resposta sai antes como `message.created`. Ao subir, o que estava `running` volta para a fila.
+
+### Montagem de contexto
+
+`buildContext` (`src/context.ts`) lê tudo na hora em que a execução começa (a que sai de novo depois de um reinício relê). O `system` leva, nesta ordem e sem as seções vazias: o preâmbulo (chat de time, pt-BR, sem ferramentas, não promete ações, quem chamou e onde), `## Contexto do Workspace`, `## Suas instruções`, `## Instruções do Canal` e `## Quem é quem` (as pessoas que participam da conversa com o "sobre mim"; os Agentes do Canal, o próprio, marcado "(você)", e os que falaram nas mensagens que entram, com a descrição). As mensagens vão numa única mensagem `user`: as N anteriores à de origem e ela por último, uma por parágrafo, como `Nome (pessoa): texto` ou `Nome (Agente): texto`. O N é `channels.recent_messages` (DM: 30 fixo). Seams: `Call` para quem chamou (delegado do #22, com a frase do que cobrir) e `recentMessages` para a Thread (#29: a raiz entra sempre). Teste o contexto pelo que chegou ao dublê (`t.anthropic.requests[n].body.system`/`messages`), nunca chamando `buildContext`.
 
 Nos testes, `testApp()` já traz a Messages API falsa em `t.anthropic` (o app usa ela pela Chave) e a fila rodando:
 
