@@ -133,6 +133,16 @@ export interface UpdateProfileInput {
 export type ChannelKind = "public" | "private";
 
 /**
+ * `dm`: entre duas partes (duas pessoas; com o #23, uma pessoa e um Agente).
+ * `group`: DM em grupo, aberta com três pessoas ou mais. Um grupo continua grupo
+ * mesmo se ficar com menos gente (quem é removido sai das DMs em grupo, não das `dm`).
+ */
+export type DmKind = "dm" | "group";
+
+/** Toda conversa: Canal ou DM. O id de qualquer uma serve em `/api/conversations/:id/...`. */
+export type ConversationKind = ChannelKind | DmKind;
+
+/**
  * Quem participa de uma conversa. Hoje só pessoas; os Agentes (#20) entram
  * como mais um membro desta união (`kind: "agent"`).
  */
@@ -183,6 +193,26 @@ export interface UpdateChannelSettingsInput {
   recentMessages?: number;
 }
 
+/**
+ * Item de `GET /api/dms` e resposta de `POST /api/dms`. Uma DM não tem nome nem
+ * Instruções, e o N dela é fixo em 30. Só os participantes a veem (o Admin inclusive fica de fora).
+ */
+export interface DmDto {
+  id: string;
+  kind: DmKind;
+  /** Todos, inclusive quem pede a lista, em ordem de entrada (e de nome, entre quem entrou junto). */
+  participants: ParticipantDto[];
+}
+
+/**
+ * Corpo de `POST /api/dms`: abre a DM com essas pessoas (quem abre entra sozinho; pode vir na lista).
+ * Uma pessoa: `dm`; duas ou mais: `group`. Abrir de novo com as mesmas pessoas devolve a mesma
+ * DM (200); uma nova responde 201. A DM com Agente (#23) entra como mais um campo aqui.
+ */
+export interface OpenDmInput {
+  memberIds: string[];
+}
+
 export interface MessageAuthorDto {
   id: string;
   displayName: string;
@@ -195,9 +225,13 @@ export interface MessageAuthorDto {
  */
 export type MentionDto = { kind: "member"; id: string };
 
-/** Item de `GET /api/channels/:id/messages` e corpo do 201 de `POST` na mesma rota. */
+/**
+ * Item de `GET /api/conversations/:id/messages` (e de `/api/channels/:id/messages`, só para Canais)
+ * e corpo do 201 de `POST` nas mesmas rotas.
+ */
 export interface MessageDto {
   id: string;
+  /** O id da conversa: um Canal ou uma DM (o nome vem de antes das DMs). */
   channelId: string;
   body: string;
   author: MessageAuthorDto;
@@ -207,9 +241,51 @@ export interface MessageDto {
   createdAt: string;
 }
 
-/** Corpo de `POST /api/channels/:id/messages`. */
+/** Corpo de `POST /api/conversations/:id/messages` (e de `/api/channels/:id/messages`). */
 export interface SendMessageInput {
   body: string;
+}
+
+// ---------- Conta (ADR 0005) ----------
+
+/**
+ * O estado da Conta do Claude do Membro, como "Minha Conta" mostra.
+ * Só o próprio Membro vê (nem o Admin). "No limite até" e "Precisa ligar de novo"
+ * entram aqui com "Quem paga e fila" (#35).
+ */
+export type AccountStatusDto =
+  | { state: "not_linked" }
+  /** `plan` já vem pronto para a tela, ex. "Claude Max". */
+  | { state: "linked"; email: string; plan: string };
+
+/**
+ * O fluxo "Ligar minha Conta do Claude" em andamento, ou o fim dele que a tela ainda mostra.
+ * - `starting`: o Claude Code está abrindo o login.
+ * - `waiting_code`: a pessoa abre `url`, entra na Anthropic e cola o código até `expiresAt`.
+ * - `checking`: o código foi entregue; o Shearim confere a Conta com uma chamada mínima.
+ * - `duplicate`: essa assinatura já está ligada a outra pessoa; "Ligar mesmo assim" ou "Cancelar".
+ * - `failed`: não ligou; `message` explica em linguagem simples.
+ * - `expired`: passaram os 10 minutos; "Começar de novo".
+ */
+export type AccountLinkingDto =
+  | { state: "starting" }
+  | { state: "waiting_code"; url: string; expiresAt: string }
+  | { state: "checking" }
+  | { state: "duplicate" }
+  | { state: "failed"; message: string }
+  | { state: "expired" };
+
+/** `GET /api/account` e corpo das respostas dos comandos da Conta. */
+export interface AccountDto {
+  status: AccountStatusDto;
+  linking: AccountLinkingDto | null;
+  /** Oferecer a ligação ao entrar (primeiro acesso, até "Agora não" ou ligar). */
+  offer: boolean;
+}
+
+/** Corpo de `POST /api/account/linking/code`. */
+export interface SubmitAccountCodeInput {
+  code: string;
 }
 
 // ---------- eventos do WebSocket ----------
@@ -229,6 +305,8 @@ export type ServerEvent =
   | { type: "ready"; me: MeDto }
   /** Mensagem nova numa conversa que o Membro vê. Também chega a quem a enviou. */
   | { type: "message.created"; message: MessageDto }
+  /** A Conta do Membro (ou o fluxo de ligação) mudou. Vai só para as conexões do próprio Membro. */
+  | { type: "account.updated"; account: AccountDto }
   /**
    * Um Canal apareceu ou mudou (criado, alguém entrou ou foi adicionado, Instruções ou N mudaram)
    * para quem pode vê-lo. Para quem acabou de ser adicionado a um privado, é a primeira vez que o vê.
@@ -240,6 +318,8 @@ export type ServerEvent =
    * inclusive as outras abas de quem editou: é assim que o "Você está como Fulano" acompanha.
    */
   | { type: "member.updated"; member: MemberSummaryDto }
+  /** Uma DM apareceu para os participantes dela (quem abriu também recebe). Insere ou troca pelo `id`. */
+  | { type: "dm.updated"; dm: DmDto }
   /** Pedido de entrada novo. Só para Admins. */
   | { type: "join_request.created"; joinRequest: JoinRequestAdminDto }
   /** Um Admin aprovou ou recusou um pedido. Só para Admins (os outros tiram o card da lista). */
@@ -259,6 +339,7 @@ export type ApiError =
   | { error: "already_member" }
   | { error: "already_decided"; status: JoinRequestStatus }
   | { error: "not_found" }
+  | { error: "conflict"; message: string }
   | { error: "name_taken"; message: string }
   /** O identificador de Menção pedido já é de outra pessoa ou Agente. */
   | { error: "handle_taken"; message: string }

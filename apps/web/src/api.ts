@@ -1,9 +1,11 @@
 import type {
+  AccountDto,
   ApiError,
   ApproveJoinRequestDto,
   ChannelDto,
   ChannelSettingsDto,
   CreateChannelInput,
+  DmDto,
   JoinRequestAdminDto,
   JoinRequestDto,
   MeDto,
@@ -11,6 +13,7 @@ import type {
   MessageDto,
   MyJoinRequestDto,
   SendMessageInput,
+  SubmitAccountCodeInput,
   UpdateChannelSettingsInput,
   UpdateProfileInput,
 } from "@shearim/contracts";
@@ -68,7 +71,20 @@ export const api = {
   channelSettings: () => call<ChannelSettingsDto[]>("/api/channel-settings"),
   updateChannelSettings: (channelId: string, input: UpdateChannelSettingsInput) =>
     call<ChannelSettingsDto>(`/api/channel-settings/${channelId}`, json("PATCH", input)),
-  messages: (channelId: string) => call<MessageDto[]>(`/api/channels/${channelId}/messages`),
-  send: (channelId: string, input: SendMessageInput) =>
-    call<MessageDto>(`/api/channels/${channelId}/messages`, json("POST", input)),
+  dms: () => call<DmDto[]>("/api/dms"),
+  /** Abre a DM com essas pessoas, ou devolve a que já existe com elas. */
+  openDm: (memberIds: string[]) => call<DmDto>("/api/dms", json("POST", { memberIds })),
+  /** Mensagens de qualquer conversa (Canal ou DM). */
+  messages: (conversationId: string) => call<MessageDto[]>(`/api/conversations/${conversationId}/messages`),
+  send: (conversationId: string, input: SendMessageInput) =>
+    call<MessageDto>(`/api/conversations/${conversationId}/messages`, json("POST", input)),
+  account: {
+    get: () => call<AccountDto>("/api/account"),
+    notNow: () => call<AccountDto>("/api/account/not-now", post),
+    startLinking: () => call<AccountDto>("/api/account/linking", post),
+    submitCode: (input: SubmitAccountCodeInput) => call<AccountDto>("/api/account/linking/code", json("POST", input)),
+    confirm: () => call<AccountDto>("/api/account/linking/confirm", post),
+    cancelLinking: () => call<AccountDto>("/api/account/linking", { method: "DELETE" }),
+    unlink: () => call<AccountDto>("/api/account", { method: "DELETE" }),
+  },
 };

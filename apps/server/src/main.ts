@@ -10,6 +10,8 @@
  *   `memory://` para um banco em memória que some ao parar).
  * - `HOST` (padrão `0.0.0.0`), `PORT` (padrão `3000`).
  * - `SHEARIM_WEB_DIST`: build do PWA servido em `/` (padrão `apps/web/dist`).
+ * - `SHEARIM_CLAUDE_BIN`: o binário `claude` das Contas (padrão: `claude` do `PATH`).
+ * - `SHEARIM_ACCOUNTS_DIR`: pasta-raiz das Contas, fora do backup (padrão `.data/accounts`).
  */
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -81,10 +83,14 @@ async function main(command: string | undefined) {
 
   const who = identityFromEnv();
   await conn.migrate();
-  const { app, websocket } = createApp({
+  const { app, websocket, close } = createApp({
     db: conn.db,
     identity: who.identity,
     clock: systemClock,
+    accounts: {
+      claudeBin: process.env.SHEARIM_CLAUDE_BIN || Bun.which("claude") || "claude",
+      root: resolve(process.env.SHEARIM_ACCOUNTS_DIR ?? resolve(repoRoot, ".data/accounts")),
+    },
     devRoutes: who.routes,
   });
 
@@ -108,6 +114,7 @@ async function main(command: string | undefined) {
 
   const stop = async () => {
     await server.stop();
+    await close();
     await conn.close();
     process.exit(0);
   };

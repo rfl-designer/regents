@@ -437,6 +437,104 @@ img.avatar {
   border: 1px solid #b45309;
   color: #b45309;
 }
+/* ---------- Conta (Minha Conta e a oferta do primeiro acesso) ---------- */
+:root {
+  --warn-bg: #fff7ed;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --warn-bg: #2a1f0e;
+  }
+}
+.topbar .whoami {
+  margin-left: auto;
+}
+.offer button:not([class]),
+.account button:not([class]) {
+  font: inherit;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+}
+.account button.danger {
+  font: inherit;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--error);
+  background: var(--error);
+  color: #fff;
+}
+.offer button:disabled,
+.account button:disabled {
+  opacity: 0.5;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.offer {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--warn-bg);
+}
+.offer p {
+  margin: 0;
+}
+.account {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+.account h1 {
+  font-size: 1.2rem;
+  margin: 0 0 12px;
+}
+.account-status {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 40rem;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.account-status span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.steps form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 40rem;
+}
+.steps input {
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+}
+.warning {
+  max-width: 40rem;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  margin: 12px 0;
+}
+.warning p {
+  margin: 0;
+}
+.account a {
+  color: inherit;
+}
 .whoami .avatar {
   width: 24px;
   height: 24px;

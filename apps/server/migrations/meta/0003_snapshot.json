@@ -1,9 +1,103 @@
 {
-  "id": "4b1e15a1-08ca-45a1-b187-ccf63b834c36",
+  "id": "cb7b6378-887b-493d-89d1-e2d97b2af158",
   "prevId": "8c2014c3-a143-4aec-a02c-ec3599e29916",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
+    "public.accounts": {
+      "name": "accounts",
+      "schema": "",
+      "columns": {
+        "member_id": {
+          "name": "member_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "account_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "claude_org_id": {
+          "name": "claude_org_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "subscription_type": {
+          "name": "subscription_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "plan_tier": {
+          "name": "plan_tier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "login_expires_at": {
+          "name": "login_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "config_dir": {
+          "name": "config_dir",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "linked_at": {
+          "name": "linked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "offer_dismissed_at": {
+          "name": "offer_dismissed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "accounts_member_id_members_id_fk": {
+          "name": "accounts_member_id_members_id_fk",
+          "tableFrom": "accounts",
+          "tableTo": "members",
+          "columnsFrom": [
+            "member_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.channel_participants": {
       "name": "channel_participants",
       "schema": "",
@@ -306,19 +400,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "profile_pic_url": {
-          "name": "profile_pic_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "about": {
-          "name": "about",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
-        },
         "role": {
           "name": "role",
           "type": "member_role",
@@ -345,153 +426,6 @@
           ]
         }
       },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.mention_handles": {
-      "name": "mention_handles",
-      "schema": "",
-      "columns": {
-        "handle": {
-          "name": "handle",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "member_id": {
-          "name": "member_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "agent_id": {
-          "name": "agent_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "mention_handles_member_id_members_id_fk": {
-          "name": "mention_handles_member_id_members_id_fk",
-          "tableFrom": "mention_handles",
-          "tableTo": "members",
-          "columnsFrom": [
-            "member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "mention_handles_memberId_unique": {
-          "name": "mention_handles_memberId_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "member_id"
-          ]
-        },
-        "mention_handles_agentId_unique": {
-          "name": "mention_handles_agentId_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "agent_id"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "mention_handles_one_owner": {
-          "name": "mention_handles_one_owner",
-          "value": "num_nonnulls(\"mention_handles\".\"member_id\", \"mention_handles\".\"agent_id\") = 1"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.message_mentions": {
-      "name": "message_mentions",
-      "schema": "",
-      "columns": {
-        "message_id": {
-          "name": "message_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "member_id": {
-          "name": "member_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "ordinal": {
-          "name": "ordinal",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "message_mentions_member_id_index": {
-          "name": "message_mentions_member_id_index",
-          "columns": [
-            {
-              "expression": "member_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "message_mentions_message_id_messages_id_fk": {
-          "name": "message_mentions_message_id_messages_id_fk",
-          "tableFrom": "message_mentions",
-          "tableTo": "messages",
-          "columnsFrom": [
-            "message_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "message_mentions_member_id_members_id_fk": {
-          "name": "message_mentions_member_id_members_id_fk",
-          "tableFrom": "message_mentions",
-          "tableTo": "members",
-          "columnsFrom": [
-            "member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "message_mentions_message_id_member_id_pk": {
-          "name": "message_mentions_message_id_member_id_pk",
-          "columns": [
-            "message_id",
-            "member_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -607,6 +541,14 @@
     }
   },
   "enums": {
+    "public.account_state": {
+      "name": "account_state",
+      "schema": "public",
+      "values": [
+        "not_linked",
+        "linked"
+      ]
+    },
     "public.channel_kind": {
       "name": "channel_kind",
       "schema": "public",

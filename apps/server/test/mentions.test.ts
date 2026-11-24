@@ -70,6 +70,18 @@ describe("Menção a pessoa", () => {
     expect(m.mentions).toEqual([{ kind: "member", id: doBruno.id }]);
   });
 
+  test("numa DM, a Menção vale para quem está nela, e não para quem está de fora", async () => {
+    const t = await testApp();
+    const doBruno = await t.addMember(bruno, { by: juliana });
+    await t.addMember(carla, { by: juliana });
+    const dm = await (await t.as(juliana).post("/api/dms", { memberIds: [doBruno.id] })).json();
+
+    const res = await t.as(juliana).post(`/api/conversations/${dm.id}/messages`, { body: "@bruno, chama a @carla?" });
+
+    expect(res.status).toBe(201);
+    expect((await res.json()).mentions).toEqual([{ kind: "member", id: doBruno.id }]);
+  });
+
   test("a Menção continua da pessoa depois que ela troca o identificador", async () => {
     const t = await testApp();
     const doBruno = await t.addMember(bruno, { by: juliana });

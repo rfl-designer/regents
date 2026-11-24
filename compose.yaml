@@ -66,6 +66,8 @@ services:
       SHEARIM_MASTER_KEY_FILE: /run/secrets/master_key
       # `sub` do VAPID (Push). Precisa de domínio real: a Apple recusa localhost.
       SHEARIM_VAPID_CONTACT: ${SHEARIM_VAPID_CONTACT:?rode deploy/setup.sh (falta SHEARIM_VAPID_CONTACT no .env)}
+      # Pasta-raiz das Contas: o volume `contas` abaixo.
+      SHEARIM_ACCOUNTS_DIR: /data/contas
     secrets:
       - postgres_password
       - master_key

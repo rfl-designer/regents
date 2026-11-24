@@ -53,22 +53,34 @@ export const mentionHandles = pgTable(
   (t) => [check("mention_handles_one_owner", sql`num_nonnulls(${t.memberId}, ${t.agentId}) = 1`)],
 );
 
-export const channelKind = pgEnum("channel_kind", ["public", "private"]);
-
-export const channels = pgTable("channels", {
-  id: uuid().primaryKey(),
-  name: text().notNull().unique(),
-  kind: channelKind().notNull(),
-  /** Instruções do Canal: entram no contexto de todo Agente que fala ali. Só o Admin edita. */
-  instructions: text().notNull().default(""),
-  /** N: quantas mensagens recentes os Agentes do Canal recebem (aceita 0). Só o Admin edita. */
-  recentMessages: integer().notNull().default(30),
-  createdAt: timestamp({ withTimezone: true }).notNull(),
-});
+/** `public`/`private`: Canais. `dm`/`group`: DMs (#18). Ver `ConversationKind` nos contratos. */
+export const channelKind = pgEnum("channel_kind", ["public", "private", "dm", "group"]);
 
 /**
- * Pessoas que participam de um Canal (entraram num público ou foram adicionadas a um privado).
- * Num Canal privado, é quem vê o Canal e recebe os eventos dele; num público, todo Membro vê.
+ * Toda conversa: Canais e DMs. Um id só para mensagens, participantes, Threads, não-lido e push.
+ * O nome da tabela vem de antes das DMs; no código, `Conversation` (participation.ts).
+ * Uma DM não tem nome; as Instruções ficam vazias e o N fica em 30 (o Admin só edita Canais).
+ */
+export const channels = pgTable(
+  "channels",
+  {
+    id: uuid().primaryKey(),
+    /** Nome do Canal, único. Vazio (null) numa DM. */
+    name: text().unique(),
+    kind: channelKind().notNull(),
+    /** Instruções do Canal: entram no contexto de todo Agente que fala ali. Só o Admin edita. */
+    instructions: text().notNull().default(""),
+    /** N: quantas mensagens recentes os Agentes da conversa recebem (aceita 0). Só o Admin edita, só em Canal. */
+    recentMessages: integer().notNull().default(30),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [check("channels_name_only_in_channels", sql`(${t.kind} in ('public', 'private')) = (${t.name} is not null)`)],
+);
+
+/**
+ * Pessoas que participam de uma conversa (entraram num Canal público, foram adicionadas a um
+ * privado, ou estão numa DM). Numa conversa fechada (privado, DM), é quem a vê e recebe os
+ * eventos dela; num público, todo Membro vê.
  * Agentes num Canal (#20) entram em tabela própria, ao lado desta: o participante, no
  * contrato, já é `{ kind: "member" | ... }`.
  */
@@ -155,3 +167,30 @@ export const joinRequests = pgTable(
     index().on(t.tailnetUserId, t.createdAt),
   ],
 );
+
+// ---------- Contas (ADR 0005) ----------
+// O login fica com o Claude Code na pasta `config_dir`; aqui só fica o que
+// `claude auth status --json` diz dele. Nenhum token, em lugar nenhum.
+
+/** "No limite" e "Precisa ligar de novo" entram com "Quem paga e fila" (#35). */
+export const accountState = pgEnum("account_state", ["not_linked", "linked"]);
+
+export const accounts = pgTable("accounts", {
+  memberId: uuid()
+    .primaryKey()
+    .references(() => members.id),
+  state: accountState().notNull(),
+  email: text(),
+  /** `orgId` da Anthropic (não é tenant: ADR 0001). */
+  claudeOrgId: text(),
+  subscriptionType: text(),
+  planTier: text(),
+  /** `loginExpiresAt` do `auth status --json`. A validade mostrada sai daqui (#35). */
+  loginExpiresAt: timestamp({ withTimezone: true }),
+  /** A pasta de `CLAUDE_CONFIG_DIR` em uso. */
+  configDir: text(),
+  linkedAt: timestamp({ withTimezone: true }),
+  /** "Agora não" na oferta do primeiro acesso. */
+  offerDismissedAt: timestamp({ withTimezone: true }),
+  updatedAt: timestamp({ withTimezone: true }).notNull(),
+});

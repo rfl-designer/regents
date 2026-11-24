@@ -1,13 +1,14 @@
 import type {
   AddParticipantInput,
   ChannelDto,
+  ChannelKind,
   ChannelSettingsDto,
   CreateChannelInput,
   MessageDto,
   SendMessageInput,
 } from "@shearim/contracts";
-import { asc, eq, sql } from "drizzle-orm";
-import { Hono } from "hono";
+import { asc, eq, inArray, sql } from "drizzle-orm";
+import { type Context, Hono } from "hono";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
@@ -16,15 +17,21 @@ import { mentionsOf, recordMentions } from "./mentions";
 import { addParticipants, audienceOf, canSee, participantsOf } from "./participation";
 
 type Env = { Variables: { member: Member } };
-type Channel = typeof schema.channels.$inferSelect;
+/** Uma linha de `channels`: um Canal ou uma DM. */
+export type ConversationRow = typeof schema.channels.$inferSelect;
+type Channel = ConversationRow & { kind: ChannelKind; name: string };
+
+const CHANNEL_KINDS: readonly ChannelKind[] = ["public", "private"];
+const isChannel = (row: ConversationRow): row is Channel => (CHANNEL_KINDS as readonly string[]).includes(row.kind);
 
 const { channels, messages, members } = schema;
 
 const NAME_MAX = 80;
 
 /**
- * Rotas de Canais e mensagens. Um Canal privado só existe para quem participa dele:
- * para os outros (Admin inclusive), ele não aparece na lista, responde 404 e não manda eventos.
+ * Rotas de Canais e das mensagens de toda conversa (Canal ou DM). Uma conversa fechada (Canal
+ * privado, DM) só existe para quem participa dela: para os outros (Admin inclusive), ela não
+ * aparece na lista, responde 404 e não manda eventos. As DMs se abrem em `dms.ts`.
  * Uma mensagem de pessoa é gravada antes de qualquer outra coisa.
  */
 export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHub }) {
@@ -41,7 +48,11 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
 
   routes.get("/channels", async (c) => {
     const me = c.get("member");
-    const all = await db.select().from(channels).orderBy(asc(channels.createdAt), asc(channels.name));
+    const all = (await db
+      .select()
+      .from(channels)
+      .where(inArray(channels.kind, [...CHANNEL_KINDS]))
+      .orderBy(asc(channels.createdAt), asc(channels.name))) as Channel[];
     const participants = await participantsOf(
       db,
       all.map((ch) => ch.id),
@@ -79,7 +90,7 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
         .values({ id: crypto.randomUUID(), name, kind, createdAt: now })
         .returning();
       await addParticipants(tx, channel!.id, [me.id], now);
-      return channel!;
+      return channel as Channel;
     });
     if (!created) return c.json({ error: "name_taken", message: `Já existe um Canal chamado #${name}.` }, 409);
 
@@ -115,9 +126,8 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
     return c.json(await toChannelDto(db, channel));
   });
 
-  routes.get("/channels/:id/messages", async (c) => {
-    const channel = await findVisibleChannel(db, c.get("member"), c.req.param("id"));
-    if (!channel) return c.json({ error: "not_found" }, 404);
+  async function listMessages(c: Context<Env>, conversation: ConversationRow | undefined) {
+    if (!conversation) return c.json({ error: "not_found" }, 404);
     const rows = await db
       .select({
         id: messages.id,
@@ -130,7 +140,7 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
       })
       .from(messages)
       .innerJoin(members, eq(members.id, messages.authorMemberId))
-      .where(eq(messages.channelId, channel.id))
+      .where(eq(messages.channelId, conversation.id))
       .orderBy(asc(messages.seq));
     const mentions = await mentionsOf(
       db,
@@ -148,11 +158,10 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
         }),
       ),
     );
-  });
+  }
 
-  routes.post("/channels/:id/messages", async (c) => {
-    const channel = await findVisibleChannel(db, c.get("member"), c.req.param("id"));
-    if (!channel) return c.json({ error: "not_found" }, 404);
+  async function sendMessage(c: Context<Env>, conversation: ConversationRow | undefined) {
+    if (!conversation) return c.json({ error: "not_found" }, 404);
     const input = (await c.req.json().catch(() => null)) as Partial<SendMessageInput> | null;
     if (typeof input?.body !== "string" || input.body.trim() === "") {
       return c.json({ error: "invalid_input", message: "A mensagem está vazia." }, 400);
@@ -160,7 +169,7 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
     const author = c.get("member");
     const values = {
       id: crypto.randomUUID(),
-      channelId: channel.id,
+      channelId: conversation.id,
       authorMemberId: author.id,
       body: input.body,
       createdAt: clock.now(),
@@ -168,10 +177,11 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
     // A mensagem e as Menções dela são gravadas juntas, antes de qualquer outra coisa.
     const mentions = await db.transaction(async (tx) => {
       await tx.insert(messages).values(values);
-      return recordMentions(tx, values.id, channel, values.body);
+      return recordMentions(tx, values.id, conversation, values.body);
     });
-    // Escrever num Canal público é entrar nele.
-    const joined = await addParticipants(db, channel.id, [author.id], values.createdAt);
+    // Escrever num Canal público é entrar nele (numa conversa fechada, quem escreve já participa).
+    const joined =
+      conversation.kind === "public" && (await addParticipants(db, conversation.id, [author.id], values.createdAt));
     const dto: MessageDto = {
       id: values.id,
       channelId: values.channelId,
@@ -180,16 +190,29 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
       mentions,
       createdAt: values.createdAt.toISOString(),
     };
-    events.publish(await audienceOf(db, channel), { type: "message.created", message: dto });
-    if (joined) await publishChannel(channel);
+    events.publish(await audienceOf(db, conversation), { type: "message.created", message: dto });
+    if (joined && isChannel(conversation)) await publishChannel(conversation);
     return c.json(dto, 201);
-  });
+  }
+
+  // Mensagens de qualquer conversa (Canal ou DM) pelo id dela; a rota de Canal aceita só Canais.
+  const visibleConversation = (c: Context<Env>) => findVisibleConversation(db, c.get("member"), c.req.param("id")!);
+  const visibleChannel = (c: Context<Env>) => findVisibleChannel(db, c.get("member"), c.req.param("id")!);
+  routes.get("/conversations/:id/messages", async (c) => listMessages(c, await visibleConversation(c)));
+  routes.post("/conversations/:id/messages", async (c) => sendMessage(c, await visibleConversation(c)));
+  routes.get("/channels/:id/messages", async (c) => listMessages(c, await visibleChannel(c)));
+  routes.post("/channels/:id/messages", async (c) => sendMessage(c, await visibleChannel(c)));
 
   // ---------- Instruções do Canal e N: só o Admin, em qualquer Canal, sem as mensagens ----------
 
   routes.get("/channel-settings", async (c) => {
     if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
-    const all = await db.select().from(channels).orderBy(asc(channels.createdAt), asc(channels.name));
+    // Só Canais: uma DM não tem Instruções, e o N dela é fixo em 30.
+    const all = (await db
+      .select()
+      .from(channels)
+      .where(inArray(channels.kind, [...CHANNEL_KINDS]))
+      .orderBy(asc(channels.createdAt), asc(channels.name))) as Channel[];
     return c.json(all.map(settingsDto));
   });
 
@@ -212,7 +235,7 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
       change.recentMessages = input.recentMessages as number;
     }
     const [updated] = Object.keys(change).length
-      ? await db.update(channels).set(change).where(eq(channels.id, channel.id)).returning()
+      ? ((await db.update(channels).set(change).where(eq(channels.id, channel.id)).returning()) as Channel[])
       : [channel];
     // Quem participa vê as Instruções mudarem; o Admin de fora fica só com a resposta.
     if (updated !== channel) await publishChannel(updated!);
@@ -249,13 +272,28 @@ async function toChannelDto(db: Db, channel: Channel) {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-async function findChannel(db: Db, id: string) {
-  if (!UUID.test(id)) return undefined;
-  const [channel] = await db.select().from(channels).where(eq(channels.id, id));
-  return channel;
+export function isUuid(id: string) {
+  return UUID.test(id);
 }
 
-/** O Canal, se o Membro o vê. Um privado de que ele não participa é como um que não existe. */
+async function findConversation(db: Db, id: string): Promise<ConversationRow | undefined> {
+  if (!UUID.test(id)) return undefined;
+  const [row] = await db.select().from(channels).where(eq(channels.id, id));
+  return row;
+}
+
+/** Um Canal (uma DM, pelas rotas de Canal, é como uma conversa que não existe). */
+async function findChannel(db: Db, id: string) {
+  const row = await findConversation(db, id);
+  return row && isChannel(row) ? row : undefined;
+}
+
+/** A conversa, se o Membro a vê. Uma fechada de que ele não participa é como uma que não existe. */
+async function findVisibleConversation(db: Db, member: Member, id: string) {
+  const row = await findConversation(db, id);
+  return row && (await canSee(db, member.id, row)) ? row : undefined;
+}
+
 async function findVisibleChannel(db: Db, member: Member, id: string) {
   const channel = await findChannel(db, id);
   return channel && (await canSee(db, member.id, channel)) ? channel : undefined;
