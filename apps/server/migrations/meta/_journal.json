@@ -92,6 +92,13 @@
       "when": 1795520282787,
       "tag": "0012_articuladora-e-desfecho",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1795521033202,
+      "tag": "0013_validade-da-credencial-da-conta",
+      "breakpoints": true
     }
   ]
 }

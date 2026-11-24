@@ -2,6 +2,7 @@ import { EVENTS_PATH } from "@shearim/contracts";
 import { Hono } from "hono";
 import { websocket } from "hono/bun";
 import { type AccountsConfig, createAccounts } from "./accounts";
+import { processTracker } from "./accounts/claude-cli";
 import { agentRoutes } from "./agents";
 import type { Clock } from "./clock";
 import { conversationRoutes } from "./conversations";
@@ -13,6 +14,7 @@ import type { Identity, IdentityPort } from "./identity/port";
 import { IdentityUnavailableError } from "./identity/whois";
 import { type JoinRequestHooks, joinRequestAdminRoutes, myJoinRequestRoutes, type TailnetUser } from "./join-requests";
 import { listMembers, type Member, memberFor } from "./members";
+import { accountBrain } from "./model/account";
 import { keyBrain } from "./model/key";
 import { createModelPort, type ModelBrain } from "./model/port";
 import { noIdentityPage } from "./no-identity-page";
@@ -60,7 +62,12 @@ export function createApp(deps: AppDeps) {
   const app = new Hono<Env>();
   const { hub: events, route: eventsRoute } = createEventHub();
   const accounts = createAccounts({ db, clock, events, config: deps.accounts });
-  const model = createModelPort({ key: deps.keyBrain ?? keyBrain({ baseURL: deps.anthropicBaseUrl }) });
+  // Pela Conta, um `claude -p` por execução (ADR 0006); os processos vivos morrem no `close`.
+  const runs = processTracker();
+  const model = createModelPort({
+    key: deps.keyBrain ?? keyBrain({ baseURL: deps.anthropicBaseUrl }),
+    account: accountBrain({ claudeBin: deps.accounts.claudeBin, procs: runs, stopGrace: deps.accounts.stopGrace }),
+  });
   const reading = createReading({ db, clock, events });
   const executions = createExecutions({ db, clock, events, model, secrets, hooks, reading });
   // A Presença avisa o push quando uma conversa fica à vista; o push pergunta a ela antes de mandar.
@@ -137,8 +144,8 @@ export function createApp(deps: AppDeps) {
 
   /**
    * `websocket` vai no `Bun.serve` junto com `app.fetch`; `events` é onde se publica.
-   * `executions.start()` põe a fila para andar e `stop()` a para; `close` encerra o que o app
-   * deixou rodando (os processos do `claude`).
+   * `start()` faz a subida e põe a fila para andar; `executions.stop()` a para; `close` encerra o
+   * que o app deixou rodando (os processos do `claude`).
    */
   return {
     app,
@@ -146,8 +153,15 @@ export function createApp(deps: AppDeps) {
     events,
     executions,
     push,
+    /** A subida: limpa as pastas de Conta (pastas de login órfãs, lock de renovação) e põe a fila para andar. */
+    async start() {
+      await accounts.recover();
+      executions.start();
+    },
     close: async () => {
       await accounts.close();
+      // Depois do `executions.stop()` não sobra nenhum; isto é só a rede de segurança.
+      await runs.killAll();
       await push.idle();
     },
   };
