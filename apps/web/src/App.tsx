@@ -2,12 +2,14 @@ import {
   ACCOUNT_PATH,
   AGENTS_PATH,
   type ChannelDto,
+  conversationOfPath,
   conversationPath,
   type DmDto,
   INSTALLATION_PATH,
   MEMBERS_PATH,
   type MeDto,
   NO_IDENTITY_TEXT,
+  SW_NAVIGATE_MESSAGE,
   type UnreadDto,
   WORKSPACE_KEY_PATH,
 } from "@shearim/contracts";
@@ -73,11 +75,6 @@ const VIEW_PATHS: Partial<Record<View, string>> = {
 /** A tela que um endereço pede (`/conta`, `/chave`…), ou `undefined` (uma conversa, ou a raiz). */
 function viewOfPath(pathname: string): View | undefined {
   return (Object.entries(VIEW_PATHS) as [View, string][]).find(([, path]) => path === pathname)?.[0];
-}
-
-/** A conversa que o endereço pede (`/c/<id>`: é para onde a notificação leva). */
-function conversationOfPath(pathname: string) {
-  return /^\/c\/([0-9a-f-]{36})$/i.exec(pathname)?.[1] ?? null;
 }
 
 function conversationFromUrl() {
@@ -210,7 +207,7 @@ export function App() {
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     const onMessage = (e: MessageEvent) => {
-      if (e.data?.type !== "open-conversation") return;
+      if (e.data?.type !== SW_NAVIGATE_MESSAGE) return;
       const navigate = typeof e.data.navigate === "string" ? new URL(e.data.navigate, location.origin) : null;
       // Os pushes do Admin e da Conta levam a uma tela (Instalação, Membros, Chave, Agentes, Minha
       // Conta), não a uma conversa.

@@ -745,6 +745,18 @@ export interface DeviceDto {
 /** Caminho do PWA que abre uma conversa (é o `navigate` da notificação). */
 export const conversationPath = (conversationId: string) => `/c/${conversationId}`;
 /**
+ * O inverso de `conversationPath`: o padrão do caminho de uma conversa. O `public/sw.js` do PWA,
+ * que é JavaScript sem bundler, repete este padrão; um teste confere que é o mesmo.
+ */
+export const CONVERSATION_PATH_PATTERN = /^\/c\/([0-9a-f-]{36})$/i;
+/** A conversa que o caminho abre (`/c/<id>`), ou `null`. */
+export const conversationOfPath = (pathname: string) => CONVERSATION_PATH_PATTERN.exec(pathname)?.[1] ?? null;
+/**
+ * A mensagem que o service worker manda à janela aberta quando a pessoa toca numa notificação:
+ * `{ type: SW_NAVIGATE_MESSAGE, navigate }` (o `sw.js` repete o texto; um teste confere).
+ */
+export const SW_NAVIGATE_MESSAGE = "navigate";
+/**
  * Caminho do PWA que abre uma conversa já numa mensagem (ela vem para o meio da tela e pisca): é
  * para onde leva o push da falha, que fica sob a mensagem com o "Tentar de novo".
  */

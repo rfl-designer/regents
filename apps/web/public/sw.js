@@ -6,10 +6,18 @@
  * `app_badge` (o total de não-lidas) vai para o badge do ícone.
  */
 
+/**
+ * O caminho de uma conversa: o mesmo `CONVERSATION_PATH_PATTERN` de `packages/contracts` (este
+ * arquivo não passa por bundler; `apps/server/test/sw-contrato.test.ts` confere que é igual).
+ */
+const CONVERSATION_PATH = /^\/c\/([0-9a-f-]{36})$/i;
+/** A mensagem à janela aberta: `SW_NAVIGATE_MESSAGE` de `packages/contracts`. */
+const NAVIGATE_MESSAGE = "navigate";
+
 /** A conversa para onde a notificação leva (`/c/<id>`, com ou sem `?m=<mensagem>`), ou nada. */
 function conversationOf(navigate) {
   try {
-    return /^\/c\/([0-9a-f-]{36})$/i.exec(new URL(navigate).pathname)?.[1];
+    return CONVERSATION_PATH.exec(new URL(navigate).pathname)?.[1];
   } catch {
     return undefined;
   }
@@ -56,7 +64,7 @@ self.addEventListener("notificationclick", (event) => {
       const open = windows.find((w) => new URL(w.url).origin === self.location.origin);
       if (open) {
         await open.focus();
-        open.postMessage({ type: "open-conversation", conversationId, navigate });
+        open.postMessage({ type: NAVIGATE_MESSAGE, conversationId, navigate });
         return;
       }
       await self.clients.openWindow(navigate || "/");
