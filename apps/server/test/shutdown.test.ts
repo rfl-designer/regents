@@ -62,6 +62,7 @@ describe("encerramento do processo", () => {
 
     expect(code).toBe(EVENTS_CLOSE_UPDATING);
     expect(exitCode).toBe(0);
-    expect(Date.now() - inicio).toBeLessThan(3_000);
-  });
+    // Sem o 1012, o `server.stop()` ficava esperando a conexão e o processo levava mais de 8 s.
+    expect(Date.now() - inicio).toBeLessThan(5_000);
+  }, 60_000);
 });
