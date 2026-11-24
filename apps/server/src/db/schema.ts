@@ -268,6 +268,17 @@ export const executions = pgTable(
     payer: text(),
     /** O motivo da última falha (fica durante a nova tentativa, para dizer "nas duas tentativas"). */
     reason: text(),
+    /**
+     * O motivo como só o autor o vê, quando ele é estado da Conta dele (`reason` é o que os outros
+     * veem). Nulo quando é o mesmo para todos.
+     */
+    authorReason: text(),
+    /**
+     * Em `queued`: espera quem pague (a Conta do autor no limite ou em "Precisa ligar de novo", sem
+     * Chave utilizável). Fica fora da vez até `heldUntil` (nulo: até a Conta ou a Chave mudar).
+     */
+    held: boolean().notNull().default(false),
+    heldUntil: timestamp({ withTimezone: true }),
     /** Hora de chegada: quem troca de fila mantém a hora (Spec, Prioridade). */
     arrivedAt: timestamp({ withTimezone: true }).notNull(),
     replyMessageId: uuid().references(() => messages.id),
@@ -387,7 +398,8 @@ export const joinRequests = pgTable(
 // `claude auth status --json` diz dele. Nenhum token, em lugar nenhum.
 
 /** "No limite" e "Precisa ligar de novo" entram com "Quem paga e fila" (#35). */
-export const accountState = pgEnum("account_state", ["not_linked", "linked"]);
+/** `needs_relink`: "Precisa ligar de novo" (o login caiu; a pasta fica até ligar de novo ou desligar). */
+export const accountState = pgEnum("account_state", ["not_linked", "linked", "needs_relink"]);
 
 export const accounts = pgTable("accounts", {
   memberId: uuid()
@@ -408,6 +420,8 @@ export const accounts = pgTable("accounts", {
   credentialExpiresAt: timestamp({ withTimezone: true }),
   /** A pasta de `CLAUDE_CONFIG_DIR` em uso. */
   configDir: text(),
+  /** "No limite até HH:MM": a Conta não paga até esta hora (o `resetsAt` do limite). */
+  limitedUntil: timestamp({ withTimezone: true }),
   linkedAt: timestamp({ withTimezone: true }),
   /** "Agora não" na oferta do primeiro acesso. */
   offerDismissedAt: timestamp({ withTimezone: true }),

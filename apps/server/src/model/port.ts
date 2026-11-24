@@ -56,8 +56,11 @@ export type ModelEvent =
   | { type: "auth_failed" }
   /** A Chave está sem crédito: incidente da Chave (#28). */
   | { type: "billing_failed" }
-  /** Falha com motivo em pt-BR (completa "Faro não respondeu: …"). `retryable`: vale nova tentativa. */
-  | { type: "failed"; reason: string; retryable: boolean }
+  /**
+   * Falha com motivo em pt-BR (completa "Faro não respondeu: …"). `retryable`: vale nova tentativa.
+   * `authorReason`, quando o motivo é estado da Conta do autor: só ele o vê; os outros veem `reason`.
+   */
+  | { type: "failed"; reason: string; retryable: boolean; authorReason?: string }
   /** Fim com sucesso: uso, custo em dólares e, pela Conta, a validade da credencial. */
   | { type: "done"; usage: ModelUsage; costUsd: number; credentialExpiresAt?: Date };
 

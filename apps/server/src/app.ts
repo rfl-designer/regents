@@ -62,7 +62,14 @@ export function createApp(deps: AppDeps) {
   const { db, identity, clock, hooks, secrets } = deps;
   const app = new Hono<Env>();
   const { hub: events, route: eventsRoute, closeForRestart } = createEventHub();
-  const accounts = createAccounts({ db, clock, events, config: deps.accounts });
+  // A volta da Conta (ou a troca da Chave) solta quem espera por ela na fila.
+  const accounts = createAccounts({
+    db,
+    clock,
+    events,
+    config: deps.accounts,
+    onChanged: (memberId) => void executions.reconsider(memberId).catch(() => {}),
+  });
   // Pela Conta, um `claude -p` por execução (ADR 0006); os processos vivos morrem no `close`.
   const runs = processTracker();
   const model = createModelPort({
@@ -70,7 +77,7 @@ export function createApp(deps: AppDeps) {
     account: accountBrain({ claudeBin: deps.accounts.claudeBin, procs: runs, stopGrace: deps.accounts.stopGrace }),
   });
   const reading = createReading({ db, clock, events });
-  const executions = createExecutions({ db, clock, events, model, secrets, hooks, reading });
+  const executions = createExecutions({ db, clock, events, model, secrets, accounts, hooks, reading });
   // A Presença avisa o push quando uma conversa fica à vista; o push pergunta a ela antes de mandar.
   const presence = createPresence({ db, events, onOpened: (m, conv) => push.conversationOpened(m, conv) });
   const push = createPush({
@@ -139,7 +146,10 @@ export function createApp(deps: AppDeps) {
   app.route("/api", threadRoutes({ db }));
   app.route("/api", accounts.routes);
   app.route("/api", agentRoutes({ db, clock }));
-  app.route("/api", workspaceKeyRoutes({ db, clock, secrets }));
+  app.route(
+    "/api",
+    workspaceKeyRoutes({ db, clock, secrets, onChanged: () => void executions.reconsider().catch(() => {}) }),
+  );
   app.route("/api", workspaceContextRoutes({ db }));
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));

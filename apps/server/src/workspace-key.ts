@@ -14,7 +14,13 @@ const { workspaceSettings } = schema;
  * A Chave do Workspace (ADR 0002): opcional, gravada pelo Admin, cifrada com a chave mestra.
  * Ela sai daqui só para a porta de modelo (`readWorkspaceKey`); nenhuma rota a devolve.
  */
-export function workspaceKeyRoutes(deps: { db: Db; clock: Clock; secrets: SecretBox }) {
+export function workspaceKeyRoutes(deps: {
+  db: Db;
+  clock: Clock;
+  secrets: SecretBox;
+  /** A Chave foi gravada: quem espera na fila por quem pague decide de novo. */
+  onChanged?(): void;
+}) {
   const { db, clock, secrets } = deps;
   const routes = new Hono<Env>();
 
@@ -35,6 +41,7 @@ export function workspaceKeyRoutes(deps: { db: Db; clock: Clock; secrets: Secret
       .insert(workspaceSettings)
       .values({ id: 1, ...values })
       .onConflictDoUpdate({ target: workspaceSettings.id, set: values });
+    deps.onChanged?.();
     return c.json(await keyStatus(db));
   });
 

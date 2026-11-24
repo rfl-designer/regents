@@ -8,6 +8,7 @@ import {
   mentionPattern,
   normalizeHandle,
   type OutcomeDto,
+  type YourAccountDto,
 } from "@shearim/contracts";
 import {
   type FormEvent,
@@ -26,6 +27,21 @@ import { useServerEvents } from "./live";
 import { downLabel, upLabel, useReading } from "./reading";
 
 const time = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
+const weekday = new Intl.DateTimeFormat("pt-BR", { weekday: "short" });
+
+/** "15:45" hoje; "qui., 15:45" em outro dia (Spec, história 78). */
+function untilLabel(iso: string, now = new Date()) {
+  const at = new Date(iso);
+  return at.toDateString() === now.toDateString() ? time.format(at) : `${weekday.format(at)}, ${time.format(at)}`;
+}
+
+/** O que a Conta do próprio autor explica ("sua Conta no limite até 18:00"). Só ele recebe `yourAccount`. */
+function accountNote(account: YourAccountDto | null) {
+  if (account?.state === "limited") return `sua Conta no limite até ${untilLabel(account.until)}`;
+  if (account?.state === "needs_relink") return "sua Conta precisa ser ligada de novo";
+  if (account?.state === "not_linked") return "você não ligou uma Conta";
+  return null;
+}
 
 /** Junta o que se tem com o que chegou, sem repetir: a mensagem enviada chega pelo 201 e pelo WebSocket. */
 function append(prev: MessageDto[] | null, arrived: MessageDto[]) {
@@ -211,8 +227,10 @@ export function Conversation({
   const pending = new Map<string, ExecutionDto[]>();
   const deciding = new Map<string, ExecutionDto>();
   for (const e of Object.values(executions)) {
-    if (e.kind === "route" && (e.state === "queued" || e.state === "running")) deciding.set(e.originMessageId, e);
-    else pending.set(e.originMessageId, [...(pending.get(e.originMessageId) ?? []), e]);
+    // O roteamento que espera na fila mostra "⏸ na fila", não "decidindo".
+    if (e.kind === "route" && !e.held && (e.state === "queued" || e.state === "running")) {
+      deciding.set(e.originMessageId, e);
+    } else pending.set(e.originMessageId, [...(pending.get(e.originMessageId) ?? []), e]);
   }
   const now = useNow(Object.values(executions).some((e) => OPEN.includes(e.state)));
   const ctx: GroupContext = {
@@ -355,6 +373,10 @@ function MessageGroups({
     const mine = m.author.kind === "member" && m.author.id === me.id;
     const cancellable = mine && running.some((e) => OPEN.includes(e.state));
     const cancel = () => api.cancelMessage(conversationId, m.id).then((list) => list.forEach(showExecution));
+    // "⚠ pela Chave do Workspace" fica sob a mensagem; o autor vê também o porquê.
+    const byKey = running.find((e) => e.payer === "key");
+    const paid =
+      byKey || answers.some((r) => r.payer === "key") ? { note: accountNote(byKey?.yourAccount ?? null) } : undefined;
     const threadLink = (id: string, always: boolean) =>
       thread && (always || (thread.size.get(id) ?? 0) > 0) ? (
         <ThreadLink size={thread.size.get(id) ?? 0} onOpen={() => thread.open(id)} />
@@ -369,6 +391,7 @@ function MessageGroups({
             flash={reading.flashId === m.id}
             outcome={outcomes[m.id]}
             deciding={deciding.get(m.id)}
+            paid={paid}
             now={now}
             onCancel={mine && !cancellable ? cancel : undefined}
           />
@@ -559,6 +582,7 @@ function MessageRow({
   flash,
   outcome,
   deciding,
+  paid,
   now = 0,
   onCancel,
 }: {
@@ -569,6 +593,8 @@ function MessageRow({
   outcome?: OutcomeDto;
   /** O roteamento em curso: "Sophya decidindo quem responde · 0:03". */
   deciding?: ExecutionDto;
+  /** Alguma resposta saiu (ou está saindo) pela Chave do Workspace; `note` só para o autor. */
+  paid?: { note: string | null };
   now?: number;
   /** Quem escreveu cancela enquanto a Articuladora decide. */
   onCancel?(): Promise<void>;
@@ -603,6 +629,7 @@ function MessageRow({
           </p>
         )}
         {deciding && onCancel && <CancelButton onCancel={onCancel} />}
+        {paid && <p className="paid">⚠ pela Chave do Workspace{paid.note && ` · ${paid.note}`}</p>}
         {outcome?.decision === "delegate" && <DelegationLine outcome={outcome} />}
       </div>
     </article>
@@ -689,7 +716,22 @@ function Progress({ execution: e, now, onRetry }: { execution: ExecutionDto; now
     );
   }
   if (e.state === "not_acting") {
-    return <p className="blocked">Agentes não agem: {e.reason}</p>;
+    const mine = accountNote(e.yourAccount);
+    return <p className="blocked">Agentes não agem: {mine ? `${mine} e ${e.reason}` : e.reason}</p>;
+  }
+  if (e.state === "queued" && e.held) {
+    // Todos veem a fila; só o autor vê até quando (a Conta dele).
+    const until =
+      e.yourAccount?.state === "limited"
+        ? ` até ${untilLabel(e.yourAccount.until)}`
+        : e.yourAccount?.state === "needs_relink"
+          ? " até você ligar sua Conta de novo"
+          : "";
+    return (
+      <p className="queued" role="status">
+        ⏸ na fila{until}
+      </p>
+    );
   }
   if (e.state === "cancelled") {
     return <p className="cancelled">cancelada por quem escreveu</p>;
