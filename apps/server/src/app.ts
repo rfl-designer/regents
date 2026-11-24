@@ -6,7 +6,9 @@ import { conversationRoutes } from "./conversations";
 import type { Db } from "./db/client";
 import { createEventHub } from "./events";
 import type { IdentityPort } from "./identity/port";
+import { type JoinRequestHooks, joinRequestAdminRoutes, myJoinRequestRoutes, type TailnetUser } from "./join-requests";
 import { type Member, memberFor, toMeDto } from "./members";
+import { noIdentityPage } from "./no-identity-page";
 
 export interface AppDeps {
   db: Db;
@@ -14,34 +16,56 @@ export interface AppDeps {
   clock: Clock;
   /** Rotas só de desenvolvimento (`/dev/*`), vindas do adaptador de identidade de dev. */
   devRoutes?: Hono;
+  /** Ganchos de domínio (ex.: push aos Admins a cada Pedido de entrada, #34). */
+  hooks?: JoinRequestHooks;
 }
 
-type Env = { Variables: { member: Member } };
+type Env = { Variables: { who: TailnetUser; member: Member } };
 
 /**
  * O seam dos testes: tudo o que o app usa de fora entra por `deps`.
  * Nada de singleton global. `main.ts` monta as dependências reais.
  */
 export function createApp(deps: AppDeps) {
-  const { db, identity, clock } = deps;
+  const { db, identity, clock, hooks } = deps;
   const app = new Hono<Env>();
   const { hub: events, route: eventsRoute } = createEventHub();
 
   app.get("/api/health", (c) => c.json({ ok: true }));
   if (deps.devRoutes) app.route("/dev", deps.devRoutes);
 
-  // Toda rota em /api (menos a saúde) exige identidade e Membro.
+  // Fora de /api e /dev é o PWA (servido pelo main.ts). Sem identidade, no lugar dele vem
+  // a página estática com o motivo (ADR 0007). Com identidade, segue para o PWA.
+  app.use("*", async (c, next) => {
+    const path = c.req.path;
+    if (path.startsWith("/api/") || path.startsWith("/dev/")) return next();
+    const who = await identity.whoAmI(c.req.raw);
+    if (who.kind === "none") return c.html(noIdentityPage(who.reason), 403);
+    await next();
+  });
+
+  // Toda rota em /api (menos a saúde) exige identidade.
   app.use("/api/*", async (c, next) => {
     const who = await identity.whoAmI(c.req.raw);
     if (who.kind === "none") return c.json({ error: "no_identity", reason: who.reason }, 403);
+    c.set("who", who);
     const member = await memberFor(db, clock, who);
-    if (!member) return c.json({ error: "not_a_member" }, 403);
-    c.set("member", member);
+    if (member) c.set("member", member);
+    await next();
+  });
+
+  // O próprio Pedido de entrada é a única coisa que quem ainda não é Membro alcança.
+  app.route("/api/join-request", myJoinRequestRoutes({ db, clock, events, hooks }));
+
+  // Daqui em diante, só Membro.
+  app.use("/api/*", async (c, next) => {
+    if (!c.get("member")) return c.json({ error: "not_a_member" }, 403);
     await next();
   });
 
   app.get("/api/me", (c) => c.json(toMeDto(c.get("member"))));
   app.get(EVENTS_PATH, eventsRoute);
+  app.route("/api/join-requests", joinRequestAdminRoutes({ db, clock, events, hooks }));
   app.route("/api", conversationRoutes({ db, clock, events }));
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
