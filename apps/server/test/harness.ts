@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import {
+  type AccountDto,
   EVENTS_PATH,
   type JoinRequestDto,
   type MeDto,
@@ -24,7 +25,7 @@ import type { Clock } from "../src/clock";
 import { type Db, migrationsFolder, schema } from "../src/db/client";
 import type { Identity, IdentityPort, NoIdentityReason } from "../src/identity/port";
 import { secretBox } from "../src/secrets";
-import { type FakeClaude, fakeClaude } from "./fake-claude";
+import { FAKE_LOGIN_CODE, type FakeClaude, fakeClaude } from "./fake-claude";
 import { startFakeMessagesApi } from "./fakes/messages-api";
 import { type Delivery, type FakeSubscription, type PushCollector, startPushCollector } from "./fakes/push-collector";
 
@@ -186,8 +187,8 @@ function optional<T>(v: string | null, f: (v: string) => T): T | undefined {
 
 // ---------- WebSocket de eventos, como um cliente ----------
 
-/** Quanto `next` espera por padrão. Curto: um evento que vai chegar chega em milissegundos. */
-const EVENT_TIMEOUT_MS = 1_000;
+/** Quanto `next` espera por padrão. Folgado para a máquina carregada; provar ausência usa o evento-sentinela, não a espera. */
+const EVENT_TIMEOUT_MS = 5_000;
 
 /** Uma conexão aberta no WebSocket de eventos, com a fila do que chegou. */
 export interface EventSocket {
@@ -319,7 +320,8 @@ export function throwawayAccounts() {
     claude.dispose();
     rmSync(root, { recursive: true, force: true });
   });
-  return { claude, config: { claudeBin: claude.bin, root } };
+  // Limites curtos no encerramento do `claude -p`: um processo que ignora sinais não segura o teste.
+  return { claude, config: { claudeBin: claude.bin, root, stopGrace: { sigintMs: 300, sigtermMs: 300 } } };
 }
 
 /** Admin padrão do `addMember` quando o teste não diz quem aprova. */
@@ -390,7 +392,7 @@ export async function testApp(
   const push = await pushCollector();
   const secrets = await secretBox(opts.masterKey ?? crypto.getRandomValues(new Uint8Array(32)));
 
-  function boot() {
+  async function boot() {
     const built = createApp({
       db,
       identity: opts.identity ?? fakeIdentity,
@@ -403,10 +405,10 @@ export async function testApp(
       push: { contact: TEST_VAPID_CONTACT, agent: push.agent },
       installation: opts.installation,
     });
-    built.executions.start();
+    await built.start();
     return built;
   }
-  let current = boot();
+  let current = await boot();
   let down = false;
   async function shutdown() {
     if (down) return;
@@ -490,7 +492,7 @@ export async function testApp(
         server = undefined;
         await s.stop(true);
       }
-      current = boot();
+      current = await boot();
       down = false;
     },
     /**
@@ -533,6 +535,34 @@ export async function testApp(
     claude: claude as FakeClaude,
     /** Pasta-raiz das Contas (as pastas de `CLAUDE_CONFIG_DIR` ficam debaixo dela). */
     accountsRoot,
+    /**
+     * Liga a Conta do Claude de `who` pelo fluxo de verdade ("Ligar minha Conta do Claude", o
+     * código colado e a validação pelo `fake-claude`, com o roteiro que estiver valendo). Devolve
+     * a pasta da Conta (o `CLAUDE_CONFIG_DIR` dos `claude -p` dela). `who` já tem de ser Membro.
+     */
+    async linkAccount(who: Person): Promise<string> {
+      const started = await this.as(who).post("/api/account/linking");
+      if (started.status !== 202) throw new Error(`linkAccount: ligar respondeu ${started.status}`);
+      await eventually(
+        "o login mostrar a URL",
+        async () =>
+          ((await (await this.as(who).get("/api/account")).json()) as AccountDto).linking?.state === "waiting_code",
+        15_000,
+      );
+      const login = claude.callsOf("auth login").at(-1)!;
+      await this.as(who).post("/api/account/linking/code", { code: FAKE_LOGIN_CODE });
+      const account = await eventually(
+        "a Conta ficar Ligada",
+        async () => {
+          const a: AccountDto = await (await this.as(who).get("/api/account")).json();
+          if (a.linking?.state === "failed") throw new Error(`linkAccount: a ligação falhou: ${a.linking.message}`);
+          return a.status.state === "linked" && a.linking === null && a;
+        },
+        15_000,
+      );
+      if (!account) throw new Error("linkAccount: a Conta não ficou Ligada");
+      return login.env.CLAUDE_CONFIG_DIR!;
+    },
     /**
      * Põe `who` no Workspace como Membro pelo fluxo de verdade: `who` cria o Pedido de
      * entrada e `by` (um Admin) aprova. Se a Instalação está vazia, `by` abre o Workspace

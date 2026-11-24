@@ -19,6 +19,8 @@ import {
   type FakeAccount,
   type FakeClaudeCall,
   type FakeClaudeScript,
+  type FakeClaudeSignal,
+  type FakeEnd,
   type FakeRun,
 } from "./script";
 
@@ -28,16 +30,23 @@ if (flag !== "--fake-home" || !home) {
   process.exit(2);
 }
 
-const call: FakeClaudeCall = {
-  argv,
-  cwd: process.cwd(),
-  env: Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)),
-};
-appendFileSync(join(home, "calls.jsonl"), `${JSON.stringify(call)}\n`);
+const isPrint = argv.includes("-p") || argv.includes("--print");
 
-const script: FakeClaudeScript = existsSync(join(home, "script.json"))
-  ? JSON.parse(readFileSync(join(home, "script.json"), "utf8"))
-  : {};
+/** Registra o start. O `-p` lê o stdin até o fim antes (o prompt chega por ali). */
+function logCall(stdin?: string) {
+  const call: FakeClaudeCall = {
+    pid: process.pid,
+    argv,
+    ...(stdin !== undefined ? { stdin } : {}),
+    cwd: process.cwd(),
+    env: Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)),
+  };
+  appendFileSync(join(home!, "calls.jsonl"), `${JSON.stringify(call)}\n`);
+}
+if (!isPrint) logCall();
+
+const scriptFile = join(home, "script.json");
+const script: FakeClaudeScript = existsSync(scriptFile) ? JSON.parse(readFileSync(scriptFile, "utf8")) : {};
 
 const configDir = process.env.CLAUDE_CONFIG_DIR;
 if (!configDir) {
@@ -148,7 +157,6 @@ const line = (obj: Record<string, unknown>) => write(`${JSON.stringify({ ...obj,
 const modelArg = () => (argv.includes("--model") ? argv[argv.indexOf("--model") + 1] : undefined) ?? "default";
 
 function streamText(text: string) {
-  const ev = (event: Record<string, unknown>) => line({ type: "stream_event", event });
   ev({ type: "message_start", message: { id: "msg_fake", role: "assistant", model: modelArg(), content: [] } });
   ev({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
   for (const piece of text.match(/.{1,8}/gs) ?? []) {
@@ -162,36 +170,51 @@ function streamText(text: string) {
 
 const usage = { input_tokens: 10, output_tokens: 1 };
 
-async function print(): Promise<number> {
-  line({ type: "system", subtype: "init", model: modelArg(), tools: [] });
-  const run: FakeRun = loggedInAccount()
-    ? (script.run ?? { kind: "reply", text: "ok" })
-    : { kind: "error", error: "authentication_failed", apiErrorStatus: 401, message: "Not logged in" };
+/** O próximo roteiro do `-p`: o primeiro da fila `runs` (que sai do arquivo), ou `run`. */
+function nextRun(): FakeRun {
+  const queued = script.runs?.[0];
+  if (queued) {
+    writeFileSync(scriptFile, JSON.stringify({ ...script, runs: script.runs!.slice(1) }));
+    return queued;
+  }
+  return script.run ?? { kind: "reply", text: "ok" };
+}
 
-  if (run.kind === "hang") return hangForever();
-  if (run.kind === "die") return run.exitCode ?? 1;
-  if (run.kind === "reply") {
-    const text = run.text ?? "ok";
-    streamText(text);
+/** Sinais: registra cada um e reage como o roteiro manda (o padrão é o do binário real). */
+function handleSignals(run: FakeRun) {
+  const log = (signal: FakeClaudeSignal["signal"]) =>
+    appendFileSync(
+      join(home!, "signals.jsonl"),
+      `${JSON.stringify({ pid: process.pid, signal, at: Date.now() } satisfies FakeClaudeSignal)}\n`,
+    );
+  process.on("SIGINT", () => {
+    log("SIGINT");
+    if ((run.onSigint ?? "abort") === "ignore") return;
     line({
       type: "result",
-      subtype: "success",
-      is_error: false,
-      result: text,
-      terminal_reason: "completed",
+      subtype: "error_during_execution",
+      is_error: true,
+      terminal_reason: "aborted_streaming",
       api_error_status: null,
       num_turns: 1,
-      total_cost_usd: 0.0001,
+      total_cost_usd: 0,
       usage,
-      ...(run.credentialExpiresAt ? { credential_expires_at: run.credentialExpiresAt } : {}),
     });
-    return 0;
-  }
-  const message = run.message ?? `API Error: ${run.error}`;
+    process.exit(0);
+  });
+  process.on("SIGTERM", () => {
+    log("SIGTERM");
+    if ((run.onSigterm ?? "exit") === "ignore") return;
+    process.exit(143);
+  });
+}
+
+function errorEnd(end: Extract<FakeEnd, { result: "error" }>): number {
+  const message = end.message ?? `API Error: ${end.error ?? "unknown"}`;
   line({
     type: "assistant",
     message: { role: "assistant", content: [{ type: "text", text: message }] },
-    error: run.error,
+    ...(end.error ? { error: end.error } : {}),
   });
   // Como o binário real: mesmo com erro, `subtype` pode vir "success". Decide-se por `is_error`.
   line({
@@ -199,13 +222,101 @@ async function print(): Promise<number> {
     subtype: "success",
     is_error: true,
     result: message,
-    terminal_reason: "api_error",
-    api_error_status: run.apiErrorStatus ?? null,
+    terminal_reason: end.terminalReason ?? "api_error",
+    api_error_status: end.apiErrorStatus ?? null,
     num_turns: 1,
     total_cost_usd: 0,
     usage,
   });
   return 1;
+}
+
+function successEnd(end: Extract<FakeEnd, { result: "success" }>, text: string): number {
+  line({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: end.text ?? text,
+    terminal_reason: "completed",
+    api_error_status: null,
+    num_turns: 1,
+    total_cost_usd: end.costUsd ?? 0.0001,
+    usage: end.usage ?? usage,
+    ...(end.credentialExpiresAt ? { credential_expires_at: end.credentialExpiresAt } : {}),
+    ...(end.structuredOutput !== undefined ? { structured_output: end.structuredOutput } : {}),
+  });
+  return 0;
+}
+
+let blockIndex = 0;
+const ev = (event: Record<string, unknown>) => line({ type: "stream_event", event });
+
+async function steps(run: Extract<FakeRun, { kind: "steps" }>): Promise<number> {
+  ev({ type: "message_start", message: { id: "msg_fake", role: "assistant", model: modelArg(), content: [] } });
+  let text = "";
+  for (const step of run.steps) {
+    if ("text" in step) {
+      const index = blockIndex++;
+      ev({ type: "content_block_start", index, content_block: { type: "text", text: "" } });
+      for (const piece of step.text.match(/.{1,8}/gs) ?? []) {
+        ev({ type: "content_block_delta", index, delta: { type: "text_delta", text: piece } });
+      }
+      ev({ type: "content_block_stop", index });
+      text += step.text;
+    } else if ("thinking" in step) {
+      const index = blockIndex++;
+      ev({ type: "content_block_start", index, content_block: { type: "thinking", thinking: "" } });
+      ev({ type: "content_block_delta", index, delta: { type: "thinking_delta", thinking: "" } });
+      ev({ type: "content_block_stop", index });
+    } else if ("sleepMs" in step) {
+      await Bun.sleep(step.sleepMs);
+    } else if ("hang" in step) {
+      return hangForever();
+    } else if ("apiRetry" in step) {
+      line({
+        type: "system",
+        subtype: "api_retry",
+        attempt: step.apiRetry.attempt,
+        max_retries: step.apiRetry.max,
+        retry_delay_ms: 1000,
+        error_status: step.apiRetry.errorStatus ?? 529,
+        error: step.apiRetry.error ?? "overloaded",
+      });
+    } else if ("rateLimit" in step) {
+      line({ type: "rate_limit_event", rate_limit_info: step.rateLimit });
+    } else if ("die" in step) {
+      return step.die;
+    }
+  }
+  const end: FakeEnd = run.end ?? { result: "success" };
+  if (end.result === "error") return errorEnd(end);
+  ev({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } });
+  ev({ type: "message_stop" });
+  line({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text }] } });
+  const code = successEnd(end, text);
+  return end.lingers ? hangForever() : code;
+}
+
+async function print(): Promise<number> {
+  // O prompt chega pelo stdin (ou como argumento, na validação); lê até o fim antes de começar.
+  const stdin = await new Response(Bun.stdin.stream()).text();
+  const run: FakeRun = loggedInAccount()
+    ? nextRun()
+    : { kind: "error", error: "authentication_failed", apiErrorStatus: 401, message: "Not logged in" };
+  // Os sinais já são tratados quando o start aparece no log: o teste pode sinalizar dali em diante.
+  handleSignals(run);
+  logCall(stdin);
+  line({ type: "system", subtype: "init", model: modelArg(), tools: [] });
+
+  if (run.kind === "hang") return hangForever();
+  if (run.kind === "die") return run.exitCode ?? 1;
+  if (run.kind === "steps") return steps(run);
+  if (run.kind === "reply") {
+    const text = run.text ?? "ok";
+    streamText(text);
+    return successEnd({ result: "success", credentialExpiresAt: run.credentialExpiresAt }, text);
+  }
+  return errorEnd({ result: "error", error: run.error, apiErrorStatus: run.apiErrorStatus, message: run.message });
 }
 
 // ---------- roteamento do argv ----------
@@ -215,7 +326,7 @@ async function main(): Promise<number> {
   if (a === "auth" && b === "login") return authLogin();
   if (a === "auth" && b === "status") return authStatus();
   if (a === "auth" && b === "logout") return authLogout();
-  if (argv.includes("-p") || argv.includes("--print")) return print();
+  if (isPrint) return print();
   console.error(`fake-claude: argv não roteirizado: ${argv.join(" ")}`);
   return 2;
 }

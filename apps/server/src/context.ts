@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, lt } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import type { Agent } from "./agents";
 import { withBuiltinText } from "./articuladora";
 import { type Db, schema } from "./db/client";
@@ -36,7 +36,8 @@ export type Call =
  * 3. as instruções do Agente;
  * 4. as Instruções do Canal;
  * 5. quem é quem (pessoas com nome e "sobre mim", Agentes com nome e descrição);
- * 6. as últimas N mensagens até a de origem, cada uma com o autor e a marca de pessoa ou Agente.
+ * 6. as últimas N mensagens até a de origem, cada uma com o autor e a marca de pessoa ou Agente
+ *    (numa Thread, a raiz sempre e as últimas N da Thread: `recentMessages`).
  *
  * As camadas 1 a 5 vão no `system`; a 6 vai como uma mensagem só, em ordem, terminando na
  * mensagem que o Agente responde (com N = 0, só ela). Uma seção vazia não entra.
@@ -74,8 +75,14 @@ export async function buildContext(
     .then((rows) => rows.map((a) => withBuiltinText({ ...a, instructions: "" })));
 
   const caller = recent.at(-1)!;
-  const where =
-    conversation!.kind === "public" || conversation!.kind === "private" ? `no Canal #${conversation!.name}` : "numa DM";
+  const isChannel = conversation!.kind === "public" || conversation!.kind === "private";
+  const where = origin.threadRootId
+    ? isChannel
+      ? `numa Thread do Canal #${conversation!.name}`
+      : "numa Thread de uma DM"
+    : isChannel
+      ? `no Canal #${conversation!.name}`
+      : "numa DM";
   const why = {
     mention: () => `${caller.author} chamou você com uma Menção ${where}.`,
     dm: () => `Você está numa DM com ${caller.author}: você responde a cada mensagem.`,
@@ -124,7 +131,9 @@ export async function buildContext(
       {
         role: "user",
         content: [
-          "Mensagens recentes da conversa, da mais antiga para a mais nova:",
+          origin.threadRootId
+            ? "A mensagem que abriu a Thread e as mais recentes dela, da mais antiga para a mais nova:"
+            : "Mensagens recentes da conversa, da mais antiga para a mais nova:",
           transcript,
           `Responda à última mensagem, de ${caller.author}.`,
         ].join("\n\n"),
@@ -154,13 +163,17 @@ function section(title: string, body: string) {
 type Origin = typeof messages.$inferSelect;
 
 /**
- * As N mensagens anteriores à de origem, mais ela, em ordem de gravação, com o autor.
- * SEAM do #29 (Threads): numa Thread, a raiz entra sempre, seguida das N últimas da Thread.
+ * As últimas N mensagens até a de origem, mais ela, em ordem de gravação, com o autor (Spec,
+ * módulo 5, camada 6). O fluxo principal e cada Thread são conversas separadas:
+ * - no fluxo principal, as N anteriores do fluxo principal (as mensagens de Thread não entram);
+ * - numa Thread, a raiz entra sempre (fora do N), seguida das N anteriores da Thread.
+ * O roteamento da Articuladora usa a mesma função, com o N dele.
  */
 export async function recentMessages(db: Db, origin: Origin, n: number) {
   const select = () =>
     db
       .select({
+        id: messages.id,
         seq: messages.seq,
         body: messages.body,
         agentId: messages.authorAgentId,
@@ -170,12 +183,16 @@ export async function recentMessages(db: Db, origin: Origin, n: number) {
       .from(messages)
       .leftJoin(members, eq(members.id, messages.authorMemberId))
       .leftJoin(agents, eq(agents.id, messages.authorAgentId));
+  const sameFlow = origin.threadRootId
+    ? eq(messages.threadRootId, origin.threadRootId)
+    : and(eq(messages.channelId, origin.channelId), isNull(messages.threadRootId));
   const before = await select()
-    .where(and(eq(messages.channelId, origin.channelId), lt(messages.seq, origin.seq)))
+    .where(and(sameFlow, lt(messages.seq, origin.seq)))
     .orderBy(desc(messages.seq))
     .limit(n);
   const [self] = await select().where(eq(messages.id, origin.id));
-  return [...before.reverse(), self!].map((m) => ({
+  const root = origin.threadRootId ? await select().where(eq(messages.id, origin.threadRootId)) : [];
+  return [...root, ...before.reverse(), self!].map((m) => ({
     body: m.body,
     agentId: m.agentId,
     author: m.agentName ?? m.memberName ?? "Alguém",

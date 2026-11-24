@@ -34,7 +34,8 @@ export function accountEnv(configDir: string): Record<string, string> {
 /** O binário não existe ou não pôde ser executado. */
 export class ClaudeMissing extends Error {}
 
-type Proc = ReturnType<typeof spawnClaude>;
+export type ClaudeProcess = ReturnType<typeof spawnClaude>;
+type Proc = ClaudeProcess;
 
 /** Processos vivos, para o `close()` do app não deixar órfãos. */
 export function processTracker() {
@@ -54,7 +55,8 @@ export function processTracker() {
 }
 export type ProcessTracker = ReturnType<typeof processTracker>;
 
-function spawnClaude(bin: string, args: string[], configDir: string) {
+/** Sobe o `claude` com `CLAUDE_CONFIG_DIR` (e o `cwd`) na pasta da Conta e o `env` do zero. */
+export function spawnClaude(bin: string, args: string[], configDir: string) {
   try {
     return Bun.spawn([bin, ...args], {
       env: accountEnv(configDir),
@@ -122,7 +124,7 @@ export function startLogin(bin: string, configDir: string, procs: ProcessTracker
   };
 }
 
-async function drain(stream: ReadableStream<Uint8Array>) {
+export async function drain(stream: ReadableStream<Uint8Array>) {
   try {
     for await (const _ of stream);
   } catch {

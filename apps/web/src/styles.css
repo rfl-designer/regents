@@ -135,6 +135,64 @@ body {
   padding: 10px 16px;
   border-bottom: 1px solid var(--line);
 }
+/* A conversa: o fluxo principal e, ao lado, o painel da Thread aberta (no celular, por cima) */
+.conversation-view {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.main-flow {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.thread-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(420px, 45%);
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--bg);
+}
+.thread-head {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.thread-head .link {
+  margin-left: auto;
+}
+.thread-root {
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.thread-link {
+  margin: 0 0 4px 42px;
+  font-size: 12.5px;
+}
+.thread-link .link {
+  padding: 0;
+  color: var(--muted);
+}
+.thread-link.has-thread .link {
+  color: var(--agent);
+  font-weight: 600;
+}
+@media (max-width: 640px) {
+  .thread-panel {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    width: auto;
+    border-left: 0;
+  }
+}
 /* A lista de mensagens com os avisos flutuantes por cima (Spec, Leitura; protótipo resposta-ancorada A) */
 .stream {
   position: relative;

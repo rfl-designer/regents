@@ -204,7 +204,7 @@ async function main(command: string | undefined) {
   await migrateOrFail(conn);
   const vapidContact = process.env.SHEARIM_VAPID_CONTACT || DEV_VAPID_CONTACT;
   if (!/^(mailto:|https:)/.test(vapidContact)) fail(`SHEARIM_VAPID_CONTACT=${vapidContact} não é mailto: nem https:.`);
-  const { app, websocket, executions, push, close } = createApp({
+  const { app, websocket, executions, push, start, close } = createApp({
     db: conn.db,
     identity: who.identity,
     clock: systemClock,
@@ -221,7 +221,7 @@ async function main(command: string | undefined) {
   });
   // O par VAPID nasce na primeira subida (e daí em diante é sempre o mesmo, guardado no banco).
   await push.ensureKeys();
-  executions.start();
+  await start();
 
   const root = new Hono();
   root.route("/", app);

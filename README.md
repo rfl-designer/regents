@@ -9,7 +9,7 @@ Precisa só do [Bun](https://bun.sh) **1.3.11**.
 ```sh
 bun install            # dependências de todos os workspaces
 bun run dev            # servidor em 127.0.0.1:3000 + Vite em http://localhost:5173
-bun run test           # testes do servidor (PGlite em memória, sem Docker); `bun test --timeout 30000` dá no mesmo
+bun run test           # testes do servidor (PGlite em memória, sem Docker); use `bun run test`, não `bun test` puro: só o script passa `--timeout 30000`
 bun run typecheck      # tsc em todos os workspaces
 bun run lint           # Biome (formatação + lint); `bunx biome check --write .` corrige
 bun run build          # build do PWA em apps/web/dist
@@ -36,7 +36,7 @@ deploy/setup.sh        # Instalação: segredos, .env e conferência da tailnet 
 | `SHEARIM_PGLITE_DIR` | `.data/pglite` | Pasta do PGlite de desenvolvimento. `memory://`: em memória, some ao parar (o e2e usa). |
 | `HOST` / `PORT` | `0.0.0.0` / `3000` | Onde escutar (`bun run dev` usa `127.0.0.1`). |
 | `SHEARIM_WEB_DIST` | `apps/web/dist` | Build do PWA servido em `/`. |
-| `SHEARIM_CLAUDE_BIN` | `claude` do `PATH` | O binário do Claude Code das Contas (ADR 0005). Sem ele, "Ligar minha Conta" mostra o erro na tela. |
+| `SHEARIM_CLAUDE_BIN` | `claude` do `PATH` | O binário do Claude Code das Contas (ADR 0005) e das execuções pela Conta (ADR 0006). Sem ele, "Ligar minha Conta" mostra o erro na tela. Na imagem, `/usr/local/bin/claude`, fixado em `CLAUDE_CODE_VERSION` no `Dockerfile`, com `DISABLE_AUTOUPDATER=1`. |
 | `SHEARIM_ACCOUNTS_DIR` | `.data/accounts` | Pasta-raiz das Contas: uma pasta de `CLAUDE_CONFIG_DIR` por login, fora do backup (no compose, o volume `contas`). O Shearim nunca lê o que há dentro. |
 | `SHEARIM_MASTER_KEY_FILE` | `.data/secrets/master_key` | A chave mestra (32 bytes em hex, como o `deploy/setup.sh` grava, ou em base64), que cifra a Chave do Workspace. No compose, `/run/secrets/master_key`. Sem a variável, o arquivo padrão é gerado se faltar (só desenvolvimento); com ela, o arquivo tem que existir. Com outra chave mestra, o Admin grava a Chave de novo. |
 | `SHEARIM_ANTHROPIC_BASE_URL` | (a da Anthropic) | Onde fica a Messages API. O e2e aponta para a falsa. |
@@ -50,9 +50,10 @@ deploy/setup.sh        # Instalação: segredos, .env e conferência da tailnet 
 
 ```
 apps/server/        Bun + Hono + Drizzle
-  src/app.ts        createApp(deps) -> { app, websocket, events, close }: o seam dos testes
+  src/app.ts        createApp(deps) -> { app, websocket, events, executions, start, close }: o seam dos testes
   src/events.ts     WebSocket de eventos: EventHub.publish(audiência, evento)
-  src/accounts/     Contas: rotas /api/account e o adaptador do binário `claude` (claude-cli.ts)
+  src/accounts/     Contas: rotas /api/account, a limpeza da subida e o adaptador do binário `claude` (claude-cli.ts)
+  src/model/        porta de modelo (port.ts): o cérebro da Chave (key.ts, Messages API) e o da Conta (account.ts, `claude -p`)
   src/conversations.ts  rotas de Canais, participantes, mensagens de toda conversa e Instruções do Canal
   src/dms.ts        rotas de DMs (abrir, listar)
   src/participation.ts  quem participa, quem vê (canSee) e quem recebe eventos (audienceOf)
@@ -62,6 +63,7 @@ apps/server/        Bun + Hono + Drizzle
   src/outcomes.ts   os Desfechos gravados (`outcomes`) e o `OutcomeDto`
   src/context.ts    montagem de contexto: as 6 camadas que cada execução recebe (buildContext)
   src/workspace-context.ts  o Contexto do Workspace (só Admin)
+  src/threads.ts    Threads seguidas: quem segue (`recordFollows`, `followersOf`) e `GET /api/threads/followed`
   src/reading.ts    leitura e não-lido: quais mensagens cada Membro viu, contagens e `unread.updated`
   src/presence.ts   Presença: qual conversa cada conexão tem à vista (faz o push calar)
   src/push.ts       push: par VAPID, inscrições por aparelho, gatilhos de Menção e DM; push-sender.ts é o adaptador do `web-push`
@@ -142,7 +144,7 @@ Nos testes, `t.socket(pessoa)` abre a conexão como uma aba (num `Bun.serve` rea
 ```ts
 const aba = await t.socket(juliana, "aba da Juliana");      // o rótulo aparece nas falhas
 await juliana.post(`/api/channels/${id}/messages`, { body: "oi" });
-const { message } = await aba.next("message.created");      // espera até 1 s; falha dizendo o que chegou
+const { message } = await aba.next("message.created");      // espera até 5 s; falha dizendo o que chegou
 aba.received();                                             // tudo o que chegou, em ordem
 (await t.upgrade({ none: "funnel" })).status;                // 403: upgrade recusado
 t.events.publish({ members: [id] }, evento);                 // publicar direto no hub
@@ -188,6 +190,23 @@ Uma DM é uma conversa fechada sem nome, fora dos Canais: `dm` (duas pessoas, ou
 Uma DM nova sai como `dm.updated` (com o `DmDto`) para os participantes. `MessageDto.channelId` é o id da conversa, Canal ou DM.
 
 Para provar que algo **não** chegou, sem `sleep`: publique depois um evento que chega a todos e verifique que o próximo evento daquele tipo na conexão é ele (exemplo em `apps/server/test/realtime.test.ts`).
+
+### Threads e Thread seguida (#29)
+
+Uma Thread é a sequência de mensagens com o mesmo `messages.thread_root_id`, pendurada numa mensagem do fluxo principal da mesma conversa (Canal ou DM). Não há linha de "Thread" à parte: a primeira resposta a abre. Não há Thread dentro de Thread.
+
+| Rota | Quem | O quê |
+|---|---|---|
+| `POST /api/conversations/:id/messages` | quem vê | `{ body, threadRootId }` responde na Thread daquela raiz; raiz de outra conversa, inexistente ou que já está numa Thread: `400 invalid_input` |
+| `GET /api/conversations/:id/messages` | quem vê | todas as mensagens, as de Thread inclusive (`MessageDto.threadRootId`); o cliente separa o fluxo principal das Threads |
+| `GET /api/threads/followed` | Membro | `FollowedThreadDto[]` (`conversationId`, `rootMessageId`, `since`): as Threads que ele segue |
+
+- **Quem age:** a mensagem de pessoa numa Thread passa pelo mesmo `whoActs`: Menção chama o mencionado; num Canal com outros Agentes, cada uma recebe o Desfecho da Articuladora. A resposta ancorada a uma mensagem de Thread fica na Thread (`threadRootId` da origem).
+- **Contexto e roteamento:** `recentMessages` (em `context.ts`) trata o fluxo principal e cada Thread como conversas separadas: no fluxo principal, as N anteriores sem as mensagens de Thread; numa Thread, a raiz sempre (fora do N) e as N anteriores da Thread. O preâmbulo diz "numa Thread do Canal #x". O roteamento recebe a raiz e até 5 da Thread, a seção `## Já falaram nesta Thread` (os Agentes do Canal que já escreveram na raiz ou na Thread) e a instrução de preferi-los.
+- **Thread seguida:** seguem, sozinhos e uma vez só, o autor da raiz, quem respondeu e quem foi mencionado na Thread ou na raiz (as Menções que o #19 registra, de quem vê a conversa), gravados na mesma transação da mensagem (`thread_follows`, com `since`). Quem passa a seguir recebe `thread.followed` (só nas conexões dele). Agentes não seguem. Seguir e deixar de seguir à mão ficam fora da v1. O push de Thread seguida (#32) avisa `followersOf(db, raiz)`.
+- **Não-lido:** a mensagem de Thread conta como não-lida só para quem segue a Thread, e só a partir de `since`: quem não segue vê no Canal só o resumo ("3 respostas") e não fica com um badge que só sumiria abrindo Threads de que não participa. Na ordem de exibição, a Thread vem logo depois do grupo da raiz (a raiz e as respostas ancoradas a ela), na ordem dela, com as respostas ancoradas sob cada mensagem. O `unread.updated` continua indo a todo participante a cada mensagem nova.
+- **Ordem (#42):** a "conversa para a ordem" é `(executions.channel_id, executions.thread_root_id)` (`seriesOf` em `executions.ts`): o fluxo principal e cada Thread contam como conversas separadas para a série por Agente.
+- **PWA:** sob cada mensagem do fluxo principal, "Responder na Thread" (ou "n respostas") abre o painel da Thread ao lado (no celular, por cima), com a raiz, as mensagens da Thread com a resposta ancorada, o Desfecho e o Andamento, e o campo "Responder na Thread". O painel tem a própria leitura (`useReading`), e mostra "Você segue esta Thread".
 
 ### Leitura e não-lido
 
@@ -244,7 +263,10 @@ t.claude.callsOf("auth login")[0]!.env.CLAUDE_CONFIG_DIR;     // o que cada star
 - `auth login`: imprime a URL num hyperlink OSC 8 e o prompt, como o 2.1.30x, e lê o código no stdin. O código certo é `FAKE_LOGIN_CODE`. Com ele, grava o "login" na pasta de `CLAUDE_CONFIG_DIR` (o token falso `FAKE_ACCESS_TOKEN` e a conta) e sai 0. Com outro código, sai 1. `mode: "silent"` não imprime nada e não sai; `mode: "die"` sai 1 sem URL. `account` troca quem entra (o padrão é `DEFAULT_FAKE_ACCOUNT`, `fulana@exemplo.com`, Max).
 - `auth status --json`: os campos do real (`loggedIn`, `email`, `orgId`, `subscriptionType`, `planTier`, `loginExpiresAt`...). Sem login, sai 1 com `loggedIn: false`.
 - `auth logout`: apaga o login da pasta.
-- `claude -p` em `stream-json`: `run` diz o que acontece (`reply` em deltas com `result` de sucesso e, se pedido, `credential_expires_at`; `error` com a categoria em `assistant.error` e `result.is_error`, `die`, `hang`). Sem login na pasta, responde `authentication_failed`. O #26 estende `FakeRun` com passos (pensamento, silêncio, `api_retry`, `rate_limit_event`, morte no meio, `SIGINT`).
+- `claude -p` em `stream-json`: lê o stdin até o fim (o prompt; fica em `call.stdin`) e `run` diz o que acontece (`reply` em deltas com `result` de sucesso e, se pedido, `credential_expires_at`; `error` com a categoria em `assistant.error` e `result.is_error`, `die`, `hang`). Sem login na pasta, responde `authentication_failed`. `runs: [...]` é uma fila, um roteiro por start (vazia, vale `run`).
+- `{ kind: "steps", steps, end }` roteiriza uma execução: `{ text }` (deltas), `{ thinking: true }`, `{ sleepMs }`, `{ hang: true }`, `{ apiRetry: { attempt, max } }`, `{ rateLimit: { status, resetsAt (s), isUsingOverage } }`, `{ die: código }`; `end` é `{ result: "success", credentialExpiresAt?, structuredOutput?, costUsd?, usage? }` (padrão) ou `{ result: "error", error?, apiErrorStatus?, terminalReason? }` (exit 1, `subtype: "success"`, como o real).
+- Sinais: todo `-p` registra os que leva (`t.claude.signals(pid)`, com `at`). No `SIGINT`, o padrão é o do real (`result` com `aborted_streaming`, exit 0); `onSigint: "ignore"` fica de pé. No `SIGTERM`, sai 143; `onSigterm: "ignore"` fica até o `SIGKILL`.
+- `fakeLogin(pasta)` deixa uma pasta "logada" sem o fluxo de ligar; `t.linkAccount(pessoa)` liga a Conta pelo fluxo de verdade e devolve a pasta (o `CLAUDE_CONFIG_DIR`). O arnês injeta prazos curtos no encerramento (`accounts.stopGrace`, 300 ms + 300 ms).
 
 ### Agentes, Chave e execuções
 
@@ -262,14 +284,16 @@ t.claude.callsOf("auth login")[0]!.env.CLAUDE_CONFIG_DIR;     // o que cada star
 | `POST /api/conversations/:id/messages/:messageId/cancel` | autor da mensagem | cancela, em qualquer passo, o que a mensagem ainda tem aberto (`queued`, `running`, `retrying`) e devolve as canceladas. `403 not_author`, `409 nothing_to_cancel` |
 | `GET`/`PUT /api/workspace-context` | Admin | `{ context }`: o Contexto do Workspace (até 4000 caracteres, `WORKSPACE_CONTEXT_MAX`) |
 
-Uma mensagem de pessoa com `@identificador` de um Agente (qualquer Agente do Workspace, sem diferença de maiúsculas nem acentos), num Canal ou numa DM, é gravada e anunciada; depois, uma execução por Agente mencionado entra na fila (tabela `executions`, `kind: "mention"`). Numa DM com Agente, ele responde a cada mensagem, mencionado ou não (`kind: "dm"`, uma vez só mesmo se mencionado); numa DM entre pessoas ou em grupo, Agente só entra por Menção e não vira participante. DMs não têm Desfecho. Quem decide quem age é `whoActs` em `conversations.ts`; a resposta de um Agente não passa por lá, então uma Menção escrita por Agente não dispara nada. O trabalhador (`executions.start()`, um por processo, uma execução por vez) paga pela Chave, chama a porta de modelo e grava a resposta com `originMessageId` (a resposta ancorada). O Andamento sai como `execution.updated` (`queued` → `running`/`writing` → `done`, `failed` com `reason`, `not_acting` sem Chave, ou `cancelled`); a resposta sai antes como `message.created`.
+Uma mensagem de pessoa com `@identificador` de um Agente (qualquer Agente do Workspace, sem diferença de maiúsculas nem acentos), num Canal ou numa DM, é gravada e anunciada; depois, uma execução por Agente mencionado entra na fila (tabela `executions`, `kind: "mention"`). Numa DM com Agente, ele responde a cada mensagem, mencionado ou não (`kind: "dm"`, uma vez só mesmo se mencionado); numa DM entre pessoas ou em grupo, Agente só entra por Menção e não vira participante. DMs não têm Desfecho. Quem decide quem age é `whoActs` em `conversations.ts`; a resposta de um Agente não passa por lá, então uma Menção escrita por Agente não dispara nada. O trabalhador (`executions.start()`, um por processo, uma execução por vez) decide quem paga (a Conta ligada do autor da mensagem; sem ela, a Chave; `byPayer` em `executions.ts`), chama a porta de modelo e grava a resposta com `originMessageId` (a resposta ancorada). O Andamento sai como `execution.updated` (`queued` → `running`/`writing` → `done`, `failed` com `reason`, `not_acting` sem Chave, ou `cancelled`); a resposta sai antes como `message.created`.
 
 Nenhuma execução fica no limbo (ADR 0003, #24):
 
 - **Vigia:** um passo em andamento que fica 2 min (`STALL_MS`) sem progresso vira falha ("ficou 2 minutos sem escrever nada"). Progresso é texto, pensamento ou `api_retry` da porta de modelo; `ping` não conta. O `api_retry` aparece em `apiRetry: { attempt, max }` ("tentando de novo (n/m)") e some quando o texto volta.
 - **Nova tentativa:** a falha que vale nova tentativa (todas, menos credencial recusada, sem crédito e `failed` com `retryable: false`) vira `retrying`, com `reason` e `retryAt` (10 s depois, `RETRY_DELAY_MS`). Na hora, volta para a fila mantendo a hora de chegada, como `attempt: 2`, decidindo de novo quem paga e relendo o contexto. A segunda falha é `failed` de vez (com ", nas duas tentativas" quando o motivo se repete), e só então roda `hooks.executionFailed(dto)`: é onde o push ao autor (#32) se pendura. "Tentar de novo" começa um ciclo novo, com a sua nova tentativa automática, e marca a execução (`retriedByAuthor`) para o #27 pagar pela Conta do autor.
 - **Cancelamento:** a execução que está rodando é interrompida pelo `AbortSignal` da porta de modelo, com o motivo em `signal.reason` (`"stalled" | "cancelled" | "shutdown"`). É por ele que o cérebro da Conta (#26) faz o `SIGINT`, 10 s, `SIGTERM`, 5 s, `SIGKILL`. A resposta e o fim são gravados juntos: um cancelamento no último instante ganha.
-- **Subida:** o que estava `running` ficou sem processo vivo e vira "o servidor reiniciou", seguindo a nova tentativa (ou falha de vez, se já era a segunda).
+- **Subida:** o que estava `running` ficou sem processo vivo e vira "o servidor reiniciou", seguindo a nova tentativa (ou falha de vez, se já era a segunda). Antes, `start()` limpa `SHEARIM_ACCOUNTS_DIR`: apaga as pastas de login (`<raiz>/<membro>/<uuid>`) que não são a pasta de uma Conta, e em cada pasta de Conta o `.oauth_refresh.lock` órfão (só pasta vazia com mais de 60 s, pelo relógio do sistema).
+
+Pela Conta (#26, ADR 0006): cada execução é um `claude -p` novo (`src/model/account.ts`), sem sessão, em `stream-json`, sem tools, settings nem MCP, com o contexto fixo em `--system-prompt` e as mensagens no stdin, na pasta da Conta (`accountEnv`: `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_MAX_RETRIES=3`, `API_TIMEOUT_MS=90000`, `CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS=90000`). A falha se lê por `is_error`, `assistant.error` e `terminal_reason`. Processo que morre sem `result` é falha na hora; a vigia, o cancelamento e a parada encerram por `SIGINT`, 10 s, `SIGTERM`, 5 s, `SIGKILL`. **Troca no meio:** `rate_limit_event` rejeitado, `assistant.error: "rate_limit"` ou `authentication_failed` descartam o parcial e refazem a resposta pela Chave na mesma tentativa (`payer` vira `key`); o aviso de 85% e o uso extra seguem na Conta; o `server_error` do lock de renovação é falha comum. O `credential_expires_at` do fim vai para `accounts.credential_expires_at` (a validade mostrada é do #35). No Andamento, `payer` é `key` pela Chave e nulo pela Conta (o estado da Conta é só do autor). O `output: { schema }` do pedido (o roteamento da Articuladora) vira `--json-schema`, e o `structured_output` do `result` volta como o texto da resposta, como pela Chave (ADR 0009); o roteamento também é pago pela Conta do autor, com a mesma troca no meio.
 - **Dreno:** no `SIGTERM`, `executions.drain()` para de pegar trabalho e espera até 20 s (`DRAIN_MS`) o que está rodando; o resto fica para a subida seguinte. `SIGINT` (Ctrl-C) para na hora.
 
 ### Montagem de contexto

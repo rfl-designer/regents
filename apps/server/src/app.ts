@@ -2,6 +2,7 @@ import { EVENTS_PATH } from "@shearim/contracts";
 import { Hono } from "hono";
 import { websocket } from "hono/bun";
 import { type AccountsConfig, createAccounts } from "./accounts";
+import { processTracker } from "./accounts/claude-cli";
 import { agentRoutes } from "./agents";
 import type { Clock } from "./clock";
 import { conversationRoutes } from "./conversations";
@@ -14,6 +15,7 @@ import { IdentityUnavailableError } from "./identity/whois";
 import { createInstallation, type InstallationConfig } from "./installation/status";
 import { type JoinRequestHooks, joinRequestAdminRoutes, myJoinRequestRoutes, type TailnetUser } from "./join-requests";
 import { listMembers, type Member, memberFor } from "./members";
+import { accountBrain } from "./model/account";
 import { keyBrain } from "./model/key";
 import { createModelPort, type ModelBrain } from "./model/port";
 import { noIdentityPage } from "./no-identity-page";
@@ -22,6 +24,7 @@ import { profileRoutes } from "./profile";
 import { createPush, type PushConfig } from "./push";
 import { createReading, unreadOf } from "./reading";
 import type { SecretBox } from "./secrets";
+import { threadRoutes } from "./threads";
 import { workspaceContextRoutes } from "./workspace-context";
 import { workspaceKeyRoutes } from "./workspace-key";
 
@@ -63,7 +66,12 @@ export function createApp(deps: AppDeps) {
   const app = new Hono<Env>();
   const { hub: events, route: eventsRoute } = createEventHub();
   const accounts = createAccounts({ db, clock, events, config: deps.accounts });
-  const model = createModelPort({ key: deps.keyBrain ?? keyBrain({ baseURL: deps.anthropicBaseUrl }) });
+  // Pela Conta, um `claude -p` por execução (ADR 0006); os processos vivos morrem no `close`.
+  const runs = processTracker();
+  const model = createModelPort({
+    key: deps.keyBrain ?? keyBrain({ baseURL: deps.anthropicBaseUrl }),
+    account: accountBrain({ claudeBin: deps.accounts.claudeBin, procs: runs, stopGrace: deps.accounts.stopGrace }),
+  });
   const reading = createReading({ db, clock, events });
   const executions = createExecutions({ db, clock, events, model, secrets, hooks, reading });
   // A Presença avisa o push quando uma conversa fica à vista; o push pergunta a ela antes de mandar.
@@ -77,7 +85,6 @@ export function createApp(deps: AppDeps) {
   });
 
   const installation = createInstallation({ db, clock, events, push, config: deps.installation });
-  if (deps.installation?.watch) installation.start();
 
   /** Pergunta à porta; tailscaled fora do ar é falha da Instalação, não "sem identidade": vai para o log. */
   async function whoAmI(req: Request): Promise<Identity | typeof UNAVAILABLE> {
@@ -133,6 +140,7 @@ export function createApp(deps: AppDeps) {
   app.route("/api", push.routes);
   app.route("/api", dmRoutes({ db, clock, events }));
   app.route("/api", reading.routes);
+  app.route("/api", threadRoutes({ db }));
   app.route("/api", accounts.routes);
   app.route("/api", agentRoutes({ db, clock }));
   app.route("/api", workspaceKeyRoutes({ db, clock, secrets }));
@@ -143,8 +151,8 @@ export function createApp(deps: AppDeps) {
 
   /**
    * `websocket` vai no `Bun.serve` junto com `app.fetch`; `events` é onde se publica.
-   * `executions.start()` põe a fila para andar e `stop()` a para; `close` encerra o que o app
-   * deixou rodando (os processos do `claude`).
+   * `start()` faz a subida e põe a fila para andar; `executions.stop()` a para; `close` encerra o
+   * que o app deixou rodando (os processos do `claude`).
    */
   return {
     app,
@@ -152,9 +160,20 @@ export function createApp(deps: AppDeps) {
     events,
     executions,
     push,
+    /**
+     * A subida: limpa as pastas de Conta (pastas de login órfãs, lock de renovação), põe a fila para
+     * andar e, com `installation.watch`, a verificação do backup e da chave do nó.
+     */
+    async start() {
+      await accounts.recover();
+      executions.start();
+      if (deps.installation?.watch) installation.start();
+    },
     close: async () => {
       await installation.stop();
       await accounts.close();
+      // Depois do `executions.stop()` não sobra nenhum; isto é só a rede de segurança.
+      await runs.killAll();
       await push.idle();
     },
   };
