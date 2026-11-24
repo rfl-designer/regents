@@ -12,6 +12,7 @@ import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
 import type { Member } from "./members";
+import { mentionsOf, recordMentions } from "./mentions";
 import { addParticipants, audienceOf, canSee, participantsOf } from "./participation";
 
 type Env = { Variables: { member: Member } };
@@ -125,18 +126,24 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
         createdAt: messages.createdAt,
         authorId: members.id,
         authorName: members.displayName,
+        authorPic: members.profilePicUrl,
       })
       .from(messages)
       .innerJoin(members, eq(members.id, messages.authorMemberId))
       .where(eq(messages.channelId, channel.id))
       .orderBy(asc(messages.seq));
+    const mentions = await mentionsOf(
+      db,
+      rows.map((r) => r.id),
+    );
     return c.json(
       rows.map(
         (r): MessageDto => ({
           id: r.id,
           channelId: r.channelId,
           body: r.body,
-          author: { id: r.authorId, displayName: r.authorName },
+          author: { id: r.authorId, displayName: r.authorName, profilePicUrl: r.authorPic },
+          mentions: mentions.get(r.id) ?? [],
           createdAt: r.createdAt.toISOString(),
         }),
       ),
@@ -158,14 +165,19 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
       body: input.body,
       createdAt: clock.now(),
     };
-    await db.insert(messages).values(values);
+    // A mensagem e as Menções dela são gravadas juntas, antes de qualquer outra coisa.
+    const mentions = await db.transaction(async (tx) => {
+      await tx.insert(messages).values(values);
+      return recordMentions(tx, values.id, channel, values.body);
+    });
     // Escrever num Canal público é entrar nele.
     const joined = await addParticipants(db, channel.id, [author.id], values.createdAt);
     const dto: MessageDto = {
       id: values.id,
       channelId: values.channelId,
       body: values.body,
-      author: { id: author.id, displayName: author.displayName },
+      author: { id: author.id, displayName: author.displayName, profilePicUrl: author.profilePicUrl },
+      mentions,
       createdAt: values.createdAt.toISOString(),
     };
     events.publish(await audienceOf(db, channel), { type: "message.created", message: dto });

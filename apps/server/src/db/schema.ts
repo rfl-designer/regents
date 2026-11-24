@@ -104,6 +104,27 @@ export const messages = pgTable(
   (t) => [index().on(t.channelId, t.seq)],
 );
 
+/**
+ * As Menções a pessoas de cada mensagem (`@nome` que resolveu para um Membro que vê a
+ * conversa), na ordem em que aparecem no texto. A Menção é da pessoa, não do texto: se
+ * ela troca o identificador depois, a Menção continua dela. As Menções a Agentes (#20)
+ * entram ao lado desta.
+ */
+export const messageMentions = pgTable(
+  "message_mentions",
+  {
+    messageId: uuid()
+      .notNull()
+      .references(() => messages.id),
+    memberId: uuid()
+      .notNull()
+      .references(() => members.id),
+    /** Posição da primeira aparição no texto (0, 1, …). */
+    ordinal: integer().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.messageId, t.memberId] }), index().on(t.memberId)],
+);
+
 export const joinRequestStatus = pgEnum("join_request_status", ["pending", "approved", "refused"]);
 
 /**

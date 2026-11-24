@@ -1,3 +1,4 @@
+import { normalizeHandle } from "@shearim/contracts";
 import { eq, inArray } from "drizzle-orm";
 import { type Db, schema } from "./db/client";
 
@@ -20,11 +21,6 @@ const { mentionHandles } = schema;
 export const HANDLE_MAX = 32;
 /** Só letras sem acento, números e `_`: o que cabe depois do `@` sem ambiguidade com pontuação. */
 const HANDLE = /^[a-z0-9_]+$/;
-
-/** Minúsculas, sem acento e sem `@` na frente. Não valida: veja `parseHandle`. */
-export function normalizeHandle(text: string) {
-  return text.trim().replace(/^@+/, "").normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
-}
 
 /** O identificador que o Membro digitou, normalizado, ou `undefined` se não serve. */
 export function parseHandle(text: string): string | undefined {

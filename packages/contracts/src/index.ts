@@ -43,6 +43,23 @@ export interface MeDto {
   role: MemberRole;
 }
 
+// ---------- Menção ----------
+
+/**
+ * `@nome` num texto: o `@` não pode vir colado a letra, número, `_`, `.` ou outro `@`
+ * (assim `bruno@exemplo.com` não é Menção), e o nome vai até o primeiro caractere que não é
+ * letra, número ou `_` (assim `@bruno,` e `(@bruno)` citam `bruno`). O grupo 1 é o nome.
+ * Uma função, porque uma RegExp global guarda estado entre usos.
+ */
+export function mentionPattern() {
+  return /(?<![\p{L}\p{N}_.@])@([\p{L}\p{N}_]+)/gu;
+}
+
+/** O identificador de Menção como é guardado: sem `@` na frente, sem acento, em minúsculas. */
+export function normalizeHandle(text: string) {
+  return text.trim().replace(/^@+/, "").normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
 // ---------- Pedido de entrada ----------
 
 export type JoinRequestStatus = "pending" | "approved" | "refused";
@@ -169,7 +186,14 @@ export interface UpdateChannelSettingsInput {
 export interface MessageAuthorDto {
   id: string;
   displayName: string;
+  profilePicUrl: string | null;
 }
+
+/**
+ * Quem uma mensagem menciona. Hoje só pessoas: o `@nome` de um Membro que vê a conversa.
+ * As Menções a Agentes (#20) entram como mais um membro desta união (`kind: "agent"`).
+ */
+export type MentionDto = { kind: "member"; id: string };
 
 /** Item de `GET /api/channels/:id/messages` e corpo do 201 de `POST` na mesma rota. */
 export interface MessageDto {
@@ -177,6 +201,8 @@ export interface MessageDto {
   channelId: string;
   body: string;
   author: MessageAuthorDto;
+  /** Na ordem em que aparecem no texto, uma vez por pessoa. Destaca a mensagem para quem foi mencionado. */
+  mentions: MentionDto[];
   /** ISO 8601, UTC. */
   createdAt: string;
 }

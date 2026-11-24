@@ -44,7 +44,8 @@ describe("Conversas", () => {
         id: expect.any(String),
         channelId: geral.id,
         body: "Bom dia, time!",
-        author: { id: expect.any(String), displayName: "Juliana" },
+        author: { id: expect.any(String), displayName: "Juliana", profilePicUrl: null },
+        mentions: [],
         createdAt: "2026-11-24T12:00:00.000Z",
       },
     ]);
