@@ -15,7 +15,9 @@
  * `authentication_error`): abre o incidente da Chave, que a próxima resposta bem-sucedida encerra.
  *
  * Com `[listar agentes]`, o Agente que tem a Ferramenta "listar Agentes" a pede; a resposta
- * seguinte começa por "Pela Ferramenta:" e traz a primeira linha do resultado.
+ * seguinte começa por "Pela Ferramenta:" e traz a primeira linha do resultado. Com `[postar]`, o
+ * Agente que tem "postar mensagem" pede para postar "Aviso: a reunião mudou." no #geral, o que vira
+ * Pedido de aprovação; a continuação responde o padrão.
  *
  * O roteamento da Articuladora (o pedido com `output_config`) nunca falha: uma mensagem com
  * `[delegar]` é passada aos dois primeiros Agentes do Canal; as outras recebem o Desfecho "nenhum".
@@ -53,6 +55,12 @@ const anthropic = await startFakeMessagesApi({
     const tools = (req.body.tools as { name: string }[] | undefined) ?? [];
     if (text.includes("[listar agentes]") && tools.some((t) => t.name === "listar_agentes")) {
       return { toolUse: [{ name: "listar_agentes" }], delayMs };
+    }
+    if (text.includes("[postar]") && tools.some((t) => t.name === "postar_mensagem")) {
+      return {
+        toolUse: [{ name: "postar_mensagem", input: { conversa: "#geral", texto: "Aviso: a reunião mudou." } }],
+        delayMs,
+      };
     }
     const times = Number(text.match(/\[falhe (\d+)x\]/)?.[1] ?? 0);
     const failed = failures.get(text) ?? 0;

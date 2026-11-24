@@ -229,6 +229,7 @@ export const executionState = pgEnum("execution_state", [
   "failed",
   "not_acting",
   "cancelled",
+  "awaiting_approval",
 ]);
 /**
  * `mention`: um Agente mencionado. `dm`: o Agente de uma DM com Agente, a cada mensagem.
@@ -298,6 +299,11 @@ export const executions = pgTable(
     arrivedAt: timestamp({ withTimezone: true }).notNull(),
     replyMessageId: uuid().references(() => messages.id),
     finishedAt: timestamp({ withTimezone: true }),
+    /**
+     * Na continuação (ADR 0011): o Pedido de aprovação depois de cuja decisão ela segue a resposta.
+     * Nulo na execução que a mensagem disparou.
+     */
+    approvalRequestId: uuid().references((): AnyPgColumn => approvalRequests.id),
   },
   (t) => [index().on(t.state, t.arrivedAt, t.seq), index().on(t.channelId, t.state)],
 );
@@ -675,4 +681,55 @@ export const executionToolCalls = pgTable(
     finishedAt: timestamp({ withTimezone: true }),
   },
   (t) => [index().on(t.executionId, t.attempt)],
+);
+
+export const approvalState = pgEnum("approval_state", ["pending", "approved", "rejected", "expired", "cancelled"]);
+
+/**
+ * Os Pedidos de aprovação (ADR 0011): a escrita que um Agente pediu numa execução, guardada com a
+ * ação exata (a Ferramenta, os argumentos e o hash deles) e o resumo que o autor da mensagem de
+ * origem aprova ou recusa. Na aprovação, o Shearim executa a ação guardada; o resultado (ou a
+ * falha) e a recusa vão à execução de continuação.
+ */
+export const approvalRequests = pgTable(
+  "approval_requests",
+  {
+    id: uuid().primaryKey(),
+    seq: bigint({ mode: "number" }).generatedAlwaysAsIdentity(),
+    /** A execução que pediu a escrita (e terminou em "esperando aprovação"). */
+    executionId: uuid()
+      .notNull()
+      .references((): AnyPgColumn => executions.id),
+    /** A conversa da mensagem de origem, onde o cartão aparece. */
+    channelId: uuid()
+      .notNull()
+      .references(() => channels.id),
+    originMessageId: uuid()
+      .notNull()
+      .references(() => messages.id),
+    authorMemberId: uuid()
+      .notNull()
+      .references(() => members.id),
+    agentId: uuid()
+      .notNull()
+      .references(() => agents.id),
+    tool: text().notNull(),
+    /** O nome da Ferramenta em pt-BR, como era quando o Pedido foi criado. */
+    toolTitle: text().notNull(),
+    /** Os argumentos já resolvidos (a ação exata que será executada). */
+    action: jsonb().$type<Record<string, unknown>>().notNull(),
+    actionHash: text().notNull(),
+    /** O que vai ser feito, em pt-BR, como o cartão mostra. */
+    summary: text().notNull(),
+    state: approvalState().notNull(),
+    /** Na recusa: o motivo opcional do autor. */
+    rejectReason: text(),
+    /** Na aprovação: o resultado da ação, ou o motivo da falha dela (`failure`). */
+    result: text(),
+    failure: text(),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    decidedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [index().on(t.channelId, t.seq), index().on(t.executionId)],
 );

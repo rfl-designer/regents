@@ -9,6 +9,7 @@ import { type AnyColumn, and, asc, desc, eq, gt, inArray, lte, min, ne, or, type
 import { alias } from "drizzle-orm/pg-core";
 import { type AccountStanding, accountStanding } from "./accounts";
 import type { Agent } from "./agents";
+import { continuationNote, insertApproval, publishApproval } from "./approvals";
 import { ROUTING_MODEL } from "./articuladora";
 import type { Clock } from "./clock";
 import { buildContext, type Call } from "./context";
@@ -90,7 +91,7 @@ const STALL_REASON: Record<ExecutionStep, string> = {
 const RESTART_REASON = "o servidor reiniciou";
 
 /** Por que uma execução em andamento foi interrompida (o `reason` do `AbortSignal`). */
-type Interruption = "stalled" | "cancelled" | "shutdown";
+type Interruption = "stalled" | "cancelled" | "shutdown" | "approval";
 
 /**
  * O que as execuções pedem às Contas: marcar o que a execução pela Conta viu, para que as
@@ -163,6 +164,12 @@ export interface Executions {
   ): Promise<string[]>;
   /** Anuncia o Andamento das execuções que `enqueue` gravou e acorda o trabalhador. */
   queued(ids: readonly string[]): Promise<void>;
+  /**
+   * O Pedido de aprovação `approvalRequestId` foi decidido (ADR 0011): a execução que esperava
+   * (`executionId`) termina, e entra na fila a continuação da resposta, ligada ao Pedido, com a
+   * mesma mensagem de origem e a hora de chegada dela. Nada se ela já não esperava aprovação.
+   */
+  continueAfter(executionId: string, approvalRequestId: string): Promise<void>;
   /** O Andamento das execuções de uma conversa que ainda não viraram resposta, como `viewerId` o vê. */
   openIn(channelId: string, viewerId: string): Promise<ExecutionDto[]>;
   /**
@@ -551,6 +558,13 @@ export function createExecutions(deps: {
       const tools = toolsOf(job);
       const offered = await tools.list();
       const context = await buildContext(db, agent, job.originMessageId, await callOf(job), offered);
+      // A continuação sabe o que a resposta já pediu e o que o autor decidiu (ADR 0011).
+      if (job.approvalRequestId) {
+        const note = await continuationNote(db, job.approvalRequestId);
+        context.messages = context.messages.map((m, i) =>
+          i === context.messages.length - 1 ? { ...m, content: `${m.content}\n\n${note}` } : m,
+        );
+      }
       return { model: agent.model, ...context, payer, ...(offered.length ? { tools } : {}) };
     });
     if (!result) return;
@@ -727,6 +741,29 @@ export function createExecutions(deps: {
         async finished() {
           watchdogs.get(job.id)?.resume();
           await step("writing");
+        },
+        async approvalRequested({ tool, action, summary }) {
+          // O Pedido e o fim da execução juntos: um cancelamento que chegou antes ganha, e nada fica.
+          const id = await db.transaction(async (tx) => {
+            if (!(await transition(job.id, "awaiting_approval", {}, { tx }))) return undefined;
+            return insertApproval(tx, {
+              executionId: job.id,
+              channelId: job.channelId,
+              originMessageId: job.originMessageId,
+              agentId: job.agentId,
+              tool: tool.id,
+              toolTitle: tool.title,
+              action,
+              summary,
+              now: clock.now(),
+            });
+          });
+          if (!id) return false;
+          // Encerra pelo caminho do cancelamento, com o motivo próprio: o texto parcial é descartado.
+          running.get(job.id)?.abort("approval" satisfies Interruption);
+          await publish(job.id);
+          await publishApproval(db, events, id, "approval.created");
+          return true;
         },
       },
     );
@@ -1036,6 +1073,29 @@ export function createExecutions(deps: {
   return {
     enqueue: (tx, origin, calls) => insertRows(tx, origin, calls, clock.now()),
     queued,
+
+    async continueAfter(executionId, approvalRequestId) {
+      const ids = await db.transaction(async (tx) => {
+        const [waited] = await tx.select().from(executions).where(eq(executions.id, executionId)).for("update");
+        if (!waited || !(await transition(waited.id, "done", {}, { from: "awaiting_approval", tx }))) return [];
+        const id = crypto.randomUUID();
+        await tx.insert(executions).values({
+          id,
+          kind: waited.kind,
+          channelId: waited.channelId,
+          originMessageId: waited.originMessageId,
+          threadRootId: waited.threadRootId,
+          agentId: waited.agentId,
+          state: "queued",
+          since: clock.now(),
+          arrivedAt: waited.arrivedAt,
+          approvalRequestId,
+        });
+        return [waited.id, id];
+      });
+      for (const id of ids) await publish(id);
+      wake();
+    },
 
     openIn: async (channelId, viewerId) =>
       (await views(and(eq(executions.channelId, channelId), ne(executions.state, "done")))).map((v) =>

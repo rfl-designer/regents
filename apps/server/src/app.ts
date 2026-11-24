@@ -6,7 +6,9 @@ import { accountPushes } from "./account-pushes";
 import { type AccountHooks, type AccountsConfig, createAccounts } from "./accounts";
 import { processTracker } from "./accounts/claude-cli";
 import { adminPushes } from "./admin-pushes";
+import { createAgentPoster } from "./agent-posts";
 import { agentRoutes } from "./agents";
+import { approvalRoutes } from "./approvals";
 import type { Clock } from "./clock";
 import { conversationRoutes } from "./conversations";
 import type { Db } from "./db/client";
@@ -214,6 +216,18 @@ export function createApp(deps: AppDeps) {
   app.route("/api", accounts.routes);
   app.route("/api", agentRoutes({ db, clock, ledger, onBudgetChanged: () => reconsider() }));
   app.route("/api", agentToolRoutes({ db, tools }));
+  app.route(
+    "/api",
+    approvalRoutes({
+      db,
+      clock,
+      events,
+      tools,
+      // A escrita aprovada posta como o Agente, sem Desfecho e sem acionar Agente.
+      post: createAgentPoster({ db, clock, events, reading, push }),
+      continueAfter: executions.continueAfter,
+    }),
+  );
   app.route("/api", workspaceKeyRoutes({ db, clock, secrets, onChanged: () => reconsider() }));
   app.route("/api", workspaceContextRoutes({ db }));
   app.route("/api", installation.routes);

@@ -1,5 +1,6 @@
 import {
   type AgentDto,
+  type ApprovalRequestDto,
   type ChannelDto,
   type ExecutionDto,
   type MeDto,
@@ -148,6 +149,8 @@ export function Conversation({
   const [executions, setExecutions] = useState<Record<string, ExecutionDto>>({});
   /** O Desfecho de cada mensagem que recebeu um, pela mensagem. */
   const [outcomes, setOutcomes] = useState<Record<string, OutcomeDto>>({});
+  /** Os Pedidos de aprovação da conversa, pelo id. */
+  const [approvals, setApprovals] = useState<Record<string, ApprovalRequestDto>>({});
   /** As Threads desta conversa que quem vê segue, pela raiz. */
   const [followed, setFollowed] = useState<ReadonlySet<string>>(new Set());
   /** A raiz da Thread aberta no painel. */
@@ -167,12 +170,14 @@ export function Conversation({
       api.conversationUnread(conversationId),
       api.outcomes(conversationId),
       api.followedThreads(),
+      api.approvals(conversationId),
     ]).then(
-      ([list, running, unread, decided, threads]) => {
+      ([list, running, unread, decided, threads, asked]) => {
         setLoadError(false);
         setMessages((prev) => append(list, prev ?? []));
         setExecutions(Object.fromEntries(running.map((e) => [e.id, e])));
         setOutcomes(Object.fromEntries(decided.map((o) => [o.messageId, o])));
+        setApprovals(Object.fromEntries(asked.map((a) => [a.id, a])));
         setFollowed(
           new Set(threads.filter((th) => th.conversationId === conversationId).map((th) => th.rootMessageId)),
         );
@@ -217,6 +222,13 @@ export function Conversation({
               : m,
           ) ?? null,
       );
+    }
+    if (
+      (event.type === "approval.created" || event.type === "approval.updated") &&
+      event.approval.channelId === conversationId
+    ) {
+      const { approval } = event;
+      setApprovals((prev) => ({ ...prev, [approval.id]: approval }));
     }
     if (event.type === "outcome.created" && event.outcome.channelId === conversationId) {
       const { outcome } = event;
@@ -263,6 +275,10 @@ export function Conversation({
       deciding.set(e.originMessageId, e);
     } else pending.set(e.originMessageId, [...(pending.get(e.originMessageId) ?? []), e]);
   }
+  // Os Pedidos de aprovação ficam sob a mensagem de origem, onde a resposta vai chegar.
+  const asked = new Map<string, ApprovalRequestDto[]>();
+  for (const a of Object.values(approvals)) asked.set(a.originMessageId, [...(asked.get(a.originMessageId) ?? []), a]);
+  for (const list of asked.values()) list.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const now = useNow(Object.values(executions).some((e) => OPEN_STATES.includes(e.state)));
   const ctx: GroupContext = {
     me,
@@ -271,8 +287,10 @@ export function Conversation({
     pending,
     deciding,
     outcomes,
+    approvals: asked,
     now,
     showExecution: (e) => setExecutions((prev) => upsertExecution(prev, e)),
+    showApproval: (a) => setApprovals((prev) => ({ ...prev, [a.id]: a })),
     find: (id) => messages?.find((m) => m.id === id),
   };
   const root = openThread ? messages?.find((m) => m.id === openThread) : undefined;
@@ -330,8 +348,11 @@ interface GroupContext {
   /** O roteamento em curso, pela mensagem de origem. */
   deciding: Map<string, ExecutionDto>;
   outcomes: Record<string, OutcomeDto>;
+  /** Os Pedidos de aprovação, pela mensagem de origem, do mais antigo ao mais novo. */
+  approvals: Map<string, ApprovalRequestDto[]>;
   now: number;
   showExecution(e: ExecutionDto): void;
+  showApproval(a: ApprovalRequestDto): void;
   find(id: string): MessageDto | undefined;
 }
 
@@ -395,12 +416,13 @@ function MessageGroups({
   reading: Reading;
   thread?: { size: Map<string, number>; open(rootId: string): void };
 }) {
-  const { me, conversationId, replies, pending, deciding, outcomes, now, showExecution } = ctx;
+  const { me, conversationId, replies, pending, deciding, outcomes, now, showExecution, showApproval } = ctx;
   const ids = new Set(items.map((m) => m.id));
   const top = items.filter((m) => !m.originMessageId || !ids.has(m.originMessageId));
   return top.map((m) => {
     const answers = (replies.get(m.id) ?? []).filter((r) => ids.has(r.id));
     const running = pending.get(m.id) ?? [];
+    const asked = ctx.approvals.get(m.id) ?? [];
     const mine = m.author.kind === "member" && m.author.id === me.id;
     const cancellable = mine && running.some((e) => OPEN_STATES.includes(e.state));
     const cancel = () => api.cancelMessage(conversationId, m.id).then((list) => list.forEach(showExecution));
@@ -430,7 +452,7 @@ function MessageGroups({
             now={now}
             onCancel={mine && !cancellable ? cancel : undefined}
           />
-          {(answers.length > 0 || running.length > 0) && (
+          {(answers.length > 0 || running.length > 0 || asked.length > 0) && (
             <ul className="anchored" aria-label={`Respostas a ${m.author.displayName}`}>
               {answers.map((r) => (
                 <Fragment key={r.id}>
@@ -441,10 +463,21 @@ function MessageGroups({
                   </li>
                 </Fragment>
               ))}
+              {asked.map((a) => (
+                <li key={a.id}>
+                  <ApprovalCard
+                    approval={a}
+                    mine={a.author.id === me.id}
+                    onApprove={() => api.approveRequest(conversationId, a.id).then(showApproval)}
+                    onReject={(reason) => api.rejectRequest(conversationId, a.id, reason).then(showApproval)}
+                  />
+                </li>
+              ))}
               {running.map((e) => (
                 <li key={e.id}>
                   <Progress
                     execution={e}
+                    author={m.author.displayName}
                     now={now}
                     onRetry={mine ? () => api.retryExecution(conversationId, e.id).then(showExecution) : undefined}
                   />
@@ -735,8 +768,27 @@ function DelegationLine({ outcome }: { outcome: OutcomeDto }) {
  * de falha com "Tentar de novo" (só para quem escreveu: `onRetry`), "Agentes não agem" e o
  * cancelamento.
  */
-function Progress({ execution: e, now, onRetry }: { execution: ExecutionDto; now: number; onRetry?(): Promise<void> }) {
+function Progress({
+  execution: e,
+  author,
+  now,
+  onRetry,
+}: {
+  execution: ExecutionDto;
+  /** Quem escreveu a mensagem de origem (quem decide o Pedido de aprovação). */
+  author: string;
+  now: number;
+  onRetry?(): Promise<void>;
+}) {
   const name = e.agent.displayName;
+  if (e.state === "awaiting_approval") {
+    // A execução terminou no Pedido; a resposta continua depois da decisão (o cartão, acima).
+    return (
+      <p className="queued" role="status">
+        {name} · esperando aprovação de {author}
+      </p>
+    );
+  }
   if (e.state === "failed") {
     return (
       <div className="message agent">
@@ -844,6 +896,92 @@ function useAction(run: () => Promise<void>) {
     }
   }
   return { busy, failed, act };
+}
+
+/**
+ * O cartão do Pedido de aprovação (ADR 0011), ancorado sob a mensagem de origem: o que o Agente
+ * quer fazer, exatamente, e o que aconteceu com o Pedido. Todos veem; só o autor (`mine`) aprova
+ * ou recusa (com um motivo opcional), sem editar.
+ */
+function ApprovalCard({
+  approval: a,
+  mine,
+  onApprove,
+  onReject,
+}: {
+  approval: ApprovalRequestDto;
+  mine: boolean;
+  onApprove(): Promise<void>;
+  onReject(reason: string): Promise<void>;
+}) {
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState("");
+  const approve = useAction(onApprove);
+  const reject = useAction(() => onReject(reason));
+  const name = a.agent.displayName;
+  const state =
+    a.state === "pending"
+      ? mine
+        ? "pede a sua aprovação"
+        : `esperando a aprovação de ${a.author.displayName}`
+      : a.state === "approved"
+        ? a.failure
+          ? `aprovado por ${a.author.displayName}, mas falhou: ${a.failure}`
+          : `aprovado por ${a.author.displayName}: ${a.result}`
+        : a.state === "rejected"
+          ? `recusado por ${a.author.displayName}${a.rejectReason ? `: ${a.rejectReason}` : ""}`
+          : a.state === "expired"
+            ? "a aprovação expirou"
+            : "cancelado";
+  return (
+    <div className="message agent">
+      <Avatar name={name} agent photo={a.agent.photo} />
+      <fieldset className={`approval ${a.state}`} aria-label={`Pedido de aprovação de ${name}`}>
+        <strong>
+          {name} · {a.toolTitle}
+        </strong>
+        <p className="summary">{a.summary}</p>
+        <p className={a.failure ? "why error" : "why"} role="status">
+          {state}
+        </p>
+        {mine && a.state === "pending" && !rejecting && (
+          <div className="failcard-actions">
+            <button type="button" className="primary" disabled={approve.busy} onClick={approve.act}>
+              Aprovar
+            </button>
+            <button type="button" disabled={approve.busy} onClick={() => setRejecting(true)}>
+              Recusar
+            </button>
+            {approve.failed && <span className="error">Não deu para aprovar. Tente de novo.</span>}
+          </div>
+        )}
+        {mine && a.state === "pending" && rejecting && (
+          <form
+            className="failcard-actions"
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              void reject.act();
+            }}
+          >
+            <input
+              aria-label="Motivo da recusa (opcional)"
+              placeholder="Motivo (opcional)"
+              value={reason}
+              maxLength={500}
+              onChange={(ev) => setReason(ev.target.value)}
+            />
+            <button type="submit" className="primary" disabled={reject.busy}>
+              Recusar
+            </button>
+            <button type="button" className="link" disabled={reject.busy} onClick={() => setRejecting(false)}>
+              Voltar
+            </button>
+            {reject.failed && <span className="error">Não deu para recusar. Tente de novo.</span>}
+          </form>
+        )}
+      </fieldset>
+    </div>
+  );
 }
 
 function RetryButton({ onRetry }: { onRetry(): Promise<void> }) {
