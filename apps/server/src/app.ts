@@ -54,7 +54,7 @@ const UNAVAILABLE = Symbol("identity_unavailable");
 export function createApp(deps: AppDeps) {
   const { db, identity, clock, hooks, secrets } = deps;
   const app = new Hono<Env>();
-  const { hub: events, route: eventsRoute } = createEventHub();
+  const { hub: events, route: eventsRoute, closeForRestart } = createEventHub();
   const accounts = createAccounts({ db, clock, events, config: deps.accounts });
   const model = createModelPort({ key: deps.keyBrain ?? keyBrain({ baseURL: deps.anthropicBaseUrl }) });
   const reading = createReading({ db, clock, events });
@@ -123,6 +123,23 @@ export function createApp(deps: AppDeps) {
    * `websocket` vai no `Bun.serve` junto com `app.fetch`; `events` é onde se publica.
    * `executions.start()` põe a fila para andar e `stop()` a para; `close` encerra o que o app
    * deixou rodando (os processos do `claude`).
+   *
+   * `drain` é o SIGTERM: fecha os WebSockets com 1012 (o PWA mostra "Atualizando o Shearim") e
+   * espera a fila até `ms`. `halt` é o SIGINT: fecha os WebSockets igual e para a fila na hora.
    */
-  return { app, websocket, events, executions, close: () => accounts.close() };
+  return {
+    app,
+    websocket,
+    events,
+    executions,
+    drain: (ms?: number) => {
+      closeForRestart();
+      return executions.drain(ms);
+    },
+    halt: () => {
+      closeForRestart();
+      return executions.stop();
+    },
+    close: () => accounts.close(),
+  };
 }

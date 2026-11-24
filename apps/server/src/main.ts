@@ -99,7 +99,7 @@ async function main(command: string | undefined) {
     fail((err as Error).message);
   }
   await conn.migrate();
-  const { app, websocket, executions, close } = createApp({
+  const shearim = createApp({
     db: conn.db,
     identity: who.identity,
     clock: systemClock,
@@ -111,10 +111,10 @@ async function main(command: string | undefined) {
     anthropicBaseUrl: process.env.SHEARIM_ANTHROPIC_BASE_URL || undefined,
     devRoutes: who.routes,
   });
-  executions.start();
+  shearim.executions.start();
 
   const root = new Hono();
-  root.route("/", app);
+  root.route("/", shearim.app);
   // Rota de API desconhecida não cai no fallback do PWA.
   root.all("/api/*", (c) => c.json({ error: "not_found" }, 404));
   const webDist = resolve(process.env.SHEARIM_WEB_DIST ?? resolve(repoRoot, "apps/web/dist"));
@@ -127,20 +127,23 @@ async function main(command: string | undefined) {
     hostname: process.env.HOST ?? "0.0.0.0",
     port: Number(process.env.PORT ?? 3000),
     fetch: root.fetch,
-    websocket,
+    websocket: shearim.websocket,
   });
   console.log(`shearim: ouvindo em http://${server.hostname}:${server.port} (${conn.describe}; ${who.describe})`);
 
   // SIGTERM (o `docker compose stop`, com 30 s de folga): dreno, até 20 s para o que está rodando
-  // terminar. SIGINT (Ctrl-C no dev): para na hora. O que não terminou vira "o servidor
+  // terminar. SIGINT (Ctrl-C no dev): para na hora. Nos dois, os WebSockets fecham com 1012 logo
+  // de início, e o PWA mostra "Atualizando o Shearim" até reconectar. O que não terminou vira "o servidor
   // reiniciou" na próxima subida, com a nova tentativa automática.
   let stopping = false;
   const stop = (drain: boolean) => async () => {
     if (stopping) return;
     stopping = true;
-    await (drain ? executions.drain() : executions.stop());
-    await server.stop();
-    await close();
+    await (drain ? shearim.drain() : shearim.halt());
+    // No Bun 1.3.11, depois que o servidor fecha um WebSocket (o 1012 acima), a promessa do
+    // `stop()` nunca resolve, embora a porta feche na hora: espera as requisições em curso até 1 s.
+    await Promise.race([server.stop(), Bun.sleep(1_000)]);
+    await shearim.close();
     await conn.close();
     process.exit(0);
   };
