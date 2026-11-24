@@ -13,6 +13,7 @@ bun test               # testes do servidor (PGlite em memória, sem Docker)
 bun run typecheck      # tsc em todos os workspaces
 bun run lint           # Biome (formatação + lint); `bunx biome check --write .` corrige
 bun run build          # build do PWA em apps/web/dist
+bun run e2e            # build + e2e no navegador (ver "e2e" abaixo)
 bun run start          # servidor servindo o build (precisa de SHEARIM_IDENTITY, ver abaixo)
 (cd apps/server && bunx drizzle-kit generate --name <nome>)   # nova migração a partir do schema.ts
 ```
@@ -29,7 +30,7 @@ bun run start          # servidor servindo o build (precisa de SHEARIM_IDENTITY,
 |---|---|---|
 | `SHEARIM_IDENTITY` | (obrigatória) | `dev`. O `whois` da tailnet chega com a Instalação (#37). |
 | `DATABASE_URL` | (vazia) | Postgres. Vazia: PGlite em `SHEARIM_PGLITE_DIR`. |
-| `SHEARIM_PGLITE_DIR` | `.data/pglite` | Pasta do PGlite de desenvolvimento. |
+| `SHEARIM_PGLITE_DIR` | `.data/pglite` | Pasta do PGlite de desenvolvimento. `memory://`: em memória, some ao parar (o e2e usa). |
 | `HOST` / `PORT` | `0.0.0.0` / `3000` | Onde escutar (`bun run dev` usa `127.0.0.1`). |
 | `SHEARIM_WEB_DIST` | `apps/web/dist` | Build do PWA servido em `/`. |
 
@@ -37,14 +38,16 @@ bun run start          # servidor servindo o build (precisa de SHEARIM_IDENTITY,
 
 ```
 apps/server/        Bun + Hono + Drizzle
-  src/app.ts        createApp(deps): o seam dos testes
+  src/app.ts        createApp(deps) -> { app, websocket, events }: o seam dos testes
+  src/events.ts     WebSocket de eventos: EventHub.publish(audiência, evento)
   src/main.ts       entrypoint: serve | migrate
   src/db/           schema.ts (Drizzle), client.ts, connect.ts (Postgres ou PGlite)
   src/identity/     porta de identidade + adaptador de dev
   migrations/       SQL gerado pelo drizzle-kit (commitado)
   test/harness.ts   arnês: testApp(), testDb(), fakeClock(), fakeIdentity
 apps/web/           PWA em React + Vite, pt-BR
-packages/contracts/ DTOs compartilhados entre servidor e PWA
+packages/contracts/ DTOs do HTTP e eventos do WebSocket (ServerEvent), compartilhados
+e2e/                e2e.config.ts + tests/*.e2e.ts (@e2e-dev/web)
 ```
 
 ## Testes
@@ -60,3 +63,35 @@ await t.anonymous("funnel").get("/api/me");                  // sem identidade
 ```
 
 O que cada teste abre é fechado sozinho no fim dele (`onCleanup` no arnês, executado pelo `afterEach` de `test/preload.ts`).
+
+### WebSocket de eventos
+
+O PWA abre um WebSocket em `/api/events` (`EVENTS_PATH`). O upgrade passa pelo mesmo middleware de `/api/*`: sem identidade ou sem ser Membro, 403 e a conexão não sobe. Toda conexão começa com `{ type: "ready", me }`; depois, só chegam eventos (`ServerEvent` em `packages/contracts`). Comandos continuam no HTTP.
+
+Para publicar, o módulo recebe o `EventHub` e chama `events.publish(audiência, evento)`, sempre **depois** de gravar. A audiência é `"everyone"` ou `{ members: [ids] }` (todas as conexões desses Membros). Quem sabe quem vê a conversa resolve os participantes; o que é só do autor (estado da Conta) vai para `{ members: [autor] }`. Evento novo é mais um membro da união `ServerEvent`, com `type` no formato `assunto.fato`.
+
+Nos testes, `t.socket(pessoa)` abre a conexão como uma aba (num `Bun.serve` real que sobe sob demanda) e espera o `ready`:
+
+```ts
+const aba = await t.socket(juliana, "aba da Juliana");      // o rótulo aparece nas falhas
+await juliana.post(`/api/channels/${id}/messages`, { body: "oi" });
+const { message } = await aba.next("message.created");      // espera até 1 s; falha dizendo o que chegou
+aba.received();                                             // tudo o que chegou, em ordem
+(await t.upgrade({ none: "funnel" })).status;                // 403: upgrade recusado
+t.events.publish({ members: [id] }, evento);                 // publicar direto no hub
+```
+
+Para provar que algo **não** chegou, sem `sleep`: publique depois um evento que chega a todos e verifique que o próximo evento daquele tipo na conexão é ele (exemplo em `apps/server/test/realtime.test.ts`).
+
+## e2e
+
+Um punhado de testes de tela com o runner do [e2e](https://e2e.com) (`@e2e-dev/web`, Chromium headless), no workspace `e2e/`. Precisa de Node 24.8 ou mais novo (o runner roda no Node; o app sobe com o Bun). Na primeira vez, o Chromium é baixado sozinho.
+
+```sh
+bun run e2e                                   # build do PWA + todos os e2e
+(cd e2e && npx e2e run tests/realtime.e2e.ts) # um arquivo, sem refazer o build
+(cd e2e && npx e2e run --headed)              # vendo o navegador
+```
+
+O runner sobe o servidor de verdade (`bun apps/server/src/main.ts serve`) numa porta livre, servindo `apps/web/dist`, com `SHEARIM_IDENTITY=dev` e `SHEARIM_PGLITE_DIR=memory://`: cada execução começa de uma Instalação vazia, e a primeira aba a abrir (a "Pessoa Dev") vira Admin. Os testes da mesma execução dividem esse banco, então use textos únicos (`Date.now()`). Duas abas da mesma pessoa são `browser.newTab()` + `browser.goto("/")` e `tab.activate()`. O cookie `dev_user` vale para o contexto inteiro (todas as abas), então uma segunda pessoa no mesmo teste age pela API, num `fetch` para `${app.baseUrl}/api/...` com `cookie: dev_user=${encodeURIComponent(JSON.stringify({ id, name }))}` (a partir do #16, quando ela puder virar Membro); `/dev/como/<id>?nome=Fulana` troca a pessoa do navegador todo. Resultados e traces ficam em `e2e/.e2e/` (ignorado pelo git). Antes de escrever um teste, leia `npx e2e guide writing-tests`.
+
