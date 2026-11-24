@@ -31,7 +31,7 @@ export function useAccount(enabled: boolean) {
       events.current += 1;
       setAccount(event.account);
     }
-  });
+  }, enabled);
 
   /** Roda um comando da Conta; a resposta traz a Conta nova, e a falha vira texto na tela. */
   const run = useCallback(

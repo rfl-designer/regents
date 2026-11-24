@@ -604,6 +604,13 @@ export const EVENTS_PATH = "/api/events";
 export const MEMBER_REMOVED_CLOSE_CODE = 4403;
 
 /**
+ * Código de fechamento do WebSocket quando o servidor vai reiniciar (1012, "service restart"):
+ * o dreno de uma atualização. O PWA mostra "Atualizando o Shearim" e reconecta sozinho.
+ * Qualquer outro fechamento é queda de conexão ("Reconectando…").
+ */
+export const EVENTS_CLOSE_UPDATING = 1012;
+
+/**
  * Tudo o que o servidor empurra pelo WebSocket. Cada evento é um JSON com `type`.
  * Comandos continuam no HTTP: o cliente não manda nada por aqui.
  *
@@ -668,6 +675,8 @@ export type ApiError =
   | { error: "not_a_member" }
   /** O tailscaled não respondeu ao `whois` (503): problema da Instalação, não de quem chegou. */
   | { error: "identity_unavailable" }
+  /** O servidor está no dreno de uma atualização (503 no upgrade do WebSocket): já vai voltar. */
+  | { error: "updating" }
   | { error: "not_admin" }
   /** Mexer no que é do Shearim na Articuladora (descrição, instruções). */
   | { error: "builtin_locked"; message: string }

@@ -42,8 +42,6 @@ function fail(message: string): never {
 const DEV_VAPID_CONTACT = "mailto:shearim@example.com";
 
 const DEFAULT_TS_SOCKET = "/var/run/tailscale/tailscaled.sock";
-/** Quanto a parada espera as requisições em curso terminarem, depois do dreno. */
-const SERVER_STOP_MS = 2_000;
 
 function identityFromEnv(): { identity: IdentityPort; routes?: Hono; describe: string } {
   const mode = process.env.SHEARIM_IDENTITY;
@@ -108,7 +106,7 @@ async function main(command: string | undefined) {
   await conn.migrate();
   const vapidContact = process.env.SHEARIM_VAPID_CONTACT || DEV_VAPID_CONTACT;
   if (!/^(mailto:|https:)/.test(vapidContact)) fail(`SHEARIM_VAPID_CONTACT=${vapidContact} não é mailto: nem https:.`);
-  const { app, websocket, executions, push, start, close } = createApp({
+  const shearim = createApp({
     db: conn.db,
     identity: who.identity,
     clock: systemClock,
@@ -122,11 +120,11 @@ async function main(command: string | undefined) {
     push: { contact: vapidContact },
   });
   // O par VAPID nasce na primeira subida (e daí em diante é sempre o mesmo, guardado no banco).
-  await push.ensureKeys();
-  await start();
+  await shearim.push.ensureKeys();
+  await shearim.start();
 
   const root = new Hono();
-  root.route("/", app);
+  root.route("/", shearim.app);
   // Rota de API desconhecida não cai no fallback do PWA.
   root.all("/api/*", (c) => c.json({ error: "not_found" }, 404));
   const webDist = resolve(process.env.SHEARIM_WEB_DIST ?? resolve(repoRoot, "apps/web/dist"));
@@ -139,22 +137,24 @@ async function main(command: string | undefined) {
     hostname: process.env.HOST ?? "0.0.0.0",
     port: Number(process.env.PORT ?? 3000),
     fetch: root.fetch,
-    websocket,
+    websocket: shearim.websocket,
   });
   console.log(`shearim: ouvindo em http://${server.hostname}:${server.port} (${conn.describe}; ${who.describe})`);
 
   // SIGTERM (o `docker compose stop`, com 30 s de folga): dreno, até 20 s para o que está rodando
-  // terminar. SIGINT (Ctrl-C no dev): para na hora. O que não terminou vira "o servidor
+  // terminar. SIGINT (Ctrl-C no dev): para na hora. Nos dois, os WebSockets fecham com 1012 logo
+  // de início, e o PWA mostra "Atualizando o Shearim" até reconectar. O que não terminou vira "o servidor
   // reiniciou" na próxima subida, com a nova tentativa automática.
   let stopping = false;
   const stop = (drain: boolean) => async () => {
     if (stopping) return;
     stopping = true;
-    await (drain ? executions.drain() : executions.stop());
-    // No Bun 1.3.11, a promessa de `stop` nunca resolve depois que o servidor fechou um WebSocket
-    // (as conexões de um Membro removido): o servidor para de aceitar na hora, e a espera tem teto.
-    await Promise.race([server.stop(), Bun.sleep(SERVER_STOP_MS)]);
-    await close();
+    await (drain ? shearim.drain() : shearim.halt());
+    // No Bun 1.3.11, depois que o servidor fecha um WebSocket (o 1012 acima, ou o 4403 de um Membro
+    // removido), a promessa do `stop()` nunca resolve, embora a porta feche na hora: espera as
+    // requisições em curso até 1 s.
+    await Promise.race([server.stop(), Bun.sleep(1_000)]);
+    await shearim.close();
     await conn.close();
     process.exit(0);
   };

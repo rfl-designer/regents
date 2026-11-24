@@ -199,11 +199,8 @@ export interface EventSocket {
   next<T extends ServerEventType>(type: T, opts?: { timeoutMs?: number }): Promise<ServerEventOf<T>>;
   /** Tudo o que chegou até agora, na ordem, inclusive o que `next` já leu. */
   received(): ServerEvent[];
-  /**
-   * Espera o servidor fechar a conexão (ex.: o Membro foi removido) e devolve o código e o motivo.
-   * Falha depois de `timeoutMs` se ela continuar aberta.
-   */
-  closed(opts?: { timeoutMs?: number }): Promise<{ code: number; reason: string }>;
+  /** Resolve quando a conexão cai, com o código de fechamento que o servidor mandou (1012: vai reiniciar). */
+  readonly closed: Promise<{ code: number; reason: string }>;
   /** O `connectionId` do `ready`: é com ele que a Presença diz o que esta conexão tem à vista. */
   connectionId: string;
   close(): Promise<void>;
@@ -220,8 +217,8 @@ async function openEventSocket(url: string, headers: Record<string, string>, lab
   const all: ServerEvent[] = [];
   const unread: ServerEvent[] = [];
   const waiters: { type: ServerEventType; resolve: (e: ServerEvent) => void }[] = [];
-  let closed: Promise<void> | undefined;
-  const serverClosed = new Promise<{ code: number; reason: string }>((resolve) => {
+  let closing: Promise<void> | undefined;
+  const closed = new Promise<{ code: number; reason: string }>((resolve) => {
     ws.addEventListener("close", (e) => resolve({ code: e.code, reason: e.reason }), { once: true });
   });
 
@@ -262,28 +259,18 @@ async function openEventSocket(url: string, headers: Record<string, string>, lab
       });
     },
     received: () => [...all],
-    closed(opts = {}) {
-      const timeoutMs = opts.timeoutMs ?? EVENT_TIMEOUT_MS;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`${label}: a conexão continuou aberta por ${timeoutMs} ms`)),
-          timeoutMs,
-        );
-      });
-      return Promise.race([serverClosed, timeout]).finally(() => clearTimeout(timer));
-    },
+    closed,
     get connectionId() {
       const ready = all.find((e) => e.type === "ready");
       return ready?.type === "ready" ? ready.connectionId : "";
     },
     close() {
-      closed ??= new Promise((resolve) => {
+      closing ??= new Promise((resolve) => {
         if (ws.readyState === WebSocket.CLOSED) return resolve();
         ws.addEventListener("close", () => resolve(), { once: true });
         ws.close();
       });
-      return closed;
+      return closing;
     },
   };
 
@@ -307,15 +294,6 @@ async function openEventSocket(url: string, headers: Record<string, string>, lab
   return socket;
 }
 
-/**
- * Para o `Bun.serve` do teste na hora. Sem `await`: no Bun 1.3.11, depois que o servidor fecha
- * um WebSocket (o Membro removido), a promessa de `stop` nunca resolve, embora a porta e as
- * conexões fechem na hora.
- */
-function stopServer(s: ReturnType<typeof Bun.serve>) {
-  void s.stop(true);
-}
-
 /** Os headers de um upgrade de WebSocket, para pedir um sem abrir a conexão. */
 const UPGRADE_HEADERS = {
   connection: "Upgrade",
@@ -325,6 +303,15 @@ const UPGRADE_HEADERS = {
 };
 
 // ---------- app de teste ----------
+
+/**
+ * `server.stop(true)`, sem ficar preso: no Bun 1.3.11, depois que o servidor fecha um WebSocket
+ * (o 1012 do dreno, o 4403 do Membro removido), a promessa do `stop` nunca resolve, embora a
+ * porta já tenha fechado.
+ */
+function stopServer(s: ReturnType<typeof Bun.serve>) {
+  return Promise.race([s.stop(true), Bun.sleep(200)]);
+}
 
 export interface Client {
   get(path: string, init?: RequestInit): Promise<Response>;
@@ -500,7 +487,7 @@ export async function testApp(
       if (server) {
         const s = server;
         server = undefined;
-        stopServer(s);
+        await stopServer(s);
       }
       current = await boot();
     },
@@ -508,7 +495,7 @@ export async function testApp(
      * O dreno do `SIGTERM`: a fila para de pegar trabalho e espera o que está rodando até `ms`
      * (20 s do relógio injetável por padrão). O app continua respondendo; `restart()` sobe outro.
      */
-    drain: (ms?: number) => current.executions.drain(ms),
+    drain: (ms?: number) => current.drain(ms),
     /** Cliente HTTP como uma pessoa da tailnet. */
     as: (who: Person) => client(identityHeaders(who)),
     /** Cliente HTTP sem identidade (nó com tag, Funnel). */

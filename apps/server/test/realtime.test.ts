@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ChannelDto, MeDto, MessageDto } from "@shearim/contracts";
+import { type ChannelDto, EVENTS_CLOSE_UPDATING, type MeDto, type MessageDto } from "@shearim/contracts";
 import { type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
@@ -98,5 +98,28 @@ describe("mensagens em tempo real", () => {
 
     expect((await aba2.next("message.created")).message.body).toBe("depois de fechar");
     expect(aba1.received().map((e) => e.type)).toEqual(["ready"]);
+  });
+});
+
+describe("atualização (dreno do SIGTERM)", () => {
+  test('no início do dreno, as conexões abertas fecham com 1012, para o PWA mostrar "Atualizando o Shearim"', async () => {
+    const t = await testApp();
+    const aba = await t.socket(juliana);
+
+    const dreno = t.drain();
+
+    expect((await aba.closed).code).toBe(EVENTS_CLOSE_UPDATING);
+    await dreno;
+  });
+
+  test("durante o dreno, um WebSocket novo é recusado: o servidor está saindo", async () => {
+    const t = await testApp();
+    await canalInicial(t);
+
+    await t.drain();
+    const res = await t.upgrade(juliana);
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "updating" });
   });
 });

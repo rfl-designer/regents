@@ -113,7 +113,7 @@ describe("Admin remove um Membro", () => {
     expect(res.status).toBe(204);
     expect((await abaDaCarla.next("member.removed")).memberId).toBe(ids.bruno.id);
     expect((await abaDoBruno.next("member.removed")).memberId).toBe(ids.bruno.id);
-    expect(await abaDoBruno.closed()).toMatchObject({ code: MEMBER_REMOVED_CLOSE_CODE });
+    expect(await abaDoBruno.closed).toMatchObject({ code: MEMBER_REMOVED_CLOSE_CODE });
     expect(await (await t.as(bruno).get("/api/channels")).json()).toEqual({ error: "not_a_member" });
     expect((await t.upgrade(bruno)).status).toBe(403);
     expect((await membros(t)).map((m) => m.displayName)).toEqual(["Carla", "Juliana"]);
