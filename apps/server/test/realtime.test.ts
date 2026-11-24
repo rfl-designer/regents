@@ -27,7 +27,8 @@ function mensagem(body: string): MessageDto {
     id: crypto.randomUUID(),
     channelId: crypto.randomUUID(),
     body,
-    author: { id: crypto.randomUUID(), displayName: "Juliana" },
+    author: { kind: "member", id: crypto.randomUUID(), displayName: "Juliana" },
+    originMessageId: null,
     createdAt: "2026-11-24T12:00:00.000Z",
   };
 }

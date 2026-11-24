@@ -3,7 +3,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { type Db, schema } from "./db/client";
 import type { Audience } from "./events";
 
-const { channelParticipants, members } = schema;
+const { channelAgents, channelParticipants, members, agents } = schema;
 
 /**
  * O que a participação precisa saber de uma conversa: o id e se é aberta a todo Membro.
@@ -15,18 +15,46 @@ export interface Conversation {
   kind: "public" | "private";
 }
 
-/** Os participantes de cada conversa pedida, em ordem de entrada. */
+/**
+ * Os participantes de cada conversa pedida (pessoas e Agentes), em ordem de entrada.
+ * Só as pessoas contam para quem vê e quem recebe eventos; os Agentes estão ali para falar.
+ */
 export async function participantsOf(db: Db, ids: readonly string[]): Promise<Map<string, ParticipantDto[]>> {
   const byConversation = new Map<string, ParticipantDto[]>(ids.map((id) => [id, []]));
   if (ids.length === 0) return byConversation;
-  const rows = await db
-    .select({ conversationId: channelParticipants.channelId, id: members.id, displayName: members.displayName })
+  const people = await db
+    .select({
+      conversationId: channelParticipants.channelId,
+      id: members.id,
+      displayName: members.displayName,
+      at: channelParticipants.joinedAt,
+    })
     .from(channelParticipants)
     .innerJoin(members, eq(members.id, channelParticipants.memberId))
     .where(inArray(channelParticipants.channelId, [...ids]))
     .orderBy(asc(channelParticipants.joinedAt), asc(members.displayName));
-  for (const r of rows)
-    byConversation.get(r.conversationId)?.push({ kind: "member", id: r.id, displayName: r.displayName });
+  const bots = await db
+    .select({
+      conversationId: channelAgents.channelId,
+      id: agents.id,
+      displayName: agents.name,
+      photo: agents.photo,
+      at: channelAgents.addedAt,
+    })
+    .from(channelAgents)
+    .innerJoin(agents, eq(agents.id, channelAgents.agentId))
+    .where(inArray(channelAgents.channelId, [...ids]))
+    .orderBy(asc(channelAgents.addedAt), asc(agents.name));
+  const all = [
+    ...people.map((r) => ({ ...r, dto: { kind: "member", id: r.id, displayName: r.displayName } as ParticipantDto })),
+    ...bots.map((r) => ({
+      ...r,
+      dto: { kind: "agent", id: r.id, displayName: r.displayName, photo: r.photo } as ParticipantDto,
+    })),
+  ];
+  // Ordenação estável: pessoas antes de Agentes na mesma hora.
+  all.sort((a, b) => a.at.getTime() - b.at.getTime());
+  for (const r of all) byConversation.get(r.conversationId)?.push(r.dto);
   return byConversation;
 }
 
@@ -64,5 +92,15 @@ export async function addParticipants(db: Db, conversationId: string, memberIds:
     .values(memberIds.map((memberId) => ({ channelId: conversationId, memberId, joinedAt: at })))
     .onConflictDoNothing()
     .returning({ memberId: channelParticipants.memberId });
+  return added.length > 0;
+}
+
+/** Põe um Agente na conversa. Se já estava, fica como está. Devolve se ele entrou. */
+export async function addAgent(db: Db, conversationId: string, agentId: string, at: Date) {
+  const added = await db
+    .insert(channelAgents)
+    .values({ channelId: conversationId, agentId, addedAt: at })
+    .onConflictDoNothing()
+    .returning({ agentId: channelAgents.agentId });
   return added.length > 0;
 }

@@ -13,6 +13,8 @@ import { createApp } from "../src/app";
 import type { Clock } from "../src/clock";
 import { type Db, migrationsFolder, schema } from "../src/db/client";
 import type { Identity, IdentityPort, NoIdentityReason } from "../src/identity/port";
+import { secretBox } from "../src/secrets";
+import { startFakeMessagesApi } from "./fakes/messages-api";
 
 // ---------- limpeza automática (o preload roda `runCleanups` no afterEach) ----------
 
@@ -66,6 +68,26 @@ export function fakeClock(start: Date | string = "2026-11-24T12:00:00.000Z"): Fa
       t = new Date(at).getTime();
     },
   };
+}
+
+// ---------- esperar o que acontece fora da requisição ----------
+
+/**
+ * Repete `probe` (pela borda, ex. um GET) até ele devolver algo, ou falha depois de `timeoutMs`
+ * com `label`. Para o que acontece sem conexão aberta para ouvir (ex. logo depois de um reinício).
+ */
+export async function eventually<T>(
+  label: string,
+  probe: () => Promise<T | undefined | null | false>,
+  timeoutMs = 2_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const got = await probe();
+    if (got) return got;
+    if (Date.now() > deadline) throw new Error(`não aconteceu em ${timeoutMs} ms: ${label}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
 }
 
 // ---------- identidade falsa ----------
@@ -227,21 +249,43 @@ const UPGRADE_HEADERS = {
 export interface Client {
   get(path: string, init?: RequestInit): Promise<Response>;
   post(path: string, body?: unknown, init?: RequestInit): Promise<Response>;
+  put(path: string, body?: unknown, init?: RequestInit): Promise<Response>;
   request(path: string, init?: RequestInit): Promise<Response>;
 }
 
 export type TestApp = Awaited<ReturnType<typeof testApp>>;
 
-/** Um app novo com banco vazio e migrado, identidade falsa e relógio parado. */
+/** A Messages API falsa, que fecha sozinha no fim do teste. */
+export async function fakeMessagesApi() {
+  const api = await startFakeMessagesApi();
+  onCleanup(() => api.stop());
+  return api;
+}
+
+/**
+ * Um app novo com banco vazio e migrado, identidade falsa, relógio parado, uma chave mestra
+ * aleatória e a Messages API falsa (`t.anthropic`) no lugar da Anthropic.
+ * A fila de execuções já está rodando.
+ */
 export async function testApp(opts: { clock?: FakeClock } = {}) {
   const { db } = await testDb();
   const clock = opts.clock ?? fakeClock();
-  const { app, websocket, events } = createApp({ db, identity: fakeIdentity, clock });
+  const anthropic = await fakeMessagesApi();
+  const secrets = await secretBox(crypto.getRandomValues(new Uint8Array(32)));
+
+  function boot() {
+    const built = createApp({ db, identity: fakeIdentity, clock, secrets, anthropicBaseUrl: anthropic.url });
+    built.executions.start();
+    return built;
+  }
+  let current = boot();
+  onCleanup(() => current.executions.stop());
 
   // O WebSocket precisa de um servidor de verdade; ele só sobe quando um teste abre conexão.
   let server: ReturnType<typeof Bun.serve> | undefined;
   function origin() {
     if (!server) {
+      const { app, websocket } = current;
       const s = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: app.fetch, websocket });
       server = s;
       onCleanup(() => s.stop(true));
@@ -253,25 +297,44 @@ export async function testApp(opts: { clock?: FakeClock } = {}) {
     const request = (path: string, init: RequestInit = {}) => {
       const headers = new Headers(init.headers);
       for (const [k, v] of Object.entries(extra)) headers.set(k, v);
-      return Promise.resolve(app.request(path, { ...init, headers }));
+      return Promise.resolve(current.app.request(path, { ...init, headers }));
     };
+    const send = (method: string) => (path: string, body?: unknown, init?: RequestInit) =>
+      request(path, {
+        ...init,
+        method,
+        headers: { "content-type": "application/json", ...init?.headers },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
     return {
       request,
       get: (path, init) => request(path, { ...init, method: "GET" }),
-      post: (path, body, init) =>
-        request(path, {
-          ...init,
-          method: "POST",
-          headers: { "content-type": "application/json", ...init?.headers },
-          body: body === undefined ? undefined : JSON.stringify(body),
-        }),
+      post: send("POST"),
+      put: send("PUT"),
     };
   }
 
   return {
-    app,
+    get app() {
+      return current.app;
+    },
     db,
     clock,
+    /** A Messages API falsa que o app usa pela Chave do Workspace. */
+    anthropic,
+    /**
+     * Reinicia o servidor no mesmo banco: a fila para (o que estava em andamento fica sem
+     * processo), as conexões de WebSocket caem e um app novo sobe com a fila rodando.
+     */
+    async restart() {
+      await current.executions.stop();
+      if (server) {
+        const s = server;
+        server = undefined;
+        await s.stop(true);
+      }
+      current = boot();
+    },
     /** Cliente HTTP como uma pessoa da tailnet. */
     as: (who: Person) => client(identityHeaders(who)),
     /** Cliente HTTP sem identidade (nó com tag, Funnel). */
@@ -289,6 +352,8 @@ export async function testApp(opts: { clock?: FakeClock } = {}) {
     upgrade: (who: Person | { none: NoIdentityReason }) =>
       fetch(`http://${origin()}${EVENTS_PATH}`, { headers: { ...UPGRADE_HEADERS, ...identityHeaders(who) } }),
     /** O ponto único de publicação de eventos do app, para testar o envio direto. */
-    events,
+    get events() {
+      return current.events;
+    },
   };
 }

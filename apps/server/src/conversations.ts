@@ -1,4 +1,5 @@
 import type {
+  AddAgentInput,
   AddParticipantInput,
   ChannelDto,
   ChannelSettingsDto,
@@ -11,23 +12,27 @@ import { Hono } from "hono";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
+import type { Executions } from "./executions";
 import type { Member } from "./members";
-import { addParticipants, audienceOf, canSee, participantsOf } from "./participation";
+import { mentionedAgents } from "./mentions";
+import { listMessages } from "./messages";
+import { addAgent, addParticipants, audienceOf, canSee, participantsOf } from "./participation";
 
 type Env = { Variables: { member: Member } };
 type Channel = typeof schema.channels.$inferSelect;
 
-const { channels, messages, members } = schema;
+const { channels, messages, members, agents } = schema;
 
 const NAME_MAX = 80;
 
 /**
  * Rotas de Canais e mensagens. Um Canal privado só existe para quem participa dele:
  * para os outros (Admin inclusive), ele não aparece na lista, responde 404 e não manda eventos.
- * Uma mensagem de pessoa é gravada antes de qualquer outra coisa.
+ * Uma mensagem de pessoa é gravada antes de qualquer outra coisa (inclusive das execuções
+ * que as Menções dela disparam).
  */
-export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHub }) {
-  const { db, clock, events } = deps;
+export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHub; executions: Executions }) {
+  const { db, clock, events, executions } = deps;
   const routes = new Hono<Env>();
 
   /** Avisa quem vê o Canal de como ele está agora. */
@@ -114,33 +119,30 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
     return c.json(await toChannelDto(db, channel));
   });
 
+  /** Quem vê o Canal põe um Agente nele (é a quem a Articuladora pode delegar ali). */
+  routes.post("/channels/:id/agents", async (c) => {
+    const channel = await findVisibleChannel(db, c.get("member"), c.req.param("id"));
+    if (!channel) return c.json({ error: "not_found" }, 404);
+    const input = (await c.req.json().catch(() => null)) as Partial<AddAgentInput> | null;
+    const agentId = typeof input?.agentId === "string" && UUID.test(input.agentId) ? input.agentId : undefined;
+    const [agent] = agentId ? await db.select({ id: agents.id }).from(agents).where(eq(agents.id, agentId)) : [];
+    if (!agent) return c.json({ error: "invalid_input", message: "Esse Agente não existe no Workspace." }, 400);
+
+    if (await addAgent(db, channel.id, agent.id, clock.now())) await publishChannel(channel);
+    return c.json(await toChannelDto(db, channel));
+  });
+
   routes.get("/channels/:id/messages", async (c) => {
     const channel = await findVisibleChannel(db, c.get("member"), c.req.param("id"));
     if (!channel) return c.json({ error: "not_found" }, 404);
-    const rows = await db
-      .select({
-        id: messages.id,
-        channelId: messages.channelId,
-        body: messages.body,
-        createdAt: messages.createdAt,
-        authorId: members.id,
-        authorName: members.displayName,
-      })
-      .from(messages)
-      .innerJoin(members, eq(members.id, messages.authorMemberId))
-      .where(eq(messages.channelId, channel.id))
-      .orderBy(asc(messages.seq));
-    return c.json(
-      rows.map(
-        (r): MessageDto => ({
-          id: r.id,
-          channelId: r.channelId,
-          body: r.body,
-          author: { id: r.authorId, displayName: r.authorName },
-          createdAt: r.createdAt.toISOString(),
-        }),
-      ),
-    );
+    return c.json(await listMessages(db, channel.id));
+  });
+
+  /** O Andamento do que ainda não virou resposta (na fila, escrevendo, falhou, não agem). */
+  routes.get("/channels/:id/executions", async (c) => {
+    const channel = await findVisibleChannel(db, c.get("member"), c.req.param("id"));
+    if (!channel) return c.json({ error: "not_found" }, 404);
+    return c.json(await executions.openIn(channel.id));
   });
 
   routes.post("/channels/:id/messages", async (c) => {
@@ -165,11 +167,14 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
       id: values.id,
       channelId: values.channelId,
       body: values.body,
-      author: { id: author.id, displayName: author.displayName },
+      author: { kind: "member", id: author.id, displayName: author.displayName },
+      originMessageId: null,
       createdAt: values.createdAt.toISOString(),
     };
     events.publish(await audienceOf(db, channel), { type: "message.created", message: dto });
     if (joined) await publishChannel(channel);
+    // Só depois de gravada e anunciada, a mensagem dispara os Agentes mencionados.
+    await executions.enqueueMentions(dto, await mentionedAgents(db, dto.body));
     return c.json(dto, 201);
   });
 

@@ -1,17 +1,27 @@
 import { EVENTS_PATH } from "@shearim/contracts";
 import { Hono } from "hono";
 import { websocket } from "hono/bun";
+import { agentRoutes } from "./agents";
 import type { Clock } from "./clock";
 import { conversationRoutes } from "./conversations";
 import type { Db } from "./db/client";
 import { createEventHub } from "./events";
+import { createExecutions } from "./executions";
 import type { IdentityPort } from "./identity/port";
 import { listMembers, type Member, memberFor, toMeDto } from "./members";
+import { keyBrain } from "./model/key";
+import { createModelPort } from "./model/port";
+import type { SecretBox } from "./secrets";
+import { workspaceKeyRoutes } from "./workspace-key";
 
 export interface AppDeps {
   db: Db;
   identity: IdentityPort;
   clock: Clock;
+  /** Cifra a Chave do Workspace com a chave mestra de `./secrets`. */
+  secrets: SecretBox;
+  /** Onde fica a Messages API (padrão: a da Anthropic). Os testes apontam para a falsa. */
+  anthropicBaseUrl?: string;
   /** Rotas só de desenvolvimento (`/dev/*`), vindas do adaptador de identidade de dev. */
   devRoutes?: Hono;
 }
@@ -23,9 +33,11 @@ type Env = { Variables: { member: Member } };
  * Nada de singleton global. `main.ts` monta as dependências reais.
  */
 export function createApp(deps: AppDeps) {
-  const { db, identity, clock } = deps;
+  const { db, identity, clock, secrets } = deps;
   const app = new Hono<Env>();
   const { hub: events, route: eventsRoute } = createEventHub();
+  const model = createModelPort({ key: keyBrain({ baseURL: deps.anthropicBaseUrl }) });
+  const executions = createExecutions({ db, clock, events, model, secrets });
 
   app.get("/api/health", (c) => c.json({ ok: true }));
   if (deps.devRoutes) app.route("/dev", deps.devRoutes);
@@ -43,10 +55,15 @@ export function createApp(deps: AppDeps) {
   app.get("/api/me", (c) => c.json(toMeDto(c.get("member"))));
   app.get("/api/members", async (c) => c.json(await listMembers(db)));
   app.get(EVENTS_PATH, eventsRoute);
-  app.route("/api", conversationRoutes({ db, clock, events }));
+  app.route("/api", conversationRoutes({ db, clock, events, executions }));
+  app.route("/api", agentRoutes({ db, clock }));
+  app.route("/api", workspaceKeyRoutes({ db, clock, secrets }));
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
 
-  /** `websocket` vai no `Bun.serve` junto com `app.fetch`; `events` é onde se publica. */
-  return { app, websocket, events };
+  /**
+   * `websocket` vai no `Bun.serve` junto com `app.fetch`; `events` é onde se publica;
+   * `executions.start()` põe a fila para andar (e `stop()` a para, no desligamento).
+   */
+  return { app, websocket, events, executions };
 }
