@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -35,7 +35,9 @@ const updateTest = test.extend<{
     let proc: ChildProcess | undefined;
     const url = `http://127.0.0.1:${port}`;
 
+    const log = join(data, "app.log");
     const start = async () => {
+      const out = openSync(log, "a");
       proc = spawn("bun", [resolve(import.meta.dirname, "../serve.ts")], {
         env: {
           ...process.env,
@@ -45,18 +47,21 @@ const updateTest = test.extend<{
           SHEARIM_PGLITE_DIR: join(data, "pglite"),
           SHEARIM_ACCOUNTS_DIR: join(data, "contas"),
         },
-        stdio: "ignore",
+        stdio: ["ignore", out, out],
       });
+      closeSync(out);
       const healthy = () =>
         fetch(`${url}/api/health`).then(
           (r) => r.ok,
           () => false,
         );
-      for (let i = 0; i < 150; i++) {
+      // Até 60 s: com a máquina carregada, as migrações num PGlite em disco demoram.
+      for (let i = 0; i < 300; i++) {
         if (await healthy()) return;
-        await new Promise((r) => setTimeout(r, 100));
+        if (proc.exitCode !== null) break;
+        await new Promise((r) => setTimeout(r, 200));
       }
-      throw new Error(`o Shearim do teste não subiu em ${url}`);
+      throw new Error(`o Shearim do teste não subiu em ${url}:\n${readFileSync(log, "utf8").slice(-2_000)}`);
     };
     const update = async () => {
       const running = proc;
