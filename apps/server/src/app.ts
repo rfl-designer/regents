@@ -61,7 +61,7 @@ const UNAVAILABLE = Symbol("identity_unavailable");
 export function createApp(deps: AppDeps) {
   const { db, identity, clock, hooks, secrets } = deps;
   const app = new Hono<Env>();
-  const { hub: events, route: eventsRoute } = createEventHub();
+  const { hub: events, route: eventsRoute, closeForRestart } = createEventHub();
   // A volta da Conta (ou a troca da Chave) solta quem espera por ela na fila.
   const accounts = createAccounts({
     db,
@@ -157,12 +157,23 @@ export function createApp(deps: AppDeps) {
    * `websocket` vai no `Bun.serve` junto com `app.fetch`; `events` é onde se publica.
    * `start()` faz a subida e põe a fila para andar; `executions.stop()` a para; `close` encerra o
    * que o app deixou rodando (os processos do `claude`).
+   *
+   * `drain` é o SIGTERM: fecha os WebSockets com 1012 (o PWA mostra "Atualizando o Shearim") e
+   * espera a fila até `ms`. `halt` é o SIGINT: fecha os WebSockets igual e para a fila na hora.
    */
   return {
     app,
     websocket,
     events,
     executions,
+    drain: (ms?: number) => {
+      closeForRestart();
+      return executions.drain(ms);
+    },
+    halt: () => {
+      closeForRestart();
+      return executions.stop();
+    },
     push,
     /** A subida: limpa as pastas de Conta (pastas de login órfãs, lock de renovação) e põe a fila para andar. */
     async start() {

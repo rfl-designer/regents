@@ -1,4 +1,5 @@
-import type { ServerEvent } from "@shearim/contracts";
+import { EVENTS_CLOSE_UPDATING, type ServerEvent } from "@shearim/contracts";
+import type { MiddlewareHandler } from "hono";
 import { upgradeWebSocket } from "hono/bun";
 import type { Member } from "./members";
 import { toMeDto } from "./members";
@@ -40,11 +41,13 @@ interface Connection {
   id: string;
   memberId: string;
   send(data: string): void;
+  close(code: number, reason: string): void;
 }
 
 export function createEventHub() {
   const connections = new Map<string, Connection>();
   const closeListeners: ((connectionId: string) => void)[] = [];
+  let restarting = false;
 
   const hub: EventHub = {
     publish(to, event) {
@@ -61,12 +64,17 @@ export function createEventHub() {
    * Rota de upgrade. Roda depois do middleware de `/api/*`, então a conexão já
    * vem com o Membro que a porta de identidade reconheceu, ou nem sobe (403).
    */
-  const route = upgradeWebSocket((c) => {
+  const upgrade = upgradeWebSocket((c) => {
     const member: Member = c.get("member");
     let connection: Connection | undefined;
     return {
       onOpen(_event, ws) {
-        connection = { id: crypto.randomUUID(), memberId: member.id, send: (data) => ws.send(data) };
+        connection = {
+          id: crypto.randomUUID(),
+          memberId: member.id,
+          send: (data) => ws.send(data),
+          close: (code, reason) => ws.close(code, reason),
+        };
         connections.set(connection.id, connection);
         ws.send(
           JSON.stringify({ type: "ready", me: toMeDto(member), connectionId: connection.id } satisfies ServerEvent),
@@ -80,5 +88,19 @@ export function createEventHub() {
     };
   });
 
-  return { hub, route };
+  /** Durante o dreno, ninguém abre conexão nova: ela cairia de novo em segundos. */
+  const route: MiddlewareHandler = (c, next) =>
+    restarting ? Promise.resolve(c.json({ error: "updating" }, 503)) : upgrade(c, next);
+
+  /**
+   * O servidor vai reiniciar (dreno do SIGTERM, ou o Ctrl-C do dev): fecha toda conexão com 1012
+   * e recusa as novas. Sem isso, o `server.stop()` espera as conexões e o cliente vê só um 1006.
+   */
+  function closeForRestart() {
+    restarting = true;
+    for (const c of connections.values()) c.close(EVENTS_CLOSE_UPDATING, "o Shearim vai reiniciar");
+    connections.clear();
+  }
+
+  return { hub, route, closeForRestart };
 }
