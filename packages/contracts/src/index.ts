@@ -194,6 +194,48 @@ export interface SendMessageInput {
   body: string;
 }
 
+// ---------- Conta (ADR 0005) ----------
+
+/**
+ * O estado da Conta do Claude do Membro, como "Minha Conta" mostra.
+ * Só o próprio Membro vê (nem o Admin). "No limite até" e "Precisa ligar de novo"
+ * entram aqui com "Quem paga e fila" (#35).
+ */
+export type AccountStatusDto =
+  | { state: "not_linked" }
+  /** `plan` já vem pronto para a tela, ex. "Claude Max". */
+  | { state: "linked"; email: string; plan: string };
+
+/**
+ * O fluxo "Ligar minha Conta do Claude" em andamento, ou o fim dele que a tela ainda mostra.
+ * - `starting`: o Claude Code está abrindo o login.
+ * - `waiting_code`: a pessoa abre `url`, entra na Anthropic e cola o código até `expiresAt`.
+ * - `checking`: o código foi entregue; o Shearim confere a Conta com uma chamada mínima.
+ * - `duplicate`: essa assinatura já está ligada a outra pessoa; "Ligar mesmo assim" ou "Cancelar".
+ * - `failed`: não ligou; `message` explica em linguagem simples.
+ * - `expired`: passaram os 10 minutos; "Começar de novo".
+ */
+export type AccountLinkingDto =
+  | { state: "starting" }
+  | { state: "waiting_code"; url: string; expiresAt: string }
+  | { state: "checking" }
+  | { state: "duplicate" }
+  | { state: "failed"; message: string }
+  | { state: "expired" };
+
+/** `GET /api/account` e corpo das respostas dos comandos da Conta. */
+export interface AccountDto {
+  status: AccountStatusDto;
+  linking: AccountLinkingDto | null;
+  /** Oferecer a ligação ao entrar (primeiro acesso, até "Agora não" ou ligar). */
+  offer: boolean;
+}
+
+/** Corpo de `POST /api/account/linking/code`. */
+export interface SubmitAccountCodeInput {
+  code: string;
+}
+
 // ---------- eventos do WebSocket ----------
 
 /** Onde o PWA abre o WebSocket de eventos. A identidade é a da requisição de upgrade. */
@@ -211,6 +253,8 @@ export type ServerEvent =
   | { type: "ready"; me: MeDto }
   /** Mensagem nova numa conversa que o Membro vê. Também chega a quem a enviou. */
   | { type: "message.created"; message: MessageDto }
+  /** A Conta do Membro (ou o fluxo de ligação) mudou. Vai só para as conexões do próprio Membro. */
+  | { type: "account.updated"; account: AccountDto }
   /**
    * Um Canal apareceu ou mudou (criado, alguém entrou ou foi adicionado, Instruções ou N mudaram)
    * para quem pode vê-lo. Para quem acabou de ser adicionado a um privado, é a primeira vez que o vê.
@@ -238,5 +282,6 @@ export type ApiError =
   | { error: "already_member" }
   | { error: "already_decided"; status: JoinRequestStatus }
   | { error: "not_found" }
+  | { error: "conflict"; message: string }
   | { error: "name_taken"; message: string }
   | { error: "invalid_input"; message: string };

@@ -7,6 +7,7 @@ import { DmView } from "./DmView";
 import { EntryView } from "./EntryView";
 import { JoinRequestsPanel } from "./JoinRequestsPanel";
 import { useServerEvents } from "./live";
+import { AccountOffer, MyAccount, useAccount } from "./MyAccount";
 import { Sidebar } from "./Sidebar";
 
 type State =
@@ -46,7 +47,8 @@ function upsert<T extends { id: string }>(list: T[], item: T) {
 export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<"channel" | "settings">("channel");
+  const [view, setView] = useState<"channel" | "settings" | "account">("channel");
+  const account = useAccount(state.kind === "ready");
 
   const load = useCallback(async () => {
     try {
@@ -107,8 +109,17 @@ export function App() {
       <header className="topbar">
         <strong>Shearim</strong>
         <span className="whoami">Você está como {state.me.displayName}</span>
+        <button
+          type="button"
+          className="link"
+          aria-pressed={view === "account"}
+          onClick={() => setView(view === "account" ? "channel" : "account")}
+        >
+          {view === "account" ? "Voltar à conversa" : "Minha Conta"}
+        </button>
       </header>
       {state.me.role === "admin" && <JoinRequestsPanel />}
+      {view !== "account" && <AccountOffer state={account} onOpen={() => setView("account")} />}
       <div className="workspace">
         <Sidebar
           me={state.me}
@@ -128,7 +139,9 @@ export function App() {
           }}
           onOpenSettings={() => setView("settings")}
         />
-        {view === "settings" ? (
+        {view === "account" ? (
+          <MyAccount state={account} />
+        ) : view === "settings" ? (
           <ChannelSettings />
         ) : dm ? (
           <DmView key={dm.id} dm={dm} me={state.me} />

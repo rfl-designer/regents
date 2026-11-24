@@ -1,6 +1,7 @@
 import { EVENTS_PATH } from "@shearim/contracts";
 import { Hono } from "hono";
 import { websocket } from "hono/bun";
+import { type AccountsConfig, createAccounts } from "./accounts";
 import type { Clock } from "./clock";
 import { conversationRoutes } from "./conversations";
 import type { Db } from "./db/client";
@@ -16,6 +17,8 @@ export interface AppDeps {
   db: Db;
   identity: IdentityPort;
   clock: Clock;
+  /** Binário `claude` e pasta-raiz das Contas (nos testes, o `fake-claude` e uma pasta temporária). */
+  accounts: AccountsConfig;
   /** Rotas só de desenvolvimento (`/dev/*`), vindas do adaptador de identidade de dev. */
   devRoutes?: Hono;
   /** Ganchos de domínio (ex.: push aos Admins a cada Pedido de entrada, #34). */
@@ -34,6 +37,7 @@ export function createApp(deps: AppDeps) {
   const { db, identity, clock, hooks } = deps;
   const app = new Hono<Env>();
   const { hub: events, route: eventsRoute } = createEventHub();
+  const accounts = createAccounts({ db, clock, events, config: deps.accounts });
 
   /** Pergunta à porta; tailscaled fora do ar é falha da Instalação, não "sem identidade": vai para o log. */
   async function whoAmI(req: Request): Promise<Identity | typeof UNAVAILABLE> {
@@ -86,9 +90,13 @@ export function createApp(deps: AppDeps) {
   app.route("/api/join-requests", joinRequestAdminRoutes({ db, clock, events, hooks }));
   app.route("/api", conversationRoutes({ db, clock, events }));
   app.route("/api", dmRoutes({ db, clock, events }));
+  app.route("/api", accounts.routes);
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
 
-  /** `websocket` vai no `Bun.serve` junto com `app.fetch`; `events` é onde se publica. */
-  return { app, websocket, events };
+  /**
+   * `websocket` vai no `Bun.serve` junto com `app.fetch`; `events` é onde se publica.
+   * `close` encerra o que o app deixou rodando (os processos do `claude`).
+   */
+  return { app, websocket, events, close: () => accounts.close() };
 }

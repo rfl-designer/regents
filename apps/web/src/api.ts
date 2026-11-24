@@ -1,4 +1,5 @@
 import type {
+  AccountDto,
   ApiError,
   ApproveJoinRequestDto,
   ChannelDto,
@@ -12,6 +13,7 @@ import type {
   MessageDto,
   MyJoinRequestDto,
   SendMessageInput,
+  SubmitAccountCodeInput,
   UpdateChannelSettingsInput,
 } from "@shearim/contracts";
 
@@ -74,4 +76,13 @@ export const api = {
   messages: (conversationId: string) => call<MessageDto[]>(`/api/conversations/${conversationId}/messages`),
   send: (conversationId: string, input: SendMessageInput) =>
     call<MessageDto>(`/api/conversations/${conversationId}/messages`, json("POST", input)),
+  account: {
+    get: () => call<AccountDto>("/api/account"),
+    notNow: () => call<AccountDto>("/api/account/not-now", post),
+    startLinking: () => call<AccountDto>("/api/account/linking", post),
+    submitCode: (input: SubmitAccountCodeInput) => call<AccountDto>("/api/account/linking/code", json("POST", input)),
+    confirm: () => call<AccountDto>("/api/account/linking/confirm", post),
+    cancelLinking: () => call<AccountDto>("/api/account/linking", { method: "DELETE" }),
+    unlink: () => call<AccountDto>("/api/account", { method: "DELETE" }),
+  },
 };

@@ -24,6 +24,8 @@ export default {
             HOST: "127.0.0.1",
             PORT: "{port}",
             SHEARIM_PGLITE_DIR: "memory://",
+            // As pastas das Contas ficam com os resultados do e2e, não em .data/.
+            SHEARIM_ACCOUNTS_DIR: ".e2e/contas",
           },
           log: ".e2e/logs/app.log",
         },
