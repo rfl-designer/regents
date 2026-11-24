@@ -9,7 +9,7 @@ Precisa só do [Bun](https://bun.sh) **1.3.11**.
 ```sh
 bun install            # dependências de todos os workspaces
 bun run dev            # servidor em 127.0.0.1:3000 + Vite em http://localhost:5173
-bun test               # testes do servidor (PGlite em memória, sem Docker)
+bun run test           # testes do servidor (PGlite em memória, sem Docker); use `bun run test`, não `bun test` puro: só o script passa `--timeout 30000`
 bun run typecheck      # tsc em todos os workspaces
 bun run lint           # Biome (formatação + lint); `bunx biome check --write .` corrige
 bun run build          # build do PWA em apps/web/dist
@@ -136,7 +136,7 @@ Nos testes, `t.socket(pessoa)` abre a conexão como uma aba (num `Bun.serve` rea
 ```ts
 const aba = await t.socket(juliana, "aba da Juliana");      // o rótulo aparece nas falhas
 await juliana.post(`/api/channels/${id}/messages`, { body: "oi" });
-const { message } = await aba.next("message.created");      // espera até 1 s; falha dizendo o que chegou
+const { message } = await aba.next("message.created");      // espera até 5 s; falha dizendo o que chegou
 aba.received();                                             // tudo o que chegou, em ordem
 (await t.upgrade({ none: "funnel" })).status;                // 403: upgrade recusado
 t.events.publish({ members: [id] }, evento);                 // publicar direto no hub
