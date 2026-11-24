@@ -1,13 +1,11 @@
 import type { AgentDto, ChannelDto, ExecutionDto, MeDto, MemberSummaryDto, MessageDto } from "@shearim/contracts";
-import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, Fragment, type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Avatar } from "./Avatar";
 import { api } from "./api";
 import { useServerEvents } from "./live";
+import { downLabel, upLabel, useReading } from "./reading";
 
 const time = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
-
-/** "Perto do fim": a tela acompanha o fim só quando a pessoa já está nele (Spec, Leitura). */
-const NEAR_END_PX = 60;
 
 /** Junta o que se tem com o que chegou, sem repetir: a mensagem enviada chega pelo 201 e pelo WebSocket. */
 function append(prev: MessageDto[] | null, arrived: MessageDto[]) {
@@ -56,6 +54,7 @@ export function ChannelView({ channel, me, onChanged }: Props) {
       <Conversation
         conversationId={channel.id}
         label={`#${channel.name}`}
+        me={me}
         // Escrever num Canal público é entrar nele; o `channel.updated` também chega, mas a tela não espera.
         onSent={() => {
           if (!joined) api.channel(channel.id).then(onChanged, () => {});
@@ -68,14 +67,17 @@ export function ChannelView({ channel, me, onChanged }: Props) {
 /**
  * As mensagens e o campo de escrever de uma conversa qualquer (Canal ou DM), pelo id dela.
  * `label` é como a conversa se chama nos rótulos ("#vendas", "Bruno").
+ * A leitura (não-lidas, linha "Novas", avisos flutuantes, a tela que não rola sozinha) fica em `useReading`.
  */
 export function Conversation({
   conversationId,
   label,
+  me,
   onSent,
 }: {
   conversationId: string;
   label: string;
+  me: MeDto;
   onSent?(): void;
 }) {
   const [messages, setMessages] = useState<MessageDto[] | null>(null);
@@ -85,19 +87,26 @@ export function Conversation({
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState(false);
   const listRef = useRef<HTMLOListElement>(null);
-  const atEnd = useRef(true);
+  const count = (messages?.length ?? 0) + Object.keys(executions).length;
+  const reading = useReading({ conversationId, me, listRef, messages, contentKey: count });
+  const { loaded } = reading;
 
   // A lista do servidor manda; o que chegou pelo WebSocket depois dela fica no fim.
   const load = useCallback(() => {
-    Promise.all([api.messages(conversationId), api.executions(conversationId)]).then(
-      ([list, running]) => {
+    Promise.all([
+      api.messages(conversationId),
+      api.executions(conversationId),
+      api.conversationUnread(conversationId),
+    ]).then(
+      ([list, running, unread]) => {
         setLoadError(false);
         setMessages((prev) => append(list, prev ?? []));
         setExecutions(Object.fromEntries(running.map((e) => [e.id, e])));
+        loaded(unread.messageIds);
       },
       () => setLoadError(true),
     );
-  }, [conversationId]);
+  }, [conversationId, loaded]);
 
   useEffect(load, [load]);
 
@@ -105,19 +114,13 @@ export function Conversation({
     // Cada (re)conexão começa com `ready`: recarrega o que pode ter passado enquanto ela não estava aberta.
     if (event.type === "ready") load();
     if (event.type === "message.created" && event.message.channelId === conversationId) {
+      reading.arrived(event.message);
       setMessages((prev) => append(prev, [event.message]));
     }
     if (event.type === "execution.updated" && event.execution.channelId === conversationId) {
       setExecutions((prev) => upsertExecution(prev, event.execution));
     }
   });
-
-  // Acompanha o fim só para quem já está nele: uma resposta ancorada lá em cima não puxa a tela.
-  const count = (messages?.length ?? 0) + Object.keys(executions).length;
-  useEffect(() => {
-    const list = listRef.current;
-    if (count && list && atEnd.current) list.scrollTop = list.scrollHeight;
-  }, [count]);
 
   async function send(e?: FormEvent) {
     e?.preventDefault();
@@ -127,7 +130,7 @@ export function Conversation({
     try {
       const msg = await api.send(conversationId, { body: draft });
       onSent?.();
-      atEnd.current = true; // quem envia vai para o fim
+      reading.sent(); // quem envia vai para o fim
       setMessages((prev) => append(prev, [msg]));
       setDraft("");
     } catch {
@@ -156,45 +159,68 @@ export function Conversation({
     pending.set(e.originMessageId, [...(pending.get(e.originMessageId) ?? []), e]);
   }
   const now = useNow(Object.values(executions).some((e) => e.state === "queued" || e.state === "running"));
+  const find = (id: string) => messages?.find((m) => m.id === id);
+  const { up, down } = reading.pills;
+  const newLine = (
+    <li className="new-divider" data-divider>
+      <hr aria-label="Novas" />
+      <span aria-hidden="true">Novas</span>
+    </li>
+  );
 
   return (
     <>
-      <ol
-        ref={listRef}
-        className="messages"
-        aria-label={`Mensagens de ${label}`}
-        aria-busy={messages === null && !loadError}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_END_PX;
-        }}
-      >
-        {loadError && <li className="notice">Não foi possível carregar as mensagens. Recarregue a página.</li>}
-        {messages?.length === 0 && <li className="notice">Nenhuma mensagem ainda. Diga oi!</li>}
-        {top.map((m) => {
-          const answers = replies.get(m.id) ?? [];
-          const running = pending.get(m.id) ?? [];
-          return (
-            <li key={m.id} className="message-group">
-              <MessageRow message={m} />
-              {(answers.length > 0 || running.length > 0) && (
-                <ul className="anchored" aria-label={`Respostas a ${m.author.displayName}`}>
-                  {answers.map((r) => (
-                    <li key={r.id}>
-                      <MessageRow message={r} />
-                    </li>
-                  ))}
-                  {running.map((e) => (
-                    <li key={e.id}>
-                      <Progress execution={e} now={now} />
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </li>
-          );
-        })}
-      </ol>
+      <div className="stream">
+        <ol
+          ref={listRef}
+          className="messages"
+          aria-label={`Mensagens de ${label}`}
+          aria-busy={(messages === null || reading.divider === undefined) && !loadError}
+          onScroll={reading.onScroll}
+        >
+          {loadError && <li className="notice">Não foi possível carregar as mensagens. Recarregue a página.</li>}
+          {messages?.length === 0 && <li className="notice">Nenhuma mensagem ainda. Diga oi!</li>}
+          {top.map((m) => {
+            const answers = replies.get(m.id) ?? [];
+            const running = pending.get(m.id) ?? [];
+            return (
+              <Fragment key={m.id}>
+                {reading.divider === m.id && newLine}
+                <li className="message-group">
+                  <MessageRow message={m} flash={reading.flashId === m.id} />
+                  {(answers.length > 0 || running.length > 0) && (
+                    <ul className="anchored" aria-label={`Respostas a ${m.author.displayName}`}>
+                      {answers.map((r) => (
+                        <Fragment key={r.id}>
+                          {reading.divider === r.id && newLine}
+                          <li>
+                            <MessageRow message={r} flash={reading.flashId === r.id} />
+                          </li>
+                        </Fragment>
+                      ))}
+                      {running.map((e) => (
+                        <li key={e.id}>
+                          <Progress execution={e} now={now} />
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              </Fragment>
+            );
+          })}
+        </ol>
+        {up.length > 0 && (
+          <button type="button" className="pill up" onClick={() => reading.jump(up[up.length - 1]!.id)}>
+            {upLabel(up, me, find)}
+          </button>
+        )}
+        {down.length > 0 && (
+          <button type="button" className="pill down" onClick={() => reading.jump(down[0]!.id)}>
+            {downLabel(down)}
+          </button>
+        )}
+      </div>
       <form className="composer" onSubmit={send}>
         {sendError && (
           <p className="error" role="alert">
@@ -217,10 +243,15 @@ export function Conversation({
   );
 }
 
-function MessageRow({ message: m }: { message: MessageDto }) {
+function MessageRow({ message: m, flash }: { message: MessageDto; flash?: boolean }) {
   const agent = m.author.kind === "agent";
   return (
-    <article className={agent ? "message agent" : "message"} aria-label={`Mensagem de ${m.author.displayName}`}>
+    <article
+      className={agent ? "message agent" : "message"}
+      aria-label={`Mensagem de ${m.author.displayName}`}
+      data-message-id={m.id}
+      data-flash={flash ? "true" : undefined}
+    >
       <Avatar name={m.author.displayName} agent={agent} photo={m.author.kind === "agent" ? m.author.photo : null} />
       <div>
         <div className="meta">

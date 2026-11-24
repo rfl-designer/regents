@@ -84,12 +84,77 @@ body {
   padding: 10px 16px;
   border-bottom: 1px solid var(--line);
 }
+/* A lista de mensagens com os avisos flutuantes por cima (Spec, Leitura; protótipo resposta-ancorada A) */
+.stream {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
 .messages {
   list-style: none;
   margin: 0;
   padding: 8px 16px;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
+}
+.pill {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  max-width: 92%;
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: var(--agent);
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+}
+.pill.up {
+  top: 8px;
+}
+.pill.down {
+  bottom: 8px;
+}
+/* A linha "Novas", logo antes da primeira não-lida de quando a conversa abriu */
+.new-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--error);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 0;
+}
+.new-divider hr,
+.new-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  margin: 0;
+  border: 0;
+  background: color-mix(in srgb, var(--error) 50%, transparent);
+}
+/* A mensagem para onde um aviso levou pisca */
+.message[data-flash="true"] {
+  animation: flash 1.6s;
+}
+@keyframes flash {
+  from {
+    background: color-mix(in srgb, var(--agent) 25%, transparent);
+  }
+  to {
+    background: transparent;
+  }
 }
 .message {
   display: flex;
@@ -282,6 +347,44 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+/* A contagem de não-lidas fica por cima do botão, à direita, sem roubar o clique */
+.conversation-item {
+  position: relative;
+}
+.conversation-item .conversation {
+  padding-right: 40px;
+}
+.unread-count {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--line);
+  color: var(--fg);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+/* Menção ao Membro ou DM: destacada */
+.unread-count.highlight {
+  background: var(--agent);
+  color: #fff;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 .conversation[aria-current="page"] {
   background: var(--line);

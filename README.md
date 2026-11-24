@@ -53,6 +53,7 @@ apps/server/        Bun + Hono + Drizzle
   src/participation.ts  quem participa, quem vê (canSee) e quem recebe eventos (audienceOf)
   src/agents.ts     rotas de Agentes; src/workspace-key.ts a Chave do Workspace (cifrada por src/secrets.ts)
   src/mentions.ts   extração de `@nome` (seam do #19); src/context.ts montagem de contexto (seam do #21)
+  src/reading.ts    leitura e não-lido: quais mensagens cada Membro viu, contagens e `unread.updated`
   src/executions.ts fila de execuções no Postgres e o trabalhador que a esvazia
   src/model/        porta de modelo (port.ts: eventos normalizados) e o cérebro da Chave (key.ts)
   src/main.ts       entrypoint: serve | migrate
@@ -159,6 +160,20 @@ Uma DM é uma conversa fechada sem nome, fora dos Canais: `dm` (duas pessoas; co
 Uma DM nova sai como `dm.updated` (com o `DmDto`) para os participantes. `MessageDto.channelId` é o id da conversa, Canal ou DM.
 
 Para provar que algo **não** chegou, sem `sleep`: publique depois um evento que chega a todos e verifique que o próximo evento daquele tipo na conexão é ele (exemplo em `apps/server/test/realtime.test.ts`).
+
+### Leitura e não-lido
+
+O servidor guarda **quais mensagens** cada Membro viu (`message_reads`), não um cursor. Conta como não-lida, para cada participante da conversa, toda mensagem que chegou depois de ele entrar nela, não é dele e ainda não apareceu na tela dele, inclusive a resposta ancorada. Quem vê um Canal público sem participar não tem não-lidas ali. A **ordem de exibição** é a da tela: cada mensagem de pessoa na ordem de gravação, seguida das respostas ancoradas sob ela.
+
+| Rota | Quem | O quê |
+|---|---|---|
+| `GET /api/unread` | Membro | `UnreadDto`: por conversa (`count`, `mentions`, `firstUnreadId`), mais `total` (o badge), `mentions` e `dms` |
+| `GET /api/conversations/:id/unread` | quem vê | `{ messageIds }` não-lidas, na ordem de exibição (a primeira é onde a conversa abre) |
+| `POST /api/conversations/:id/reads` | quem vê | `{ messageIds }` que apareceram na tela; ignora as de outra conversa e as do próprio Membro. Devolve o `UnreadDto` |
+
+`unread.updated` (com o `UnreadDto` inteiro) vai só às conexões do próprio Membro: a cada mensagem nova numa conversa dele (`reading.messageCreated(dto)`, chamado depois de gravar e anunciar, por quem cria mensagem: o envio e a resposta do Agente) e a cada marcação que leu algo. A Menção ao Membro, por enquanto, casa `@nome` com o nome dele (`mentions()` em `reading.ts` é o seam do #19). O badge do ícone e o push (#32) leem o `total`.
+
+No PWA, `apps/web/src/reading.ts` (`useReading`) faz a leitura da conversa aberta: marca o que aparece na tela com a aba visível, abre na primeira não-lida com a linha "Novas", mantém a tela parada fora do fim e dá os avisos flutuantes ("↑ Faro respondeu Juliana", "↑ n respostas acima", "↓ n novas abaixo"), que levam à mensagem e a fazem piscar (`data-flash`).
 
 ### fake-claude
 

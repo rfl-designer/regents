@@ -1,4 +1,4 @@
-import type { ChannelDto, DmDto, MeDto, MemberSummaryDto } from "@shearim/contracts";
+import type { ChannelDto, DmDto, MeDto, MemberSummaryDto, UnreadDto } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { ApiFailure, api } from "./api";
 import { dmTitle } from "./DmView";
@@ -7,6 +7,8 @@ interface Props {
   me: MeDto;
   channels: ChannelDto[];
   dms: DmDto[];
+  /** As não-lidas do Membro (`null` enquanto carrega). */
+  unread: UnreadDto | null;
   /** A conversa aberta (Canal ou DM: os ids não se repetem entre os dois). */
   selectedId: string | null;
   isAdmin: boolean;
@@ -30,6 +32,10 @@ const ADMIN_LINKS: [AdminView, string][] = [
 /** A lista de conversas: os Canais que o Membro vê e, numa seção à parte, as DMs dele. */
 export function Sidebar(props: Props) {
   const [creating, setCreating] = useState(false);
+  const count = (id: string, dm: boolean) => {
+    const u = props.unread?.conversations.find((c) => c.conversationId === id);
+    return u && <UnreadCount count={u.count} highlight={dm || u.mentions > 0} />;
+  };
   const [openingDm, setOpeningDm] = useState(false);
 
   return (
@@ -37,7 +43,7 @@ export function Sidebar(props: Props) {
       <h2>Canais</h2>
       <ul>
         {props.channels.map((c) => (
-          <li key={c.id}>
+          <li key={c.id} className="conversation-item">
             <button
               type="button"
               className="conversation"
@@ -52,6 +58,7 @@ export function Sidebar(props: Props) {
                 </>
               )}
             </button>
+            {count(c.id, false)}
           </li>
         ))}
       </ul>
@@ -71,7 +78,7 @@ export function Sidebar(props: Props) {
       <h2>Mensagens diretas</h2>
       <ul aria-label="DMs">
         {props.dms.map((d) => (
-          <li key={d.id}>
+          <li key={d.id} className="conversation-item">
             <button
               type="button"
               className="conversation"
@@ -80,6 +87,7 @@ export function Sidebar(props: Props) {
             >
               {dmTitle(d, props.me)}
             </button>
+            {count(d.id, true)}
           </li>
         ))}
       </ul>
@@ -110,6 +118,20 @@ export function Sidebar(props: Props) {
           </button>
         ))}
     </nav>
+  );
+}
+
+/**
+ * Quantas não-lidas há na conversa. Fica fora do botão, para o nome dele continuar sendo o da
+ * conversa; destacada quando há Menção ao Membro ou é DM.
+ */
+function UnreadCount({ count, highlight }: { count: number; highlight: boolean }) {
+  if (count === 0) return null;
+  return (
+    <span className={highlight ? "unread-count highlight" : "unread-count"}>
+      {count}
+      <span className="sr-only">{count === 1 ? " não-lida" : " não-lidas"}</span>
+    </span>
   );
 }
 
