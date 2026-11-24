@@ -17,7 +17,16 @@ describe("Conversas", () => {
     const res = await t.as(juliana).get("/api/channels");
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([{ id: expect.any(String), name: "geral", kind: "public" }]);
+    expect(await res.json()).toEqual([
+      {
+        id: expect.any(String),
+        name: "geral",
+        kind: "public",
+        instructions: "",
+        recentMessages: 30,
+        participants: [{ kind: "member", id: expect.any(String), displayName: "Juliana" }],
+      },
+    ]);
   });
 
   test("a mensagem do Admin é gravada e aparece de novo ao recarregar", async () => {

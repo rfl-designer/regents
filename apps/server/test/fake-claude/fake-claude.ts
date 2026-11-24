@@ -73,9 +73,10 @@ async function authLogin(): Promise<number> {
 
   const state = crypto.randomUUID().replaceAll("-", "");
   const url =
-    "https://claude.com/cai/oauth/authorize?code=true&client_id=fake-client&response_type=code" +
+    "https://claude.ai/oauth/authorize?code=true&client_id=fake-client&response_type=code" +
     `&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=user%3Ainference&state=${state}`;
   // Como o 2.1.30x: a URL vem dentro de um hyperlink OSC 8, e o prompt não termina em \n.
+  // O host é o que o 2.1.331 imprimiu num smoke do #25 (claude.ai); o Shearim não depende dele.
   write("Opening browser to sign in…\n");
   write(`If the browser didn't open, visit: \x1b]8;;${url}\x1b\\${url}\x1b]8;;\x1b\\\n`);
   write("Paste code here if prompted > ");

@@ -1,26 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { ChannelDto, MeDto, MessageDto } from "@shearim/contracts";
-import { schema } from "../src/db/client";
-import { type Person, type TestApp, testApp } from "./harness";
+import { type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
 const bruno = { id: "2002", login: "bruno@exemplo.com", name: "Bruno" };
-
-/**
- * Põe uma segunda pessoa como Membro. Ainda não há Pedido de entrada (#16),
- * então este arranjo grava o Membro direto; o que se verifica continua pela borda.
- */
-async function tornarMembro(t: TestApp, who: Person) {
-  await t.as(juliana).get("/api/me"); // a primeira pessoa vira Admin
-  await t.db.insert(schema.members).values({
-    id: crypto.randomUUID(),
-    tailnetUserId: who.id,
-    login: who.login ?? `${who.id}@exemplo.com`,
-    displayName: who.name ?? who.id,
-    role: "member",
-    createdAt: t.clock.now(),
-  });
-}
 
 function mensagem(body: string): MessageDto {
   return {
@@ -82,7 +65,7 @@ describe("mensagens em tempo real", () => {
 
   test("um evento publicado para alguns Membros chega só às conexões deles", async () => {
     const t = await testApp();
-    await tornarMembro(t, bruno);
+    await t.addMember(bruno, { by: juliana });
     const { id: julianaId }: MeDto = await (await t.as(juliana).get("/api/me")).json();
     const daJuliana = await t.socket(juliana, "aba da Juliana");
     const doBruno = await t.socket(bruno, "aba do Bruno");

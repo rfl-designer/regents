@@ -12,8 +12,22 @@
     {
       "idx": 1,
       "version": "7",
-      "when": 1795514895767,
-      "tag": "0001_contas",
+      "when": 1795514305597,
+      "tag": "0001_canais-privados-e-participantes",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795515004087,
+      "tag": "0002_join_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795515272217,
+      "tag": "0003_contas",
       "breakpoints": true
     }
   ]

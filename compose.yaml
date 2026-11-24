@@ -1,0 +1,137 @@
+# Instalação do Shearim (Spec, módulo 13; ADRs 0007 e 0008).
+#
+# Quem chega: um peer da tailnet abre https://<TS_HOSTNAME>.<tailnet>.ts.net. O Tailscale Serve,
+# no sidecar, termina o HTTPS, limpa e reescreve os headers de identidade e faz proxy para
+# http://app:3000. O app pergunta ao tailscaled (whois, pelo socket) de quem é o IP.
+#
+# Regras que não se negociam (o desvio de headers depende delas):
+# - Nenhum serviço tem `ports:`. O único caminho até o app é o Serve.
+# - A rede `interna` tem só tailscale, app, postgres e (no #38) backup. Nenhum
+#   docker-compose.override.yml pode ligar outro serviço a ela: qualquer container ali
+#   fala com app:3000 e forja X-Forwarded-For.
+# - O sidecar fica em userspace, sem /dev/net/tun e sem capabilities.
+#
+# Configuração do Admin só no .env (o setup o escreve); segredos em ./secrets (deploy/setup.sh).
+# Atualizar: `docker compose pull && docker compose up -d`.
+
+name: shearim
+
+services:
+  tailscale:
+    # >= 1.104.4 (boletins TS-2026-016 e TS-2026-017). Fixado por tag e digest.
+    image: tailscale/tailscale:v1.104.7@sha256:72c1e19e0aedca96b8533bbb0b4368564410ff20b17e53b804eb6c1f04a31be4
+    hostname: ${TS_HOSTNAME:-shearim}
+    environment:
+      TS_AUTHKEY: file:/run/secrets/ts_authkey
+      # O nó é tag:shearim: o que sai da Instalação não herda a identidade de quem criou a chave.
+      TS_EXTRA_ARGS: --advertise-tags=tag:shearim
+      TS_HOSTNAME: ${TS_HOSTNAME:-shearim}
+      TS_USERSPACE: "true"
+      TS_AUTH_ONCE: "true"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SOCKET: /var/run/tailscale/tailscaled.sock
+      TS_SERVE_CONFIG: /config/serve.json
+      # /healthz no loopback do sidecar. Um peer alcança essa porta pelo netstack: ali não pode
+      # haver nada com segredo (ADR 0008).
+      TS_ENABLE_HEALTH_CHECK: "true"
+      TS_LOCAL_ADDR_PORT: 127.0.0.1:9002
+    secrets:
+      - ts_authkey
+    volumes:
+      - ts-state:/var/lib/tailscale
+      - ts-socket:/var/run/tailscale
+      # O diretório (não o arquivo): o containerboot recarrega o serve.json quando ele muda.
+      - ./deploy/tailscale:/config:ro
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [interna]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9002/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+
+  app:
+    image: ${SHEARIM_IMAGE:-ghcr.io/rfl-designer/shearim}:${SHEARIM_VERSION:-local}
+    build: .
+    init: true
+    environment:
+      SHEARIM_IDENTITY: tailnet
+      TS_SOCKET: /var/run/tailscale/tailscaled.sock
+      DATABASE_URL: postgres://shearim@postgres:5432/shearim
+      DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+      # Cifra a Chave do Workspace no banco (Contas e Chave). Sem ela, um dump não basta.
+      SHEARIM_MASTER_KEY_FILE: /run/secrets/master_key
+      # `sub` do VAPID (Push). Precisa de domínio real: a Apple recusa localhost.
+      SHEARIM_VAPID_CONTACT: ${SHEARIM_VAPID_CONTACT:?rode deploy/setup.sh (falta SHEARIM_VAPID_CONTACT no .env)}
+      # Pasta-raiz das Contas: o volume `contas` abaixo.
+      SHEARIM_ACCOUNTS_DIR: /data/contas
+    secrets:
+      - postgres_password
+      - master_key
+    volumes:
+      # Só leitura; o app roda sem root, então a LocalAPI só lhe dá leitura (whois).
+      - ts-socket:/var/run/tailscale:ro
+      # CLAUDE_CONFIG_DIR de cada Membro (Contas). Fora do backup, de propósito.
+      - contas:/data/contas
+    depends_on:
+      postgres:
+        condition: service_healthy
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [interna]
+    healthcheck:
+      test:
+        - CMD
+        - bun
+        - -e
+        - 'fetch("http://127.0.0.1:3000/api/health").then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))'
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    # Tempo para as execuções em andamento terminarem ou virarem falha "o servidor reiniciou".
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:18.6-alpine@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
+    environment:
+      POSTGRES_USER: shearim
+      POSTGRES_DB: shearim
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - pgdata:/var/lib/postgresql
+    networks: [interna]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "shearim", "-d", "shearim"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  # backup: o pg_dump noturno em ./backups (14 dias) entra aqui no #38, também na rede
+  # `interna`, com o segredo postgres_password. O backup completo é o dump mais ./secrets.
+
+networks:
+  interna: {}
+
+volumes:
+  ts-state: {}
+  ts-socket: {}
+  pgdata: {}
+  contas: {}
+
+secrets:
+  ts_authkey:
+    file: ./secrets/ts_authkey
+  postgres_password:
+    file: ./secrets/postgres_password
+  master_key:
+    file: ./secrets/master_key

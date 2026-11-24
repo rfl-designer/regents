@@ -1,24 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import type { AccountDto } from "@shearim/contracts";
-import { schema } from "../src/db/client";
 import { FAKE_ACCESS_TOKEN, FAKE_LOGIN_CODE } from "./fake-claude";
 import { type EventSocket, type Person, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
 const bruno = { id: "2002", login: "bruno@exemplo.com", name: "Bruno" };
 
-/** Juliana entra primeiro (vira Admin); Bruno é Membro comum. Sem Pedido de entrada ainda (#16). */
+/** Juliana abre o Workspace (vira Admin); Bruno entra pelo Pedido de entrada, aprovado por ela. */
 async function workspace(t: TestApp) {
-  await t.as(juliana).get("/api/me");
-  await t.db.insert(schema.members).values({
-    id: crypto.randomUUID(),
-    tailnetUserId: bruno.id,
-    login: bruno.login,
-    displayName: bruno.name,
-    role: "member",
-    createdAt: t.clock.now(),
-  });
+  await t.addMember(bruno, { by: juliana });
 }
 
 async function account(t: TestApp, who: Person): Promise<AccountDto> {
@@ -77,7 +68,7 @@ describe("Ligar minha Conta do Claude", () => {
     const esperando = await startLinking(t, bruno, aba);
     expect(esperando.linking).toEqual({
       state: "waiting_code",
-      url: expect.stringMatching(/^https:\/\/claude\.com\/cai\/oauth\/authorize\?\S+$/),
+      url: expect.stringMatching(/^https:\/\/claude\.ai\/oauth\/authorize\?\S+$/),
       expiresAt: "2026-11-24T12:10:00.000Z",
     });
 

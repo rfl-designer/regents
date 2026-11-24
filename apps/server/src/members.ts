@@ -1,8 +1,9 @@
-import type { MeDto } from "@shearim/contracts";
-import { eq, sql } from "drizzle-orm";
+import type { MeDto, MemberSummaryDto } from "@shearim/contracts";
+import { asc, eq, sql } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { Identity } from "./identity/port";
+import { addParticipants } from "./participation";
 
 export type Member = typeof schema.members.$inferSelect;
 
@@ -42,14 +43,24 @@ export async function memberFor(
         createdAt: now,
       })
       .returning();
-    await tx
+    const [initial] = await tx
       .insert(schema.channels)
       .values({ id: crypto.randomUUID(), name: INITIAL_CHANNEL_NAME, kind: "public", createdAt: now })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ id: schema.channels.id });
+    if (initial) await addParticipants(tx, initial.id, [admin!.id], now);
     return admin;
   });
 }
 
 export function toMeDto(m: Member): MeDto {
   return { id: m.id, login: m.login, displayName: m.displayName, role: m.role };
+}
+
+/** Os Membros do Workspace, por nome: quem se pode adicionar a uma conversa. */
+export async function listMembers(db: Db): Promise<MemberSummaryDto[]> {
+  return db
+    .select({ id: schema.members.id, displayName: schema.members.displayName })
+    .from(schema.members)
+    .orderBy(asc(schema.members.displayName), asc(schema.members.id));
 }

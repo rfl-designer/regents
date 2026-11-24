@@ -1,86 +1,66 @@
 {
-  "id": "809d3e77-19f4-4367-bd00-b1d717658346",
+  "id": "1252e8bd-3b1b-47c4-8040-42f94a532d23",
   "prevId": "02d3d929-5155-46c1-bc94-03a7e8a108e7",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.accounts": {
-      "name": "accounts",
+    "public.channel_participants": {
+      "name": "channel_participants",
       "schema": "",
       "columns": {
+        "channel_id": {
+          "name": "channel_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
         "member_id": {
           "name": "member_id",
           "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "state": {
-          "name": "state",
-          "type": "account_state",
-          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
-        "email": {
-          "name": "email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "claude_org_id": {
-          "name": "claude_org_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "subscription_type": {
-          "name": "subscription_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "plan_tier": {
-          "name": "plan_tier",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "login_expires_at": {
-          "name": "login_expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "config_dir": {
-          "name": "config_dir",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "linked_at": {
-          "name": "linked_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "offer_dismissed_at": {
-          "name": "offer_dismissed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "updated_at": {
-          "name": "updated_at",
+        "joined_at": {
+          "name": "joined_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
         }
       },
-      "indexes": {},
+      "indexes": {
+        "channel_participants_member_id_index": {
+          "name": "channel_participants_member_id_index",
+          "columns": [
+            {
+              "expression": "member_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
-        "accounts_member_id_members_id_fk": {
-          "name": "accounts_member_id_members_id_fk",
-          "tableFrom": "accounts",
+        "channel_participants_channel_id_channels_id_fk": {
+          "name": "channel_participants_channel_id_channels_id_fk",
+          "tableFrom": "channel_participants",
+          "tableTo": "channels",
+          "columnsFrom": [
+            "channel_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "channel_participants_member_id_members_id_fk": {
+          "name": "channel_participants_member_id_members_id_fk",
+          "tableFrom": "channel_participants",
           "tableTo": "members",
           "columnsFrom": [
             "member_id"
@@ -92,7 +72,15 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
+      "compositePrimaryKeys": {
+        "channel_participants_channel_id_member_id_pk": {
+          "name": "channel_participants_channel_id_member_id_pk",
+          "columns": [
+            "channel_id",
+            "member_id"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -120,6 +108,20 @@
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
+        },
+        "instructions": {
+          "name": "instructions",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "recent_messages": {
+          "name": "recent_messages",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 30
         },
         "created_at": {
           "name": "created_at",
@@ -313,14 +315,6 @@
     }
   },
   "enums": {
-    "public.account_state": {
-      "name": "account_state",
-      "schema": "public",
-      "values": [
-        "not_linked",
-        "linked"
-      ]
-    },
     "public.channel_kind": {
       "name": "channel_kind",
       "schema": "public",

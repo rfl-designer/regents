@@ -1,11 +1,19 @@
 import type {
   AccountDto,
   ApiError,
+  ApproveJoinRequestDto,
   ChannelDto,
+  ChannelSettingsDto,
+  CreateChannelInput,
+  JoinRequestAdminDto,
+  JoinRequestDto,
   MeDto,
+  MemberSummaryDto,
   MessageDto,
+  MyJoinRequestDto,
   SendMessageInput,
   SubmitAccountCodeInput,
+  UpdateChannelSettingsInput,
 } from "@shearim/contracts";
 
 /** Falha de uma chamada à API, já com o que a tela precisa para explicar. */
@@ -35,27 +43,40 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+const json = (method: string, body?: unknown): RequestInit => ({
+  method,
+  headers: { "content-type": "application/json" },
+  body: body === undefined ? undefined : JSON.stringify(body),
+});
+
+const post = { method: "POST" } as const;
+
 export const api = {
   me: () => call<MeDto>("/api/me"),
+  members: () => call<MemberSummaryDto[]>("/api/members"),
+  myJoinRequest: () => call<MyJoinRequestDto>("/api/join-request"),
+  requestToJoin: () => call<JoinRequestDto>("/api/join-request", post),
+  joinRequests: () => call<JoinRequestAdminDto[]>("/api/join-requests"),
+  approve: (id: string) => call<ApproveJoinRequestDto>(`/api/join-requests/${id}/approve`, post),
+  refuse: (id: string) => call<JoinRequestAdminDto>(`/api/join-requests/${id}/refuse`, post),
   channels: () => call<ChannelDto[]>("/api/channels"),
+  channel: (channelId: string) => call<ChannelDto>(`/api/channels/${channelId}`),
+  createChannel: (input: CreateChannelInput) => call<ChannelDto>("/api/channels", json("POST", input)),
+  joinChannel: (channelId: string) => call<ChannelDto>(`/api/channels/${channelId}/join`, json("POST")),
+  addParticipant: (channelId: string, memberId: string) =>
+    call<ChannelDto>(`/api/channels/${channelId}/participants`, json("POST", { memberId })),
+  channelSettings: () => call<ChannelSettingsDto[]>("/api/channel-settings"),
+  updateChannelSettings: (channelId: string, input: UpdateChannelSettingsInput) =>
+    call<ChannelSettingsDto>(`/api/channel-settings/${channelId}`, json("PATCH", input)),
   messages: (channelId: string) => call<MessageDto[]>(`/api/channels/${channelId}/messages`),
   send: (channelId: string, input: SendMessageInput) =>
-    call<MessageDto>(`/api/channels/${channelId}/messages`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(input),
-    }),
+    call<MessageDto>(`/api/channels/${channelId}/messages`, json("POST", input)),
   account: {
     get: () => call<AccountDto>("/api/account"),
-    notNow: () => call<AccountDto>("/api/account/not-now", { method: "POST" }),
-    startLinking: () => call<AccountDto>("/api/account/linking", { method: "POST" }),
-    submitCode: (input: SubmitAccountCodeInput) =>
-      call<AccountDto>("/api/account/linking/code", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(input),
-      }),
-    confirm: () => call<AccountDto>("/api/account/linking/confirm", { method: "POST" }),
+    notNow: () => call<AccountDto>("/api/account/not-now", post),
+    startLinking: () => call<AccountDto>("/api/account/linking", post),
+    submitCode: (input: SubmitAccountCodeInput) => call<AccountDto>("/api/account/linking/code", json("POST", input)),
+    confirm: () => call<AccountDto>("/api/account/linking/confirm", post),
     cancelLinking: () => call<AccountDto>("/api/account/linking", { method: "DELETE" }),
     unlink: () => call<AccountDto>("/api/account", { method: "DELETE" }),
   },

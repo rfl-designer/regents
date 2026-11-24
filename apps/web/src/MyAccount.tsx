@@ -6,10 +6,10 @@ import { useServerEvents } from "./live";
 const hour = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
 /**
- * A Conta do Claude do próprio Membro, viva: carrega pelo HTTP e acompanha
+ * A Conta do Claude do próprio Membro, viva (só com `enabled`, isto é, já Membro): carrega pelo HTTP e acompanha
  * `account.updated` (que só chega a ele). Recarrega a cada `ready`.
  */
-export function useAccount() {
+export function useAccount(enabled: boolean) {
   const [account, setAccount] = useState<AccountDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   // O fluxo anda no servidor enquanto uma resposta HTTP viaja: um evento que chegou
@@ -21,8 +21,9 @@ export function useAccount() {
     if (events.current === before) setAccount(fresh);
   }, []);
   const load = useCallback(() => {
+    if (!enabled) return;
     settle(api.account.get()).catch(() => setError("Não foi possível carregar a sua Conta. Recarregue a página."));
-  }, [settle]);
+  }, [settle, enabled]);
   useEffect(load, [load]);
   useServerEvents((event) => {
     if (event.type === "ready") load();
