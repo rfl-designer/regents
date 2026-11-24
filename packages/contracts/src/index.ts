@@ -133,7 +133,7 @@ export interface UpdateProfileInput {
 export type ChannelKind = "public" | "private";
 
 /**
- * `dm`: entre duas partes (duas pessoas; com o #23, uma pessoa e um Agente).
+ * `dm`: entre duas partes (duas pessoas, ou uma pessoa e um Agente).
  * `group`: DM em grupo, aberta com três pessoas ou mais. Um grupo continua grupo
  * mesmo se ficar com menos gente (quem é removido sai das DMs em grupo, não das `dm`).
  */
@@ -209,10 +209,13 @@ export interface DmDto {
 /**
  * Corpo de `POST /api/dms`: abre a DM com essas pessoas (quem abre entra sozinho; pode vir na lista).
  * Uma pessoa: `dm`; duas ou mais: `group`. Abrir de novo com as mesmas pessoas devolve a mesma
- * DM (200); uma nova responde 201. A DM com Agente (#23) entra como mais um campo aqui.
+ * DM (200); uma nova responde 201.
+ * Com `agentId` (e nenhuma outra pessoa), é a DM de quem abre com aquele Agente (`dm`), uma por
+ * Agente; o Agente responde a cada mensagem dela. Numa DM entre pessoas, Agente só entra por Menção.
  */
 export interface OpenDmInput {
   memberIds: string[];
+  agentId?: string;
 }
 
 /**
@@ -261,6 +264,46 @@ export interface SendMessageInput {
 /** Corpo de `POST /api/channels/:id/agents`: põe um Agente no Canal (quem vê o Canal pode). */
 export interface AddAgentInput {
   agentId: string;
+}
+
+// ---------- Leitura e não-lido (Spec, módulo 10) ----------
+
+/**
+ * As não-lidas do Membro numa conversa. Conta toda mensagem (a resposta ancorada inclusive) que
+ * chegou depois de ele entrar na conversa, não é dele e ainda não apareceu na tela dele.
+ */
+export interface ConversationUnreadDto {
+  conversationId: string;
+  count: number;
+  /** Quantas das não-lidas mencionam o Membro: a lista de conversas destaca essas (e as DMs). */
+  mentions: number;
+  /** A primeira não-lida na ordem de exibição (respostas ancoradas sob a origem): onde a conversa abre. */
+  firstUnreadId: string | null;
+}
+
+/**
+ * `GET /api/unread`, a resposta de `POST /api/conversations/:id/reads` e `unread.updated`:
+ * as não-lidas de quem pede, só dele.
+ */
+export interface UnreadDto {
+  /** Só as conversas com alguma não-lida. */
+  conversations: ConversationUnreadDto[];
+  /** A soma de todas as não-lidas das conversas do Membro: o badge do ícone. */
+  total: number;
+  /** Não-lidas que mencionam o Membro, em todas as conversas. */
+  mentions: number;
+  /** Não-lidas em DMs (`dm` e `group`). */
+  dms: number;
+}
+
+/** `GET /api/conversations/:id/unread`: as não-lidas de quem pede, na ordem de exibição. */
+export interface UnreadMessagesDto {
+  messageIds: string[];
+}
+
+/** Corpo de `POST /api/conversations/:id/reads`: mensagens que apareceram na tela de quem tem a conversa aberta. */
+export interface MarkReadInput {
+  messageIds: string[];
 }
 
 // ---------- Agentes e Chave do Workspace ----------
@@ -489,7 +532,12 @@ export type ServerEvent =
    * O Andamento de uma execução mudou (entrou na fila, começou a escrever, terminou, falhou),
    * para quem vê a conversa. Quando termina, a resposta chega antes como `message.created`.
    */
-  | { type: "execution.updated"; execution: ExecutionDto };
+  | { type: "execution.updated"; execution: ExecutionDto }
+  /**
+   * As não-lidas do Membro mudaram (chegou mensagem numa conversa dele, ou ele leu algo em
+   * qualquer aba ou aparelho). Vai só para as conexões do próprio Membro.
+   */
+  | { type: "unread.updated"; unread: UnreadDto };
 
 export type ServerEventType = ServerEvent["type"];
 export type ServerEventOf<T extends ServerEventType> = Extract<ServerEvent, { type: T }>;

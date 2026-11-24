@@ -160,6 +160,24 @@ export const messages = pgTable(
 );
 
 /**
+ * Leitura (Spec, módulo 10): quais mensagens cada Membro já viu. É um conjunto, não um cursor:
+ * a resposta ancorada entra acima de mensagens mais novas, e um cursor de tempo não daria conta.
+ */
+export const messageReads = pgTable(
+  "message_reads",
+  {
+    memberId: uuid()
+      .notNull()
+      .references(() => members.id),
+    messageId: uuid()
+      .notNull()
+      .references(() => messages.id),
+    readAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.memberId, t.messageId] })],
+);
+
+/**
  * Configuração do Workspace: uma linha só (`id = 1`). A Chave do Workspace fica cifrada com a
  * chave mestra (AES-256-GCM). O Contexto do Workspace (#21) também mora aqui.
  */
@@ -177,11 +195,12 @@ export const workspaceSettings = pgTable(
 );
 
 export const executionState = pgEnum("execution_state", ["queued", "running", "done", "failed", "not_acting"]);
-export const executionKind = pgEnum("execution_kind", ["mention"]);
+/** `mention`: um Agente mencionado. `dm`: o Agente de uma DM com Agente, a cada mensagem. */
+export const executionKind = pgEnum("execution_kind", ["mention", "dm"]);
 
 /**
  * A fila de execuções (Spec, módulo 6): cada chamada a modelo por causa de uma mensagem.
- * Sobrevive ao reinício. Hoje só há a Menção (`kind`); o roteamento, a resposta da
+ * Sobrevive ao reinício. Hoje há a Menção e a resposta na DM com Agente (`kind`); o roteamento, a resposta da
  * Articuladora e os delegados (#22) entram como outros tipos.
  */
 export const executions = pgTable(

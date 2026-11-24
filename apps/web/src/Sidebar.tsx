@@ -1,4 +1,4 @@
-import type { ChannelDto, DmDto, MeDto, MemberSummaryDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, DmDto, MeDto, MemberSummaryDto, UnreadDto } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { ApiFailure, api } from "./api";
 import { dmTitle } from "./DmView";
@@ -7,6 +7,8 @@ interface Props {
   me: MeDto;
   channels: ChannelDto[];
   dms: DmDto[];
+  /** As não-lidas do Membro (`null` enquanto carrega). */
+  unread: UnreadDto | null;
   /** A conversa aberta (Canal ou DM: os ids não se repetem entre os dois). */
   selectedId: string | null;
   isAdmin: boolean;
@@ -31,6 +33,10 @@ const ADMIN_LINKS: [AdminView, string][] = [
 /** A lista de conversas: os Canais que o Membro vê e, numa seção à parte, as DMs dele. */
 export function Sidebar(props: Props) {
   const [creating, setCreating] = useState(false);
+  const count = (id: string, dm: boolean) => {
+    const u = props.unread?.conversations.find((c) => c.conversationId === id);
+    return u && <UnreadCount count={u.count} highlight={dm || u.mentions > 0} />;
+  };
   const [openingDm, setOpeningDm] = useState(false);
 
   return (
@@ -38,7 +44,7 @@ export function Sidebar(props: Props) {
       <h2>Canais</h2>
       <ul>
         {props.channels.map((c) => (
-          <li key={c.id}>
+          <li key={c.id} className="conversation-item">
             <button
               type="button"
               className="conversation"
@@ -53,6 +59,7 @@ export function Sidebar(props: Props) {
                 </>
               )}
             </button>
+            {count(c.id, false)}
           </li>
         ))}
       </ul>
@@ -72,7 +79,7 @@ export function Sidebar(props: Props) {
       <h2>Mensagens diretas</h2>
       <ul aria-label="DMs">
         {props.dms.map((d) => (
-          <li key={d.id}>
+          <li key={d.id} className="conversation-item">
             <button
               type="button"
               className="conversation"
@@ -81,6 +88,7 @@ export function Sidebar(props: Props) {
             >
               {dmTitle(d, props.me)}
             </button>
+            {count(d.id, true)}
           </li>
         ))}
       </ul>
@@ -111,6 +119,20 @@ export function Sidebar(props: Props) {
           </button>
         ))}
     </nav>
+  );
+}
+
+/**
+ * Quantas não-lidas há na conversa. Fica fora do botão, para o nome dele continuar sendo o da
+ * conversa; destacada quando há Menção ao Membro ou é DM.
+ */
+function UnreadCount({ count, highlight }: { count: number; highlight: boolean }) {
+  if (count === 0) return null;
+  return (
+    <span className={highlight ? "unread-count highlight" : "unread-count"}>
+      {count}
+      <span className="sr-only">{count === 1 ? " não-lida" : " não-lidas"}</span>
+    </span>
   );
 }
 
@@ -164,9 +186,13 @@ function NewChannel({ onCancel, onCreated }: { onCancel(): void; onCreated(chann
   );
 }
 
-/** Escolher com quem conversar: uma pessoa abre uma DM; várias, uma DM em grupo. */
+/**
+ * Escolher com quem conversar: uma pessoa abre uma DM; várias, uma DM em grupo.
+ * Um Agente abre na hora a DM com ele (só você e ele).
+ */
 function NewDm({ me, onCancel, onOpened }: { me: MeDto; onCancel(): void; onOpened(dm: DmDto): void }) {
   const [members, setMembers] = useState<MemberSummaryDto[] | null>(null);
+  const [agents, setAgents] = useState<AgentDto[] | null>(null);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -178,6 +204,10 @@ function NewDm({ me, onCancel, onOpened }: { me: MeDto; onCancel(): void; onOpen
     );
   }, [me.id]);
 
+  useEffect(() => {
+    api.agents().then(setAgents, () => setError("Não foi possível carregar os Agentes. Tente de novo."));
+  }, []);
+
   function toggle(id: string) {
     setChosen((prev) => {
       const next = new Set(prev);
@@ -186,19 +216,23 @@ function NewDm({ me, onCancel, onOpened }: { me: MeDto; onCancel(): void; onOpen
     });
   }
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (chosen.size === 0 || busy) return;
+  async function open(request: () => Promise<DmDto>) {
     setBusy(true);
     setError(null);
     try {
-      onOpened(await api.openDm([...chosen]));
+      onOpened(await request());
     } catch (err) {
       const body = err instanceof ApiFailure ? err.body : null;
       setError(body && "message" in body ? body.message : "Não foi possível abrir a DM. Tente de novo.");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (chosen.size === 0 || busy) return;
+    await open(() => api.openDm([...chosen]));
   }
 
   return (
@@ -209,6 +243,18 @@ function NewDm({ me, onCancel, onOpened }: { me: MeDto; onCancel(): void; onOpen
           <input type="checkbox" checked={chosen.has(m.id)} onChange={() => toggle(m.id)} /> {m.displayName}
         </label>
       ))}
+      {agents && agents.length > 0 && <p className="hint">Ou converse com um Agente:</p>}
+      {agents && agents.length > 0 && (
+        <ul className="dm-agents" aria-label="Conversar com um Agente">
+          {agents.map((a) => (
+            <li key={a.id}>
+              <button type="button" className="link" disabled={busy} onClick={() => open(() => api.openAgentDm(a.id))}>
+                {a.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {error && (
         <p className="error" role="alert">
           {error}

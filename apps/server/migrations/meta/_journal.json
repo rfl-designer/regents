@@ -61,8 +61,22 @@
     {
       "idx": 8,
       "version": "7",
-      "when": 1795517732382,
-      "tag": "0008_push-e-presenca",
+      "when": 1795517411937,
+      "tag": "0008_execucao-em-dm-com-agente",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795517690246,
+      "tag": "0009_leitura-mensagens-vistas",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795518623797,
+      "tag": "0010_push-e-presenca",
       "breakpoints": true
     }
   ]

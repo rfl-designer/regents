@@ -33,6 +33,7 @@ describe("push de Menção", () => {
     const t = await testApp();
     const me = await workspace(t, bruno);
     const vendas = await canal(t, "vendas");
+    await t.as(bruno).post(`/api/channels/${vendas.id}/join`);
     const celular = await t.pushDevice(bruno);
 
     await enviar(t, juliana, vendas.id, `@${me.Bruno!.handle} fecha a proposta hoje?`);
@@ -47,7 +48,8 @@ describe("push de Menção", () => {
         tag: vendas.id,
         lang: "pt-BR",
       },
-      app_badge: 0,
+      // O badge é o total de não-lidas dele (de quem participa), esta inclusive.
+      app_badge: 1,
     });
     expect(push.payload.notification.navigate).toStartWith("http");
     expect(push.topic).toBe(topicOf(vendas.id));
@@ -254,6 +256,22 @@ describe("as notificações de uma conversa se substituem", () => {
     const titles = [];
     for (let i = 0; i < 4; i++) titles.push((await celular.next()).payload.notification.title);
     expect(titles).toEqual(["#vendas · Juliana", "Juliana", "2 novas em #vendas", "#vendas · Juliana"]);
+  });
+});
+
+describe("o badge", () => {
+  test("o app_badge leva o total de não-lidas de quem recebe, de todas as conversas", async () => {
+    const t = await testApp();
+    const me = await workspace(t, bruno);
+    const vendas = await canal(t, "vendas");
+    await t.as(bruno).post(`/api/channels/${vendas.id}/join`);
+    const dm = await abrirDm(t, juliana, [me.Bruno!.id]);
+    const celular = await t.pushDevice(bruno);
+
+    await enviar(t, juliana, vendas.id, "sem menção, mas conta como não-lida");
+    await enviar(t, juliana, dm.id, "na DM");
+
+    expect((await celular.next()).payload.app_badge).toBe(2);
   });
 });
 

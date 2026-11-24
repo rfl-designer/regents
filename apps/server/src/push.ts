@@ -35,7 +35,6 @@ export interface PushConfig {
 /**
  * Push (Spec, módulo 12), no recorte do #31: o par VAPID, as inscrições por aparelho e os pushes
  * de Menção e de DM. Fica para depois, com o seam indicado:
- * - o total de não-lidas no `app_badge` (#30): `badgeOf`;
  * - resposta de Agente, falha e Thread seguida (#32): chamam `notify` com outra `urgency`;
  * - a lista de aparelhos e as faixas de push parado (#33): leem `devices` (`push_stopped_at`,
  *   `last_push_at`);
@@ -46,11 +45,11 @@ export function createPush(deps: {
   clock: Clock;
   presence: Presence;
   config: PushConfig;
-  /** O total de não-lidas do Membro (o badge). O não-lido é do #30; até lá, 0. */
-  badgeOf?: (memberId: string) => Promise<number>;
+  /** O total de não-lidas do Membro: o `app_badge` (o `setAppBadge` da página é do #32). */
+  badgeOf: (memberId: string) => Promise<number>;
 }) {
   const { db, clock, presence } = deps;
-  const badgeOf = deps.badgeOf ?? (async () => 0);
+  const { badgeOf } = deps;
   const send = webPushSender(deps.config);
 
   // ---------- o par VAPID ----------
