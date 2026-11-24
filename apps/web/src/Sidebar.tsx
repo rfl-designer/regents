@@ -21,13 +21,14 @@ interface Props {
   onOpenAdmin(view: AdminView): void;
 }
 
-export type AdminView = "context" | "settings" | "agents" | "key";
+export type AdminView = "context" | "settings" | "agents" | "key" | "installation";
 
 const ADMIN_LINKS: [AdminView, string][] = [
   ["context", "Contexto do Workspace"],
   ["settings", "Instruções dos Canais"],
   ["agents", "Agentes"],
   ["key", "Chave do Workspace"],
+  ["installation", "Instalação"],
 ];
 
 /** A lista de conversas: os Canais que o Membro vê e, numa seção à parte, as DMs dele. */

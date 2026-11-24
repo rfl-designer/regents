@@ -2,6 +2,7 @@ import {
   type ChannelDto,
   conversationPath,
   type DmDto,
+  INSTALLATION_PATH,
   type MeDto,
   NO_IDENTITY_TEXT,
   type UnreadDto,
@@ -14,6 +15,7 @@ import { ChannelSettings } from "./ChannelSettings";
 import { ChannelView } from "./ChannelView";
 import { DmView } from "./DmView";
 import { EntryView } from "./EntryView";
+import { InstallationBanner, InstallationSettings, useInstallation } from "./Installation";
 import { JoinRequestsPanel } from "./JoinRequestsPanel";
 import { setPresence, useServerEvents } from "./live";
 import { AccountOffer, MyAccount, useAccount } from "./MyAccount";
@@ -84,8 +86,11 @@ function upsert<T extends { id: string }>(list: T[], item: T) {
 export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selectedId, setSelectedId] = useState<string | null>(conversationFromUrl);
-  const [view, setView] = useState<"channel" | "account" | "profile" | AdminView>("channel");
+  const [view, setView] = useState<"channel" | "account" | "profile" | AdminView>(() =>
+    location.pathname === INSTALLATION_PATH ? "installation" : "channel",
+  );
   const account = useAccount(state.kind === "ready");
+  const installation = useInstallation(state.kind === "ready" && state.me.role === "admin");
   /** As não-lidas do Membro. O `total` é o badge do ícone (o `setAppBadge` é do #32). */
   const [unread, setUnread] = useState<UnreadDto | null>(null);
 
@@ -141,6 +146,13 @@ export function App() {
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     const onMessage = (e: MessageEvent) => {
+      // O push do Admin sobre a Instalação leva à seção Instalação, não a uma conversa.
+      if (e.data?.type === "open-conversation" && typeof e.data.navigate === "string") {
+        if (new URL(e.data.navigate, location.origin).pathname === INSTALLATION_PATH) {
+          setView("installation");
+          return;
+        }
+      }
       if (e.data?.type === "open-conversation" && typeof e.data.conversationId === "string") {
         setSelectedId(e.data.conversationId);
         setView("channel");
@@ -164,10 +176,14 @@ export function App() {
     if (watching) void closeNotificationsOf(watching);
   }, [watching]);
   useEffect(() => {
+    if (view === "installation") {
+      if (location.pathname !== INSTALLATION_PATH) history.replaceState(null, "", INSTALLATION_PATH);
+      return;
+    }
     if (shownId && location.pathname !== conversationPath(shownId)) {
       history.replaceState(null, "", conversationPath(shownId));
     }
-  }, [shownId]);
+  }, [shownId, view]);
 
   if (state.kind === "loading") return <main className="center">Carregando…</main>;
   if (state.kind === "entry") return <EntryView onApproved={load} />;
@@ -213,6 +229,9 @@ export function App() {
         </div>
       </header>
       {state.me.role === "admin" && <JoinRequestsPanel />}
+      {view !== "installation" && (
+        <InstallationBanner installation={installation.installation} onOpen={() => setView("installation")} />
+      )}
       {view !== "account" && <AccountOffer state={account} onOpen={() => setView("account")} />}
       <NotificationsOnboarding />
       <div className="workspace">
@@ -247,6 +266,8 @@ export function App() {
           <AgentsSettings />
         ) : view === "key" ? (
           <WorkspaceKeySettings />
+        ) : view === "installation" ? (
+          <InstallationSettings state={installation} />
         ) : dm ? (
           <DmView key={dm.id} dm={dm} me={state.me} />
         ) : channel ? (

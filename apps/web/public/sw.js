@@ -40,7 +40,7 @@ self.addEventListener("notificationclick", (event) => {
       const open = windows.find((w) => new URL(w.url).origin === self.location.origin);
       if (open) {
         await open.focus();
-        open.postMessage({ type: "open-conversation", conversationId });
+        open.postMessage({ type: "open-conversation", conversationId, navigate });
         return;
       }
       await self.clients.openWindow(navigate || "/");
