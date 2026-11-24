@@ -670,7 +670,7 @@ export function createExecutions(deps: {
           spent.usage = { model: event.model, usage: event.usage, costUsd: event.costUsd };
         else if (event.type === "done") {
           end = event;
-          spent.usage = { model: event.model ?? spent.usage?.model ?? request.model, ...event };
+          spent.usage = { model: request.model, usage: event.usage, costUsd: event.costUsd };
           spent.succeeded = true;
         } else if (event.type !== "thinking" && event.type !== "api_retry") end = event;
       }

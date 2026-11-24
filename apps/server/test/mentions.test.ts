@@ -74,6 +74,9 @@ describe("Menção a um Agente pela Chave", () => {
     expect(chamada!.body).toMatchObject({ model: "claude-sonnet-5-5", stream: true });
     expect(JSON.stringify(chamada!.body.system)).toContain("Você é o Faro, do comercial. Responda curto.");
     expect(JSON.stringify(chamada!.body.messages)).toContain("Juliana (pessoa): Oi @faro, tudo certo?");
+    // Sem o fallback do lado do servidor: o modelo que responde é o do Agente.
+    expect(chamada!.anthropicBeta).toBeNull();
+    expect(chamada!.body).not.toHaveProperty("fallbacks");
   });
 
   test("o Andamento aparece pelo WebSocket: na fila, escrevendo e então respondida", async () => {

@@ -446,19 +446,4 @@ describe("o gasto na Chave conta o que a API informou", () => {
     },
     LONGO,
   );
-
-  test(
-    "o custo é o do modelo que respondeu (o fallback do servidor pode trocar de modelo)",
-    async () => {
-      const t = await testApp();
-      const { faro, geral } = await workspace(t);
-      // No Haiku (US$ 0,10 / US$ 0,50 por milhão): US$ 0,05 + US$ 0,05.
-      t.anthropic.reply({ text: "Pelo reserva.", usage: DOIS_DOLARES, model: "claude-haiku-5-5" });
-
-      await respostaA(t, geral.id, await enviar(t, geral.id, "@Faro um"));
-
-      expect((await agente(t, faro.id)).keySpendUsd).toBeCloseTo(0.1, 6);
-    },
-    LONGO,
-  );
 });

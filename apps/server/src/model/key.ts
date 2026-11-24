@@ -20,8 +20,8 @@ const MAX_TOKENS = 64_000;
 /**
  * O cérebro da Chave: a Messages API em streaming, pelo SDK oficial, normalizada para os
  * eventos da porta. Sem novas tentativas do SDK (`maxRetries: 0`): a política de nova tentativa
- * é do Shearim (#24). A recusa por política tenta o modelo de reserva do servidor
- * (`fallbacks: "default"`); se ainda assim recusar, é falha com motivo.
+ * é do Shearim (#24). A recusa do modelo é falha com motivo, sem nova tentativa; sem fallback do
+ * lado do servidor, quem responde é sempre o modelo do Agente.
  */
 export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
   // Explícito para não herdar `ANTHROPIC_BASE_URL` do ambiente do servidor.
@@ -32,19 +32,17 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
       if (request.payer.kind !== "key") throw new Error("keyBrain só atende pagamento pela Chave");
       const client = new Anthropic({ apiKey: request.payer.apiKey, baseURL, maxRetries: 0 });
       let terminal: ModelEvent | undefined;
-      /** O modelo que respondeu e o uso informado até aqui (o `message_start` e o `message_delta`). */
-      let model = request.model;
+      /** O uso informado até aqui (o `message_start` e o `message_delta`), no modelo do Agente. */
+      const { model } = request;
       const usage = { inputTokens: 0, outputTokens: 0 };
       const spent = (): ModelEvent => ({ type: "usage", model, usage: { ...usage }, costUsd: costUsd(model, usage) });
       try {
-        const stream = client.beta.messages.stream(
+        const stream = client.messages.stream(
           {
             model: request.model,
             max_tokens: MAX_TOKENS,
             system: request.system,
             messages: request.messages,
-            betas: ["server-side-fallback-2026-07-01"],
-            fallbacks: "default",
             ...(request.output && {
               output_config: { format: { type: "json_schema", schema: request.output.schema } },
             }),
@@ -53,7 +51,6 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
         );
         for await (const event of stream) {
           if (event.type === "message_start") {
-            model = event.message.model || model;
             usage.inputTokens = event.message.usage.input_tokens;
             usage.outputTokens = event.message.usage.output_tokens;
             yield spent();
@@ -76,8 +73,7 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
           terminal = { type: "failed", reason: "o modelo se recusou a responder", retryable: false };
         } else {
           const total = { inputTokens: final.usage.input_tokens, outputTokens: final.usage.output_tokens };
-          model = final.model || model;
-          terminal = { type: "done", usage: total, costUsd: costUsd(model, total), model };
+          terminal = { type: "done", usage: total, costUsd: costUsd(model, total) };
         }
       } catch (err) {
         if (signal.aborted || err instanceof Anthropic.APIUserAbortError) return;

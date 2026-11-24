@@ -51,8 +51,7 @@ export type ModelEvent =
   /** A API está sendo tentada de novo (n/m): "tentando de novo (n/m)". */
   | { type: "api_retry"; attempt: number; max: number }
   /**
-   * O uso que a API informou até aqui (acumulado), com o modelo que respondeu e o custo nele (só
-   * pela Chave). Não é progresso nem fim: é o que o gasto na Chave conta quando a execução não
+   * O uso que a API informou até aqui (acumulado), com o modelo e o custo nele (só pela Chave). Não é progresso nem fim: é o que o gasto na Chave conta quando a execução não
    * chega ao `done` (cancelada, parada pela vigia, falha no meio).
    */
   | { type: "usage"; model: string; usage: ModelUsage; costUsd: number }
@@ -68,18 +67,10 @@ export type ModelEvent =
    */
   | { type: "failed"; reason: string; retryable: boolean; authorReason?: string }
   /**
-   * Fim com sucesso: uso, custo em dólares, o modelo que respondeu (pela Chave, o fallback do
-   * servidor pode trocar o pedido) e, pela Conta, a validade da credencial e, se veio
+   * Fim com sucesso: uso, custo em dólares e, pela Conta, a validade da credencial e, se veio
    * `rate_limit_event`, se a execução passou do plano com o uso extra ligado (`extraUsage`).
    */
-  | {
-      type: "done";
-      usage: ModelUsage;
-      costUsd: number;
-      model?: string;
-      credentialExpiresAt?: Date;
-      extraUsage?: boolean;
-    };
+  | { type: "done"; usage: ModelUsage; costUsd: number; credentialExpiresAt?: Date; extraUsage?: boolean };
 
 /** O motivo quando o pedido trouxe `output` e a resposta não veio no formato (ADR 0009). */
 export const NOT_STRUCTURED_REASON = "o modelo não devolveu a decisão no formato pedido";
