@@ -10,12 +10,20 @@ Chat de time em que pessoas e agentes de IA conversam nos mesmos lugares. Cada i
 O grupo de pessoas, agentes e conversas servido por uma instalação do Shearim. Uma instalação tem exatamente um Workspace.
 _Avoid_: organização, tenant, espaço, time
 
+**Instalação**:
+Um Shearim rodando num computador do time, com o próprio banco e os próprios segredos. Serve exatamente um Workspace. O Admin vê o estado dela: a versão, o último backup e quando ela sai da tailnet.
+_Avoid_: instância, servidor, deploy
+
 **Membro**:
-Uma pessoa do Workspace. É o papel de quem conversa e cria canais.
+Uma pessoa do Workspace, reconhecida pela identidade estável que a tailnet dá a ela. É o papel de quem conversa e cria canais. Só se torna Membro quem teve o Pedido de entrada aprovado, exceto o primeiro, que entra direto como Admin.
 _Avoid_: usuário, colaborador
 
+**Pedido de entrada**:
+O pedido que uma pessoa cria ao chegar ao Workspace pela primeira vez. Fica com os Admins, que o aprovam ou recusam. Quem pediu sempre vê em que pé ele está.
+_Avoid_: convite, cadastro, solicitação de acesso
+
 **Admin**:
-O papel de Membro que configura o Workspace: a Chave do Workspace, os Agentes e os orçamentos. Não dá acesso de leitura a conversas das quais não participa.
+O papel de Membro que configura o Workspace: a Chave do Workspace, os Agentes, os orçamentos e quem entra. Não dá acesso de leitura a conversas das quais não participa. O primeiro Membro de uma instalação é Admin; um Admin pode tornar outro Membro Admin, e o Workspace sempre tem pelo menos um.
 _Avoid_: dono, administrador do sistema
 
 **Conta**:
@@ -52,10 +60,14 @@ _Avoid_: mensagem direta, privado, conversa
 Uma sequência de respostas pendurada numa mensagem, fora do fluxo principal da conversa. Cada mensagem de pessoa nela também recebe Desfecho da Articuladora, que prefere os Agentes que já falaram ali.
 _Avoid_: fio, tópico, subconversa
 
+**Thread seguida**:
+Uma Thread que um Membro acompanha e da qual é avisado: a do autor da mensagem-raiz, de quem respondeu nela e de quem foi mencionado nela. Agentes não seguem Threads.
+_Avoid_: inscrição, assinatura, watch
+
 ### Como os Agentes agem
 
 **Menção**:
-A citação explícita de um Agente numa mensagem (`@nome`). Faz o Agente citado responder direto, sem passar pela Articuladora. Só a Menção escrita por uma pessoa faz um Agente agir.
+A citação explícita de um participante numa mensagem (`@nome`), pessoa ou Agente. Quem é mencionado é avisado. Um Agente mencionado responde direto, sem passar pela Articuladora, mas só quando a Menção foi escrita por uma pessoa.
 _Avoid_: marcação, tag, chamada
 
 **Desfecho**:
