@@ -16,6 +16,7 @@ import { listMembers, type Member, memberFor, toMeDto } from "./members";
 import { keyBrain } from "./model/key";
 import { createModelPort } from "./model/port";
 import { noIdentityPage } from "./no-identity-page";
+import { createReading } from "./reading";
 import type { SecretBox } from "./secrets";
 import { workspaceKeyRoutes } from "./workspace-key";
 
@@ -49,7 +50,8 @@ export function createApp(deps: AppDeps) {
   const { hub: events, route: eventsRoute } = createEventHub();
   const accounts = createAccounts({ db, clock, events, config: deps.accounts });
   const model = createModelPort({ key: keyBrain({ baseURL: deps.anthropicBaseUrl }) });
-  const executions = createExecutions({ db, clock, events, model, secrets });
+  const reading = createReading({ db, clock, events });
+  const executions = createExecutions({ db, clock, events, model, secrets, reading });
 
   /** Pergunta à porta; tailscaled fora do ar é falha da Instalação, não "sem identidade": vai para o log. */
   async function whoAmI(req: Request): Promise<Identity | typeof UNAVAILABLE> {
@@ -100,8 +102,9 @@ export function createApp(deps: AppDeps) {
   app.get("/api/members", async (c) => c.json(await listMembers(db)));
   app.get(EVENTS_PATH, eventsRoute);
   app.route("/api/join-requests", joinRequestAdminRoutes({ db, clock, events, hooks }));
-  app.route("/api", conversationRoutes({ db, clock, events, executions }));
+  app.route("/api", conversationRoutes({ db, clock, events, executions, reading }));
   app.route("/api", dmRoutes({ db, clock, events }));
+  app.route("/api", reading.routes);
   app.route("/api", accounts.routes);
   app.route("/api", agentRoutes({ db, clock }));
   app.route("/api", workspaceKeyRoutes({ db, clock, secrets }));

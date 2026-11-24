@@ -43,6 +43,13 @@
       "when": 1795516284920,
       "tag": "0005_agentes-chave-e-execucoes",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795516847860,
+      "tag": "0006_leitura-mensagens-vistas",
+      "breakpoints": true
     }
   ]
 }
