@@ -313,3 +313,60 @@ describe("estourado, com Conta", () => {
     LONGO,
   );
 });
+
+describe("a fila decide de novo quando o orçamento muda", () => {
+  const loginCaiu = { kind: "error", error: "authentication_failed", apiErrorStatus: 401 } as const;
+
+  /** A Conta da Juliana cai no meio e a Chave está sem orçamento para o Faro: a mensagem espera, sem hora. */
+  async function naFilaSemHora(t: TestApp, geral: ChannelDto) {
+    await t.linkAccount(juliana);
+    const daJuliana = await t.socket(juliana, "aba da Juliana");
+    t.claude.script({ runs: [loginCaiu] });
+    const origem = await enviar(t, geral.id, "@Faro qual o prazo?", juliana);
+    for (;;) {
+      const { execution } = await daJuliana.next("execution.updated", ESPERA);
+      if (execution.originMessageId === origem.id && execution.held) {
+        expect(execution).toMatchObject({ state: "queued", yourAccount: { state: "needs_relink" } });
+        break;
+      }
+    }
+    return origem;
+  }
+
+  test(
+    "o Admin aumenta o orçamento: quem esperava na fila sai pela Chave",
+    async () => {
+      const t = await testApp();
+      const { faro, geral } = await workspace(t, { orcamento: 0 });
+      const origem = await naFilaSemHora(t, geral);
+      t.anthropic.reply({ text: "Pela Chave, agora." });
+
+      await t.as(juliana).patch(`/api/agents/${faro.id}`, { monthlyBudgetUsd: 10 });
+
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Pela Chave, agora.");
+    },
+    LONGO,
+  );
+
+  test(
+    "o mês vira: o orçamento recomeça e quem esperava na fila sai pela Chave",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t, { orcamento: 2 });
+      t.anthropic.reply({ text: "Gastei tudo.", usage: DOIS_DOLARES });
+      await respostaA(t, geral.id, await enviar(t, geral.id, "@Faro um"));
+      const origem = await naFilaSemHora(t, geral);
+      t.anthropic.reply({ text: "Mês novo." });
+
+      // Até o fim de novembro, continua na fila.
+      t.clock.set("2026-11-30T23:59:00.000Z");
+      expect((await (await t.as(juliana).get(`/api/channels/${geral.id}/executions`)).json())[0]).toMatchObject({
+        held: true,
+      });
+      t.clock.advance(60_000);
+
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Mês novo.");
+    },
+    LONGO,
+  );
+});

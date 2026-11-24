@@ -8,7 +8,7 @@ import type { Clock } from "./clock";
 import { buildContext, type Call } from "./context";
 import { type Db, schema } from "./db/client";
 import { type EventHub, without } from "./events";
-import type { KeyLedger } from "./key-budget";
+import { type KeyLedger, monthOf } from "./key-budget";
 import { recordMentions } from "./mentions";
 import { findMessage } from "./messages";
 import type { ModelEvent, ModelPort, ModelRequest, Payer, TerminalModelEvent } from "./model/port";
@@ -34,6 +34,7 @@ export const STALL_MS = 2 * 60_000;
 export const RETRY_DELAY_MS = 10_000;
 /** No `SIGTERM`, quanto o dreno espera o que está rodando terminar. */
 export const DRAIN_MS = 20_000;
+const DAY_MS = 24 * 60 * 60_000;
 /** A original e a nova tentativa automática. */
 const MAX_ATTEMPTS = 2;
 
@@ -178,8 +179,9 @@ export interface Executions {
    */
   retry(executionId: string): Promise<ExecutionDto | undefined>;
   /**
-   * A Conta do Membro mudou (ligou de novo, desligou) ou, sem `memberId`, a Chave mudou: o que
-   * espera na fila por quem pague decide de novo.
+   * A Conta do Membro mudou (ligou de novo, desligou) ou, sem `memberId`, a Chave ou um orçamento
+   * mudou: o que espera na fila por quem pague decide de novo. A virada do mês (o orçamento
+   * recomeça) chama sozinha, enquanto o trabalhador roda.
    */
   reconsider(memberId?: string): Promise<void>;
   /** Começa a pegar trabalho. Ao subir, o que estava em andamento vira "o servidor reiniciou". */
@@ -912,7 +914,53 @@ export function createExecutions(deps: {
     while (inflight.size) await Promise.allSettled([...inflight]);
   }
 
+  async function reconsider(memberId?: string) {
+    const released = await db
+      .update(executions)
+      .set({ held: false, heldUntil: null })
+      .where(
+        and(
+          eq(executions.state, "queued"),
+          eq(executions.held, true),
+          memberId
+            ? inArray(
+                executions.originMessageId,
+                db.select({ id: messages.id }).from(messages).where(eq(messages.authorMemberId, memberId)),
+              )
+            : undefined,
+        ),
+      )
+      .returning({ id: executions.id });
+    for (const { id } of released) await publish(id);
+    if (released.length) wake();
+  }
+
+  /**
+   * A virada do mês (0h UTC do dia 1): o orçamento de todo Agente recomeça, e quem espera na fila
+   * por quem pague decide de novo. O prazo é olhado ao menos uma vez por dia (o `setTimeout` não
+   * espera um mês).
+   */
+  let monthTurn: (() => void) | undefined;
+  function watchMonthTurn() {
+    let month = monthOf(clock.now());
+    const arm = () => {
+      const now = clock.now();
+      const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+      monthTurn = clock.after(Math.min(next - now.getTime(), DAY_MS), () => {
+        const current = monthOf(clock.now());
+        if (current !== month) {
+          month = current;
+          void reconsider().catch((err) => console.error("shearim: a fila falhou ao virar o mês", err));
+        }
+        arm();
+      });
+    };
+    arm();
+  }
+
   async function stop() {
+    monthTurn?.();
+    monthTurn = undefined;
     stopping = true;
     for (const controller of running.values()) controller.abort("shutdown" satisfies Interruption);
     wakeUp?.();
@@ -964,30 +1012,12 @@ export function createExecutions(deps: {
       return dto;
     },
 
-    async reconsider(memberId) {
-      const released = await db
-        .update(executions)
-        .set({ held: false, heldUntil: null })
-        .where(
-          and(
-            eq(executions.state, "queued"),
-            eq(executions.held, true),
-            memberId
-              ? inArray(
-                  executions.originMessageId,
-                  db.select({ id: messages.id }).from(messages).where(eq(messages.authorMemberId, memberId)),
-                )
-              : undefined,
-          ),
-        )
-        .returning({ id: executions.id });
-      for (const { id } of released) await publish(id);
-      if (released.length) wake();
-    },
+    reconsider,
 
     start() {
       if (loop) return;
       stopping = false;
+      watchMonthTurn();
       loop = work();
     },
 

@@ -29,7 +29,13 @@ const BUDGET_INVALID = "O orçamento mensal é um valor em dólares, zero ou mai
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Agentes: o Admin cria; todo Membro vê o nome, a foto, a descrição e o modelo. */
-export function agentRoutes(deps: { db: Db; clock: Clock; ledger: KeyLedger }) {
+export function agentRoutes(deps: {
+  db: Db;
+  clock: Clock;
+  ledger: KeyLedger;
+  /** O Admin mudou o orçamento de um Agente: quem espera na fila por quem pague decide de novo. */
+  onBudgetChanged?: () => void;
+}) {
   const { db, clock, ledger } = deps;
   const routes = new Hono<Env>();
 
@@ -162,10 +168,9 @@ export function agentRoutes(deps: { db: Db; clock: Clock; ledger: KeyLedger }) {
       return { ...row!, handle };
     });
     if (!updated) return c.json({ error: "name_taken", message: `Já existe um Agente chamado ${change.name}.` }, 409);
-    const budget =
-      change.monthlyBudgetUsd !== undefined && change.monthlyBudgetUsd !== current.monthlyBudgetUsd
-        ? await ledger.budgetChanged(updated.id)
-        : await ledger.budgetNow(updated.id);
+    const budgetChanged = change.monthlyBudgetUsd !== undefined && change.monthlyBudgetUsd !== current.monthlyBudgetUsd;
+    const budget = budgetChanged ? await ledger.budgetChanged(updated.id) : await ledger.budgetNow(updated.id);
+    if (budgetChanged) deps.onBudgetChanged?.();
     return c.json(toAgentDto(updated, { admin: true, keySpendUsd: budget.keySpendUsd }));
   });
 

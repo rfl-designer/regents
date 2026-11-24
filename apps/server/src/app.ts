@@ -201,7 +201,10 @@ export function createApp(deps: AppDeps) {
   app.route("/api", reading.routes);
   app.route("/api", threadRoutes({ db }));
   app.route("/api", accounts.routes);
-  app.route("/api", agentRoutes({ db, clock, ledger }));
+  app.route(
+    "/api",
+    agentRoutes({ db, clock, ledger, onBudgetChanged: () => void executions.reconsider().catch(() => {}) }),
+  );
   app.route(
     "/api",
     workspaceKeyRoutes({ db, clock, secrets, onChanged: () => void executions.reconsider().catch(() => {}) }),
