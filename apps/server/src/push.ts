@@ -339,6 +339,17 @@ export function createPush(deps: {
     messageCreated,
     conversationOpened,
     notify,
+    /**
+     * O Membro foi removido do Workspace: os aparelhos dele deixam de receber push na hora (as
+     * inscrições, os aparelhos e as contagens somem; quem volta liga as notificações de novo).
+     */
+    async forget(memberId: string) {
+      await db.transaction(async (tx) => {
+        await tx.delete(pushSubscriptions).where(eq(pushSubscriptions.memberId, memberId));
+        await tx.delete(devices).where(eq(devices.memberId, memberId));
+        await tx.delete(pushStreaks).where(eq(pushStreaks.memberId, memberId));
+      });
+    },
     /** Garante o par VAPID (o `main.ts` chama na subida). */
     ensureKeys: async () => {
       await vapid();

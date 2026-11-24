@@ -1,5 +1,5 @@
 import type { MeDto, MemberSummaryDto } from "@shearim/contracts";
-import { asc, eq, getTableColumns, type SQL, sql } from "drizzle-orm";
+import { asc, eq, getTableColumns, isNull, type SQL, sql } from "drizzle-orm";
 import { addArticuladora } from "./articuladora";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
@@ -27,7 +27,10 @@ export function selectMembers(db: Executor, where?: SQL) {
     .where(where);
 }
 
-/** Um Membro pelo id. */
+/** Quem ainda é Membro: o removido ("saiu do Workspace") fica de fora até voltar. */
+export const isActive = isNull(members.leftAt);
+
+/** Um Membro pelo id (inclusive quem saiu do Workspace: as mensagens continuam dele). */
 export async function memberById(db: Executor, id: string): Promise<Member | undefined> {
   const [found] = await selectMembers(db, eq(members.id, id));
   return found;
@@ -67,7 +70,8 @@ export async function memberFor(
   who: Extract<Identity, { kind: "user" }>,
 ): Promise<Member | undefined> {
   const [found] = await selectMembers(db, eq(members.tailnetUserId, who.userId));
-  if (found) return found;
+  // Quem foi removido não é Membro: volta só pelo Pedido de entrada.
+  if (found) return found.leftAt ? undefined : found;
 
   return db.transaction(async (tx) => {
     // Serializa a entrada: só um primeiro Admin, mesmo com chegadas simultâneas.
@@ -115,11 +119,18 @@ export function toMeDto(m: Member): MeDto {
 }
 
 export function toMemberDto(m: Member): MemberSummaryDto {
-  return { id: m.id, displayName: m.displayName, handle: m.handle, profilePicUrl: m.profilePicUrl, about: m.about };
+  return {
+    id: m.id,
+    displayName: m.displayName,
+    handle: m.handle,
+    profilePicUrl: m.profilePicUrl,
+    about: m.about,
+    role: m.role,
+  };
 }
 
-/** Os Membros do Workspace, por nome: quem se pode adicionar a uma conversa e quem é quem. */
+/** Os Membros do Workspace, por nome: quem se pode adicionar a uma conversa e quem é quem. Sem quem saiu. */
 export async function listMembers(db: Db): Promise<MemberSummaryDto[]> {
-  const rows = await selectMembers(db).orderBy(asc(members.displayName), asc(members.id));
+  const rows = await selectMembers(db, isActive).orderBy(asc(members.displayName), asc(members.id));
   return rows.map(toMemberDto);
 }

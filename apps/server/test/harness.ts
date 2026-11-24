@@ -306,7 +306,8 @@ const UPGRADE_HEADERS = {
 
 /**
  * `server.stop(true)`, sem ficar preso: no Bun 1.3.11, depois que o servidor fecha um WebSocket
- * (o 1012 do dreno), a promessa do `stop` nunca resolve, embora a porta já tenha fechado.
+ * (o 1012 do dreno, o 4403 do Membro removido), a promessa do `stop` nunca resolve, embora a
+ * porta já tenha fechado.
  */
 function stopServer(s: ReturnType<typeof Bun.serve>) {
   return Promise.race([s.stop(true), Bun.sleep(200)]);

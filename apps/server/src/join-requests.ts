@@ -1,11 +1,11 @@
 import type { ApproveJoinRequestDto, JoinRequestAdminDto, JoinRequestDto, MyJoinRequestDto } from "@shearim/contracts";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { Audience, EventHub } from "./events";
 import type { Identity } from "./identity/port";
-import { createMember, type Member, toMeDto } from "./members";
+import { createMember, type Member, memberById, toMeDto } from "./members";
 
 export type TailnetUser = Extract<Identity, { kind: "user" }>;
 type JoinRequest = typeof schema.joinRequests.$inferSelect;
@@ -39,9 +39,17 @@ export function myJoinRequestRoutes(deps: JoinRequestDeps) {
   routes.get("/", async (c) => {
     const who = c.get("who");
     const latest = await latestOf(db, who.userId);
+    const [former] = await db
+      .select({ leftAt: members.leftAt })
+      .from(members)
+      .where(eq(members.tailnetUserId, who.userId));
+    const removedAt = former?.leftAt ?? null;
+    // Quem foi removido não está mais aprovado: o pedido aprovado de antes não vale para a volta.
+    const current = latest && !(removedAt && latest.status === "approved") ? latest : undefined;
     return c.json({
       you: { login: who.login, displayName: who.displayName },
-      joinRequest: latest ? toDto(latest) : null,
+      joinRequest: current ? toDto(current) : null,
+      removedAt: removedAt?.toISOString() ?? null,
     } satisfies MyJoinRequestDto);
   });
 
@@ -113,18 +121,20 @@ export function joinRequestAdminRoutes(deps: JoinRequestDeps) {
       const request = await pendingForUpdate(tx, c.req.param("id"));
       if (request.kind !== "pending") return request;
       const now = clock.now();
-      // A primeira entrada de quem foi aprovado: nome e foto como a tailnet disse no pedido.
-      const member = await createMember(
-        tx,
-        {
-          tailnetUserId: request.row.tailnetUserId,
-          login: request.row.login,
-          displayName: request.row.displayName,
-          profilePicUrl: request.row.profilePicUrl,
-        },
-        "member",
-        now,
-      );
+      const member =
+        (await comeBack(tx, request.row.tailnetUserId)) ??
+        // A primeira entrada de quem foi aprovado: nome e foto como a tailnet disse no pedido.
+        (await createMember(
+          tx,
+          {
+            tailnetUserId: request.row.tailnetUserId,
+            login: request.row.login,
+            displayName: request.row.displayName,
+            profilePicUrl: request.row.profilePicUrl,
+          },
+          "member",
+          now,
+        ));
       const [decided] = await tx
         .update(joinRequests)
         .set({ status: "approved", decidedAt: now, decidedByMemberId: admin.id })
@@ -214,9 +224,26 @@ async function toAdminDtos(db: Db, rows: JoinRequest[]): Promise<JoinRequestAdmi
   });
 }
 
+/**
+ * A volta de quem foi removido: o mesmo Membro (mesmo `UserProfile.ID`), com o nome, o
+ * identificador e as mensagens de antes, como Membro comum. Os Canais privados e as DMs em grupo
+ * ficaram para trás na remoção. Nada se o `UserProfile.ID` nunca foi Membro.
+ */
+async function comeBack(tx: Tx, tailnetUserId: string): Promise<Member | undefined> {
+  const [former] = await tx
+    .update(members)
+    .set({ leftAt: null })
+    .where(eq(members.tailnetUserId, tailnetUserId))
+    .returning({ id: members.id });
+  return former && memberById(tx, former.id);
+}
+
 /** Pedidos de entrada são assunto só dos Admins. */
 async function adminAudience(db: Db): Promise<Audience> {
-  const admins = await db.select({ id: members.id }).from(members).where(eq(members.role, "admin"));
+  const admins = await db
+    .select({ id: members.id })
+    .from(members)
+    .where(and(eq(members.role, "admin"), isNull(members.leftAt)));
   return { members: admins.map((a) => a.id) };
 }
 

@@ -14,6 +14,7 @@ import type { Identity, IdentityPort } from "./identity/port";
 import { IdentityUnavailableError } from "./identity/whois";
 import { createInstallation, type InstallationConfig } from "./installation/status";
 import { type JoinRequestHooks, joinRequestAdminRoutes, myJoinRequestRoutes, type TailnetUser } from "./join-requests";
+import { memberAdminRoutes } from "./member-admin";
 import { listMembers, type Member, memberFor } from "./members";
 import { accountBrain } from "./model/account";
 import { keyBrain } from "./model/key";
@@ -141,6 +142,7 @@ export function createApp(deps: AppDeps) {
 
   app.route("/api/me", profileRoutes({ db, clock, events }));
   app.get("/api/members", async (c) => c.json(await listMembers(db)));
+  app.route("/api", memberAdminRoutes({ db, clock, events, executions, accounts, push }));
   app.get(EVENTS_PATH, eventsRoute);
   app.route("/api/join-requests", joinRequestAdminRoutes({ db, clock, events, hooks }));
   app.route("/api", conversationRoutes({ db, clock, events, executions, reading, push }));

@@ -353,7 +353,7 @@ export function createAccounts(deps: {
     return dto(memberId);
   }
 
-  /** Desligar: `claude auth logout` e a pasta apagada. Também serve à remoção do Membro (#16). */
+  /** Desligar: `claude auth logout` e a pasta apagada. Também serve à remoção do Membro (#36). */
   async function unlink(memberId: string): Promise<AccountDto> {
     const r = await row(memberId);
     if (r?.state !== "not_linked" && r?.configDir) {
@@ -460,6 +460,8 @@ export function createAccounts(deps: {
   return {
     routes,
     unlink,
+    /** Encerra a ligação em andamento, se houver (processo morto, pasta nova apagada). Não mexe na Conta ligada. */
+    cancel,
     recover,
     markLimited,
     markNeedsRelink,

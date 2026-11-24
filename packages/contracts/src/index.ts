@@ -79,7 +79,10 @@ export interface JoinRequestDto {
  */
 export interface MyJoinRequestDto {
   you: { login: string; displayName: string };
+  /** O pedido mais recente; `null` se nunca pediu, ou se o aprovado ficou para trás numa remoção. */
   joinRequest: JoinRequestDto | null;
+  /** Quando um Admin removeu a pessoa do Workspace (ISO 8601), se foi removida e ainda não voltou. */
+  removedAt: string | null;
 }
 
 /** O pedido como o Admin o vê, para decidir (`GET /api/join-requests`). */
@@ -115,6 +118,15 @@ export interface MemberSummaryDto {
   handle: string;
   profilePicUrl: string | null;
   about: string;
+  role: MemberRole;
+}
+
+/**
+ * Corpo de `PATCH /api/members/:id` (só Admin): torna o Membro Admin ou o rebaixa.
+ * Rebaixar o último Admin: 409 `last_admin` (o Workspace sempre tem pelo menos um).
+ */
+export interface UpdateMemberRoleInput {
+  role: MemberRole;
 }
 
 /** Corpo de `PATCH /api/me`: o Membro edita o próprio perfil. Campo ausente fica como está. */
@@ -223,7 +235,14 @@ export interface OpenDmInput {
  * um `data:` URL, ou `null`).
  */
 export type MessageAuthorDto =
-  | { kind: "member"; id: string; displayName: string; profilePicUrl: string | null }
+  | {
+      kind: "member";
+      id: string;
+      displayName: string;
+      profilePicUrl: string | null;
+      /** Um Admin removeu a pessoa: a mensagem mostra "saiu do Workspace". Volta a `false` se ela voltar. */
+      leftWorkspace: boolean;
+    }
   | { kind: "agent"; id: string; displayName: string; photo: string | null };
 
 /**
@@ -455,7 +474,8 @@ export interface WorkspaceContextDto {
  * `queued` esperando a vez, `running` com o passo em `step`, `retrying` (falhou uma vez, com o
  * motivo, e volta sozinha em `retryAt`), `done` com a resposta em `replyMessageId`, `failed` com
  * o motivo (depois da nova tentativa; o autor pode "Tentar de novo"), `not_acting` ("Agentes não
- * agem", com o motivo; não é falha) e `cancelled` ("cancelada por quem escreveu").
+ * agem", com o motivo; não é falha) e `cancelled` (sem motivo: "cancelada por quem escreveu"; com
+ * motivo, cancelada pelo Shearim, ex. "quem escreveu saiu do Workspace").
  */
 export type ExecutionState = "queued" | "running" | "retrying" | "done" | "failed" | "not_acting" | "cancelled";
 
@@ -500,10 +520,11 @@ export interface ExecutionDto {
    */
   payer: "key" | null;
   /**
-   * Motivo da falha (em `retrying` e `failed`) ou de "Agentes não agem", em pt-BR, para completar
-   * a frase "Faro não respondeu: …". Nulo nos outros estados. Quando o motivo é estado da Conta do
-   * autor (ex. "a sua Conta do Claude não pode ser usada agora"), só a cópia do autor o traz; os
-   * outros veem um motivo que não fala da Conta.
+   * Motivo da falha (em `retrying` e `failed`), de "Agentes não agem" ou do cancelamento que não foi
+   * de quem escreveu (`cancelled`, ex. "quem escreveu saiu do Workspace"), em pt-BR, para completar
+   * a frase "Faro não respondeu: …". Nulo nos outros estados e no cancelamento por quem escreveu.
+   * Quando o motivo é estado da Conta do autor (ex. "a sua Conta do Claude não pode ser usada
+   * agora"), só a cópia do autor o traz; os outros veem um motivo que não fala da Conta.
    */
   reason: string | null;
   /**
@@ -655,6 +676,12 @@ export const INSTALLATION_PATH = "/instalacao";
 export const EVENTS_PATH = "/api/events";
 
 /**
+ * Código com que o servidor fecha as conexões de quem foi removido do Workspace, logo depois
+ * do `member.removed`. Reabrir dá 403: a pessoa volta só pelo Pedido de entrada.
+ */
+export const MEMBER_REMOVED_CLOSE_CODE = 4403;
+
+/**
  * Código de fechamento do WebSocket quando o servidor vai reiniciar (1012, "service restart"):
  * o dreno de uma atualização. O PWA mostra "Atualizando o Shearim" e reconecta sozinho.
  * Qualquer outro fechamento é queda de conexão ("Reconectando…").
@@ -689,6 +716,12 @@ export type ServerEvent =
    * inclusive as outras abas de quem editou: é assim que o "Você está como Fulano" acompanha.
    */
   | { type: "member.updated"; member: MemberSummaryDto }
+  /**
+   * Um Admin removeu o Membro: ele "saiu do Workspace". Para todo Membro, inclusive o removido,
+   * cujas conexões fecham em seguida (`MEMBER_REMOVED_CLOSE_CODE`). As mensagens dele passam a
+   * mostrar a marca (`leftWorkspace`).
+   */
+  | { type: "member.removed"; memberId: string }
   /** Uma DM apareceu para os participantes dela (quem abriu também recebe). Insere ou troca pelo `id`. */
   | { type: "dm.updated"; dm: DmDto }
   /** Pedido de entrada novo. Só para Admins. */
@@ -744,4 +777,8 @@ export type ApiError =
   | { error: "name_taken"; message: string }
   /** O identificador de Menção pedido já é de outra pessoa ou Agente. */
   | { error: "handle_taken"; message: string }
-  | { error: "invalid_input"; message: string };
+  | { error: "invalid_input"; message: string }
+  /** Rebaixar ou remover o último Admin: o Workspace sempre tem pelo menos um. */
+  | { error: "last_admin"; message: string }
+  /** Ninguém sai do Workspace sozinho: só outro Admin remove. */
+  | { error: "cannot_remove_self"; message: string };

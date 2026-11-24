@@ -31,6 +31,8 @@ export function reaches(to: Audience, memberId: string): boolean {
 /** O ponto único por onde o servidor empurra eventos às conexões de WebSocket. */
 export interface EventHub {
   publish(to: Audience, event: ServerEvent): void;
+  /** Fecha todas as conexões do Membro (ex.: removido do Workspace), com esse código e motivo. */
+  disconnect(memberId: string, code: number, reason: string): void;
   /** De quem é a conexão aberta com esse id (o `connectionId` do `ready`), ou `undefined`. */
   ownerOf(connectionId: string): string | undefined;
   /** Chama `fn` sempre que uma conexão fecha (a Presença dela some junto). */
@@ -58,6 +60,14 @@ export function createEventHub() {
     onClose(fn) {
       closeListeners.push(fn);
     },
+    disconnect(memberId, code, reason) {
+      for (const c of [...connections.values()]) {
+        if (c.memberId !== memberId) continue;
+        connections.delete(c.id);
+        for (const fn of closeListeners) fn(c.id);
+        c.close(code, reason);
+      }
+    },
   };
 
   /**
@@ -81,8 +91,8 @@ export function createEventHub() {
         );
       },
       onClose() {
-        if (!connection) return;
-        connections.delete(connection.id);
+        // Fechada pelo servidor (`disconnect`, `closeForRestart`), ela já saiu e os ouvintes já souberam.
+        if (!connection || !connections.delete(connection.id)) return;
         for (const fn of closeListeners) fn(connection.id);
       },
     };
@@ -98,8 +108,12 @@ export function createEventHub() {
    */
   function closeForRestart() {
     restarting = true;
-    for (const c of connections.values()) c.close(EVENTS_CLOSE_UPDATING, "o Shearim vai reiniciar");
+    const all = [...connections.values()];
     connections.clear();
+    for (const c of all) {
+      for (const fn of closeListeners) fn(c.id);
+      c.close(EVENTS_CLOSE_UPDATING, "o Shearim vai reiniciar");
+    }
   }
 
   return { hub, route, closeForRestart };

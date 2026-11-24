@@ -77,6 +77,7 @@ apps/server/        Bun + Hono + Drizzle
   src/identity/     porta de identidade: whois.ts (tailnet) e dev.ts
   src/join-requests.ts  Pedido de entrada (pedir, aprovar, recusar)
   src/members.ts    Membro (com o identificador), primeira entrada, lista de Membros
+  src/member-admin.ts  o Admin gerencia Membros: papel (`PATCH /api/members/:id`) e remoção (`DELETE`)
   src/profile.ts    perfil do próprio Membro (`/api/me`)
   src/mention-handles.ts  espaço de nomes dos identificadores de Menção (Membros e Agentes)
   src/mentions.ts   `@nome` no texto: extração, quem foi mencionado, registro
@@ -155,6 +156,26 @@ aba.received();                                             // tudo o que chegou
 t.events.publish({ members: [id] }, evento);                 // publicar direto no hub
 ```
 
+`events.disconnect(memberId, código, motivo)` fecha todas as conexões de um Membro: a remoção usa `MEMBER_REMOVED_CLOSE_CODE` (4403), que o `aba.closed` mostra. O mesmo cuidado com o `server.stop()` do Bun 1.3.11 vale aqui.
+
+### Admin gerencia Membros (#36)
+
+| Rota | Quem | O quê |
+|---|---|---|
+| `PATCH /api/members/:id` | Admin | `{ role: "admin" \| "member" }`: torna Admin ou rebaixa (inclusive a si mesmo). Devolve o `MemberSummaryDto` (que agora traz `role`) e publica `member.updated` para todos. Rebaixar o último Admin: `409 last_admin` |
+| `DELETE /api/members/:id` | Admin | remove o Membro (204). A si mesmo: `409 cannot_remove_self` (ninguém sai sozinho); o último Admin: `409 last_admin`; quem já saiu: 404 |
+
+As decisões de papel passam por uma trava (`pg_advisory_xact_lock`) que reconfere, dentro dela, que quem decide ainda é Admin e quantos Admins há: dois Admins rebaixando ou removendo um ao outro ao mesmo tempo não zeram os Admins.
+
+**Remoção** (o Membro "saiu do Workspace"): a linha fica, com `members.left_at` e o papel de volta a Membro comum.
+- O acesso acaba: o HTTP responde `403 not_a_member` (o `memberFor` não o reconhece), o upgrade do WebSocket dá 403 e as conexões abertas recebem `member.removed` (que vai a todos) e fecham com 4403. O push dele para (`push.forget`: inscrições, aparelhos e contagens apagados).
+- Sai dos Canais privados e das DMs em grupo (`channel.updated`/`dm.updated` para quem fica), e deixa de seguir as Threads deles. Continua nos Canais públicos e nas DMs a dois, que são o histórico dele (e nas Threads seguidas ali).
+- As execuções abertas das mensagens dele são canceladas pelo Shearim (`executions.cancelAuthoredBy`), à vista: `cancelled` com `reason: "quem escreveu saiu do Workspace"`. O `cancelled` sem motivo continua sendo o "cancelada por quem escreveu".
+- A Conta é desligada (`accounts.unlink`: `claude auth logout` e a pasta apagada) e uma ligação pela metade, encerrada (`accounts.cancel`).
+- As mensagens dele saem com `author.leftWorkspace: true` (a marca "saiu do Workspace"). Quem saiu não está em `GET /api/members`, não entra no "quem é quem" do contexto e não pode ser posto numa conversa (400).
+
+**Volta:** quem foi removido vê `removedAt` em `GET /api/join-request` (o pedido aprovado de antes não conta: `joinRequest: null`) e pede de novo. Aprovado, é o mesmo Membro (mesmo `UserProfile.ID`, mesmo id, nome e identificador), como Membro comum, com as mensagens e as DMs a dois de antes, e fora dos Canais privados e das DMs em grupo.
+
 ### Perfil e identificador de Menção (#19)
 
 - O nome e a foto vêm da tailnet na **primeira entrada** (o primeiro Admin pelo `whois`, quem foi aprovado pelo que o Pedido de entrada guardou). Depois, nada do `whois` é regravado: o nome é do Membro e a tailnet não o sobrescreve.
@@ -175,7 +196,7 @@ Um Canal público é visto por todo Membro; um privado só por quem participa. P
 | `GET /api/channels/:id` | quem vê | o Canal |
 | `POST /api/channels/:id/join` | Membro | entra num público (privado: 404) |
 | `POST /api/channels/:id/participants` | quem vê | `{ memberId }`; adiciona uma pessoa |
-| `GET /api/members` | Membro | `MemberSummaryDto[]` (`id`, `displayName`, `handle`, `profilePicUrl`, `about`), para escolher quem adicionar |
+| `GET /api/members` | Membro | `MemberSummaryDto[]` (`id`, `displayName`, `handle`, `profilePicUrl`, `about`, `role`), sem quem saiu do Workspace, para escolher quem adicionar |
 | `GET /api/channel-settings` | Admin | Instruções e N de todo Canal, sem mensagens nem participantes |
 | `PATCH /api/channel-settings/:id` | Admin | `{ instructions?, recentMessages? }` (N inteiro ≥ 0, padrão 30) |
 
