@@ -4,6 +4,7 @@ import {
   bigint,
   boolean,
   check,
+  doublePrecision,
   foreignKey,
   index,
   integer,
@@ -123,6 +124,11 @@ export const agents = pgTable(
      * A descrição e as instruções dela vêm do código (`articuladora.ts`), não destas colunas.
      */
     builtin: boolean().notNull().default(false),
+    /**
+     * Orçamento mensal na Chave, em dólares (Spec, módulo 9): conta só o que a Chave pagou no mês.
+     * Nulo: sem teto.
+     */
+    monthlyBudgetUsd: doublePrecision(),
   },
   (t) => [
     uniqueIndex("agents_name_lower_unique").on(sql`lower(${t.name})`),
@@ -285,6 +291,67 @@ export const executions = pgTable(
     finishedAt: timestamp({ withTimezone: true }),
   },
   (t) => [index().on(t.state, t.arrivedAt, t.seq), index().on(t.channelId, t.state)],
+);
+
+/**
+ * Uso por execução (Spec, Esquema): Agente, pagador e custo de cada chamada que terminou bem.
+ * Só a Chave grava aqui (o gasto da Conta é da assinatura do Membro e não aparece para o Admin).
+ * O gasto do mês de um Agente é a soma de `cost_usd` com `month` = o mês do relógio (UTC).
+ */
+export const executionUsage = pgTable(
+  "execution_usage",
+  {
+    id: uuid().primaryKey(),
+    executionId: uuid()
+      .notNull()
+      .references(() => executions.id),
+    agentId: uuid()
+      .notNull()
+      .references(() => agents.id),
+    /** Sempre `key` por enquanto. */
+    payer: text().notNull(),
+    model: text().notNull(),
+    inputTokens: integer().notNull(),
+    outputTokens: integer().notNull(),
+    costUsd: doublePrecision().notNull(),
+    /** O mês do gasto (`YYYY-MM`, UTC), pelo relógio injetado. */
+    month: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [index().on(t.agentId, t.month)],
+);
+
+/**
+ * Estouros de orçamento já avisados: um por Agente por mês, para o push aos Admins (#34) sair
+ * no máximo uma vez, mesmo que o Admin aumente o orçamento e ele estoure de novo.
+ */
+export const budgetOverruns = pgTable(
+  "budget_overruns",
+  {
+    agentId: uuid()
+      .notNull()
+      .references(() => agents.id),
+    month: text().notNull(),
+    at: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.agentId, t.month] })],
+);
+
+export const keyIncidentKind = pgEnum("key_incident_kind", ["auth_failed", "billing_failed"]);
+
+/**
+ * Incidentes da Chave (Spec, módulo 9): `authentication_error` ou `billing_error` na Chave abre
+ * um (se não há outro aberto); a primeira chamada bem-sucedida pela Chave o encerra.
+ */
+export const keyIncidents = pgTable(
+  "key_incidents",
+  {
+    id: uuid().primaryKey(),
+    kind: keyIncidentKind().notNull(),
+    openedAt: timestamp({ withTimezone: true }).notNull(),
+    closedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [uniqueIndex("key_incidents_one_open").on(sql`(${t.closedAt} is null)`).where(sql`${t.closedAt} is null`)],
 );
 
 export const outcomeDecision = pgEnum("outcome_decision", ["reply", "delegate", "none"]);

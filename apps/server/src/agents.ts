@@ -10,6 +10,7 @@ import { Hono } from "hono";
 import { withBuiltinText } from "./articuladora";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
+import { budgetOf, type KeyLedger, keySpend, monthOf, parseBudget } from "./key-budget";
 import type { Member } from "./members";
 import { claimHandle, handleBase } from "./mention-handles";
 
@@ -24,11 +25,12 @@ const NAME_MAX = 40;
 /** Uma foto pequena: `data:` URL de imagem com até ~300 KB. */
 const PHOTO = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 const PHOTO_MAX = 400_000;
+const BUDGET_INVALID = "O orçamento mensal é um valor em dólares, zero ou mais (vazio: sem teto).";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Agentes: o Admin cria; todo Membro vê o nome, a foto, a descrição e o modelo. */
-export function agentRoutes(deps: { db: Db; clock: Clock }) {
-  const { db, clock } = deps;
+export function agentRoutes(deps: { db: Db; clock: Clock; ledger: KeyLedger }) {
+  const { db, clock, ledger } = deps;
   const routes = new Hono<Env>();
 
   routes.get("/agents", async (c) => {
@@ -38,7 +40,9 @@ export function agentRoutes(deps: { db: Db; clock: Clock }) {
       .from(agents)
       .innerJoin(mentionHandles, eq(mentionHandles.agentId, agents.id))
       .orderBy(desc(agents.builtin), asc(agents.createdAt), asc(agents.name));
-    return c.json(all.map((a) => toAgentDto(a, { admin })));
+    if (!admin) return c.json(all.map((a) => toAgentDto(a, { admin })));
+    const spend = await keySpend(db, monthOf(clock.now()));
+    return c.json(all.map((a) => toAgentDto(a, { admin, keySpendUsd: spend.get(a.id) ?? 0 })));
   });
 
   routes.post("/agents", async (c) => {
@@ -58,6 +62,8 @@ export function agentRoutes(deps: { db: Db; clock: Clock }) {
       if (input[field] !== undefined && typeof input[field] !== "string")
         return invalid(`O campo ${field} é um texto.`);
     }
+    const monthlyBudgetUsd = input.monthlyBudgetUsd === undefined ? null : parseBudget(input.monthlyBudgetUsd);
+    if (monthlyBudgetUsd === undefined) return invalid(BUDGET_INVALID);
 
     // O Agente e o identificador de Menção dele nascem juntos, no espaço de nomes dos Membros.
     const created = await db.transaction(async (tx) => {
@@ -70,6 +76,7 @@ export function agentRoutes(deps: { db: Db; clock: Clock }) {
           description: ((input.description as string | undefined) ?? "").trim(),
           instructions: (input.instructions as string | undefined) ?? "",
           model: input.model as AgentModel,
+          monthlyBudgetUsd,
           createdAt: clock.now(),
         })
         .onConflictDoNothing()
@@ -79,7 +86,7 @@ export function agentRoutes(deps: { db: Db; clock: Clock }) {
       return { ...agent, handle };
     });
     if (!created) return c.json({ error: "name_taken", message: `Já existe um Agente chamado ${name}.` }, 409);
-    return c.json(toAgentDto(created, { admin: true }), 201);
+    return c.json(toAgentDto(created, { admin: true, keySpendUsd: 0 }), 201);
   });
 
   /**
@@ -101,7 +108,9 @@ export function agentRoutes(deps: { db: Db; clock: Clock }) {
         403,
       );
     }
-    const change: Partial<Pick<Agent, "name" | "photo" | "model" | "description" | "instructions">> = {};
+    const change: Partial<
+      Pick<Agent, "name" | "photo" | "model" | "description" | "instructions" | "monthlyBudgetUsd">
+    > = {};
     if (input.name !== undefined) {
       const name = typeof input.name === "string" ? input.name.trim().replace(/^@+/, "").trim() : "";
       if (!name) return invalid("Dê um nome ao Agente.");
@@ -118,6 +127,11 @@ export function agentRoutes(deps: { db: Db; clock: Clock }) {
         return invalid("A foto é uma imagem PNG, JPEG, WebP ou GIF de até 300 KB.");
       }
       change.photo = photo as string | null;
+    }
+    if (input.monthlyBudgetUsd !== undefined) {
+      const budget = parseBudget(input.monthlyBudgetUsd);
+      if (budget === undefined) return invalid(BUDGET_INVALID);
+      change.monthlyBudgetUsd = budget;
     }
     for (const field of ["description", "instructions"] as const) {
       if (input[field] === undefined) continue;
@@ -148,7 +162,11 @@ export function agentRoutes(deps: { db: Db; clock: Clock }) {
       return { ...row!, handle };
     });
     if (!updated) return c.json({ error: "name_taken", message: `Já existe um Agente chamado ${change.name}.` }, 409);
-    return c.json(toAgentDto(updated, { admin: true }));
+    const budget =
+      change.monthlyBudgetUsd !== undefined && change.monthlyBudgetUsd !== current.monthlyBudgetUsd
+        ? await ledger.budgetChanged(updated.id)
+        : await ledger.budgetNow(updated.id);
+    return c.json(toAgentDto(updated, { admin: true, keySpendUsd: budget.keySpendUsd }));
   });
 
   return routes;
@@ -163,7 +181,11 @@ export function agentHandleBase(name: string) {
   return handleBase(name.replace(/\s+/g, ""), "agente");
 }
 
-export function toAgentDto(row: AgentWithHandle, opts: { admin: boolean }): AgentDto {
+/**
+ * O Agente como `GET /api/agents` o devolve. Para o Admin, também as instruções e, com
+ * `keySpendUsd` (o gasto do mês na Chave), o orçamento.
+ */
+export function toAgentDto(row: AgentWithHandle, opts: { admin: boolean; keySpendUsd?: number }): AgentDto {
   const a = withBuiltinText(row);
   const dto: AgentDto = {
     id: a.id,
@@ -175,5 +197,9 @@ export function toAgentDto(row: AgentWithHandle, opts: { admin: boolean }): Agen
     builtin: a.builtin,
   };
   if (opts.admin) dto.instructions = a.instructions;
+  if (opts.admin && opts.keySpendUsd !== undefined) {
+    const { monthlyBudgetUsd, keySpendUsd, overBudget } = budgetOf(row, opts.keySpendUsd);
+    Object.assign(dto, { monthlyBudgetUsd, keySpendUsd, overBudget });
+  }
   return dto;
 }

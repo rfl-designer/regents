@@ -362,6 +362,18 @@ export interface AgentDto {
    */
   builtin: boolean;
   instructions?: string;
+  /**
+   * Só para o Admin: o orçamento mensal na Chave, em dólares (nulo: sem teto). Conta só o que a
+   * Chave pagou; a Conta de cada Membro não entra.
+   */
+  monthlyBudgetUsd?: number | null;
+  /** Só para o Admin: quanto o Agente gastou na Chave no mês corrente (UTC), em dólares. */
+  keySpendUsd?: number;
+  /**
+   * Só para o Admin: o gasto do mês chegou ao orçamento. O Agente deixa de usar a Chave ("Agentes
+   * não agem" para quem não tem Conta) e os Admins veem a faixa.
+   */
+  overBudget?: boolean;
 }
 
 /** Corpo de `POST /api/agents` (só Admin). O nome não se repete (sem diferença de maiúsculas). */
@@ -371,6 +383,8 @@ export interface CreateAgentInput {
   description?: string;
   instructions?: string;
   model: AgentModel;
+  /** Orçamento mensal na Chave, em dólares (`>= 0`); ausente ou nulo: sem teto. */
+  monthlyBudgetUsd?: number | null;
 }
 
 /**
@@ -385,6 +399,29 @@ export interface WorkspaceKeyDto {
   configured: boolean;
   /** Quando foi gravada pela última vez (ISO 8601), ou `null`. */
   updatedAt: string | null;
+  /** O incidente da Chave aberto agora, ou `null`. */
+  incident: KeyIncidentDto | null;
+}
+
+/**
+ * Um incidente da Chave (Spec, módulo 9): a Anthropic recusou a Chave (`auth_failed`) ou ela
+ * está sem crédito (`billing_failed`). Um por vez: abre na primeira recusa e termina na primeira
+ * chamada bem-sucedida pela Chave. Os Admins veem a faixa enquanto está aberto.
+ */
+export interface KeyIncidentDto {
+  id: string;
+  kind: "auth_failed" | "billing_failed";
+  /** Quando abriu (ISO 8601). */
+  openedAt: string;
+}
+
+/** O orçamento de um Agente como o Admin o vê (`agent_budget.updated`): os mesmos campos do `AgentDto`. */
+export interface AgentBudgetDto {
+  agentId: string;
+  name: string;
+  monthlyBudgetUsd: number | null;
+  keySpendUsd: number;
+  overBudget: boolean;
 }
 
 /** Corpo de `PUT /api/workspace-key`: a chave da Messages API. */
@@ -668,7 +705,17 @@ export type ServerEvent =
    */
   | { type: "devices.updated"; devices: DeviceDto[] }
   /** O Membro passou a seguir uma Thread. Vai só para as conexões dele. */
-  | { type: "thread.followed"; thread: FollowedThreadDto };
+  | { type: "thread.followed"; thread: FollowedThreadDto }
+  /**
+   * O incidente da Chave abriu (`incident`) ou terminou (`null`, na primeira chamada bem-sucedida).
+   * Só para Admins: é a faixa "a Chave do Workspace foi recusada / está sem crédito".
+   */
+  | { type: "key_incident.updated"; incident: KeyIncidentDto | null }
+  /**
+   * O gasto de um Agente na Chave ou o orçamento dele mudou. Só para Admins: acompanha o gasto na
+   * tela de Agentes e faz a faixa de orçamento estourado aparecer e sumir.
+   */
+  | { type: "agent_budget.updated"; budget: AgentBudgetDto };
 
 export type ServerEventType = ServerEvent["type"];
 export type ServerEventOf<T extends ServerEventType> = Extract<ServerEvent, { type: T }>;

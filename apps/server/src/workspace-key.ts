@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
+import { openIncident } from "./key-budget";
 import type { Member } from "./members";
 import type { SecretBox } from "./secrets";
 
@@ -50,9 +51,10 @@ export function workspaceKeyRoutes(deps: {
 
 async function keyStatus(db: Db): Promise<WorkspaceKeyDto> {
   const [row] = await db.select().from(workspaceSettings).where(eq(workspaceSettings.id, 1));
+  const incident = await openIncident(db);
   return row?.keyCiphertext
-    ? { configured: true, updatedAt: row.keyUpdatedAt?.toISOString() ?? null }
-    : { configured: false, updatedAt: null };
+    ? { configured: true, updatedAt: row.keyUpdatedAt?.toISOString() ?? null, incident }
+    : { configured: false, updatedAt: null, incident };
 }
 
 /** A Chave em texto puro, para a porta de modelo, ou `null` se o Workspace não tem Chave. */
