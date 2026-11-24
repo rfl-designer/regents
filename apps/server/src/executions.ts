@@ -238,8 +238,7 @@ export function createExecutions(deps: {
   async function announce(id: string) {
     const [view] = await views(eq(executions.id, id));
     const { everyone, author, authorId } = view!;
-    const [channel] = await db.select().from(channels).where(eq(channels.id, everyone.channelId));
-    const audience = await audienceOf(db, channel!);
+    const { audience } = await conversationOf(everyone.channelId);
     if (authorId) {
       events.publish(without(audience, authorId), { type: "execution.updated", execution: everyone });
       events.publish({ members: [authorId] }, { type: "execution.updated", execution: author });
@@ -247,6 +246,42 @@ export function createExecutions(deps: {
       events.publish(audience, { type: "execution.updated", execution: everyone });
     }
     return author;
+  }
+
+  /** A conversa da execução e quem recebe os eventos dela. */
+  async function conversationOf(channelId: string) {
+    const [conversation] = await db.select().from(channels).where(eq(channels.id, channelId));
+    return { conversation: conversation!, audience: await audienceOf(db, conversation!) };
+  }
+
+  /**
+   * Passa a execução `id` para outro estado, se ela ainda está em `from` (um cancelamento pode ter
+   * chegado antes). Zera sempre o que só vale dentro de um passo (o passo e o "tentando de novo
+   * (n/m)") e recomeça o `since`; `change` diz o resto. Devolve se passou.
+   */
+  async function transition(
+    id: string,
+    state: ExecutionState,
+    change: Partial<typeof executions.$inferInsert> = {},
+    opts: { from?: ExecutionState; tx?: Db | Tx } = {},
+  ) {
+    const updated = await (opts.tx ?? db)
+      .update(executions)
+      .set({ ...leaving(state, clock.now()), ...change })
+      .where(and(eq(executions.id, id), eq(executions.state, opts.from ?? "running")))
+      .returning({ id: executions.id });
+    return updated.length > 0;
+  }
+
+  /**
+   * De volta para a fila (a espera por quem pague, a troca de fila): sem gastar a tentativa, sem
+   * pagador, mantendo a hora de chegada. Anuncia e acorda o trabalhador.
+   */
+  async function backToQueue(job: Row, change: Partial<typeof executions.$inferInsert> = {}) {
+    if (await transition(job.id, "queued", { attempt: job.attempt - 1, payer: null, ...change })) {
+      await publish(job.id);
+    }
+    wake();
   }
 
   /** Ao subir: toda execução em andamento ficou sem processo vivo e vira "o servidor reiniciou". */
@@ -366,23 +401,7 @@ export function createExecutions(deps: {
    * mudar), sem gastar a tentativa e mantendo a hora de chegada. O texto parcial já foi descartado.
    */
   async function hold(job: Row, until: Date | null) {
-    const updated = await db
-      .update(executions)
-      .set({
-        state: "queued",
-        step: null,
-        since: clock.now(),
-        attempt: job.attempt - 1,
-        payer: null,
-        held: true,
-        heldUntil: until,
-        apiRetryAttempt: null,
-        apiRetryMax: null,
-      })
-      .where(and(eq(executions.id, job.id), eq(executions.state, "running")))
-      .returning({ id: executions.id });
-    if (updated.length) await publish(job.id);
-    wake();
+    await backToQueue(job, { held: true, heldUntil: until });
   }
 
   /**
@@ -390,21 +409,7 @@ export function createExecutions(deps: {
    * mantendo a hora de chegada. O trabalhador decide de novo quem paga quando houver lugar.
    */
   async function requeue(job: Row) {
-    const updated = await db
-      .update(executions)
-      .set({
-        state: "queued",
-        step: null,
-        since: clock.now(),
-        attempt: job.attempt - 1,
-        payer: null,
-        apiRetryAttempt: null,
-        apiRetryMax: null,
-      })
-      .where(and(eq(executions.id, job.id), eq(executions.state, "running")))
-      .returning({ id: executions.id });
-    if (updated.length) await publish(job.id);
-    wake();
+    await backToQueue(job);
   }
 
   /**
@@ -489,24 +494,16 @@ export function createExecutions(deps: {
     extra: { reason?: string; authorReason?: string; replyMessageId?: string } = {},
     tx: Db | Tx = db,
   ) {
-    const now = clock.now();
-    const updated = await tx
-      .update(executions)
-      .set({
-        state,
-        step: null,
-        since: now,
-        finishedAt: now,
-        retryAt: null,
-        apiRetryAttempt: null,
-        apiRetryMax: null,
+    return transition(
+      job.id,
+      state,
+      {
         reason: extra.reason ?? null,
         authorReason: extra.authorReason ?? null,
         replyMessageId: extra.replyMessageId ?? null,
-      })
-      .where(and(eq(executions.id, job.id), eq(executions.state, "running")))
-      .returning({ id: executions.id });
-    return updated.length > 0;
+      },
+      { tx },
+    );
   }
 
   /** Encerra e anuncia; devolve o Andamento final, ou nada se ela já não estava em andamento. */
@@ -525,22 +522,8 @@ export function createExecutions(deps: {
   async function fail(job: Row, reason: string, opts: { retryable?: boolean; authorReason?: string } = {}) {
     const authorReason = opts.authorReason ?? null;
     if (opts.retryable !== false && job.attempt < MAX_ATTEMPTS) {
-      const now = clock.now();
-      const updated = await db
-        .update(executions)
-        .set({
-          state: "retrying",
-          step: null,
-          since: now,
-          apiRetryAttempt: null,
-          apiRetryMax: null,
-          reason,
-          authorReason,
-          retryAt: new Date(now.getTime() + RETRY_DELAY_MS),
-        })
-        .where(and(eq(executions.id, job.id), eq(executions.state, "running")))
-        .returning({ id: executions.id });
-      if (updated.length) await publish(job.id);
+      const retryAt = new Date(clock.now().getTime() + RETRY_DELAY_MS);
+      if (await transition(job.id, "retrying", { reason, authorReason, retryAt })) await publish(job.id);
       wake();
       return;
     }
@@ -573,7 +556,7 @@ export function createExecutions(deps: {
       .from(messages)
       .where(eq(messages.id, job.originMessageId));
     const threadRootId = origin?.threadRootId ?? null;
-    const [channel] = await db.select().from(channels).where(eq(channels.id, job.channelId));
+    const { conversation: channel, audience } = await conversationOf(job.channelId);
     // As Menções a pessoas na resposta valem como as de pessoa (push, não-lidas, seguir a Thread);
     // a de Agente fica registrada, mas não o faz responder.
     const delivered = await db.transaction(async (tx) => {
@@ -592,7 +575,7 @@ export function createExecutions(deps: {
         body: text.trim(),
         createdAt: reply.createdAt,
       });
-      const mentions = await recordMentions(tx, reply.id, channel!, text.trim());
+      const mentions = await recordMentions(tx, reply.id, channel, text.trim());
       const followed = threadRootId
         ? await recordFollows(tx, {
             conversationId: job.channelId,
@@ -607,7 +590,6 @@ export function createExecutions(deps: {
     if (!delivered) return;
     // Todos recebem a resposta; o autor da origem, a cópia com o porquê ligado à Conta dele.
     const replyDto = (await findMessage(db, reply.id))!;
-    const audience = await audienceOf(db, channel!);
     const [{ authorId } = { authorId: null }] = await db
       .select({ authorId: messages.authorMemberId })
       .from(messages)
@@ -623,7 +605,7 @@ export function createExecutions(deps: {
       events.publish({ members: [memberId] }, { type: "thread.followed", thread });
     }
     await reading.messageCreated(replyDto);
-    hooks?.replyCreated?.(replyDto, channel!);
+    hooks?.replyCreated?.(replyDto, channel);
     await publish(job.id);
   }
 
@@ -632,22 +614,9 @@ export function createExecutions(deps: {
    * interrompida. `reason` nulo é o cancelamento por quem escreveu; com motivo, foi o Shearim.
    */
   async function cancelWhere(where: SQL, reason: string | null): Promise<ExecutionDto[]> {
-    const now = clock.now();
     const cancelled = await db
       .update(executions)
-      .set({
-        state: "cancelled",
-        step: null,
-        since: now,
-        finishedAt: now,
-        retryAt: null,
-        apiRetryAttempt: null,
-        apiRetryMax: null,
-        reason,
-        authorReason: null,
-        held: false,
-        heldUntil: null,
-      })
+      .set({ ...leaving("cancelled", clock.now()), reason, authorReason: null, held: false, heldUntil: null })
       .where(and(where, inArray(executions.state, OPEN_STATES)))
       .returning({ id: executions.id });
     for (const { id } of cancelled) {
@@ -760,8 +729,8 @@ export function createExecutions(deps: {
       return { outcome, queued: await insertRows(tx, origin, next, job.arrivedAt) };
     });
     if (!delivered) return;
-    const [channel] = await db.select().from(channels).where(eq(channels.id, job.channelId));
-    events.publish(await audienceOf(db, channel!), { type: "outcome.created", outcome: delivered.outcome });
+    const { audience } = await conversationOf(job.channelId);
+    events.publish(audience, { type: "outcome.created", outcome: delivered.outcome });
     await publish(job.id);
     for (const id of delivered.queued) await publish(id);
     wake();
@@ -1035,24 +1004,13 @@ export function createExecutions(deps: {
       ),
 
     async retry(executionId) {
-      const now = clock.now();
-      const updated = await db
-        .update(executions)
-        .set({
-          state: "queued",
-          step: null,
-          since: now,
-          attempt: 0,
-          payer: null,
-          reason: null,
-          authorReason: null,
-          retryAt: null,
-          finishedAt: null,
-          retriedByAuthor: true,
-        })
-        .where(and(eq(executions.id, executionId), eq(executions.state, "failed")))
-        .returning({ id: executions.id });
-      if (updated.length === 0) return undefined;
+      const queued = await transition(
+        executionId,
+        "queued",
+        { attempt: 0, payer: null, reason: null, authorReason: null, finishedAt: null, retriedByAuthor: true },
+        { from: "failed" },
+      );
+      if (!queued) return undefined;
       const dto = await publish(executionId);
       wake();
       return dto;
@@ -1083,6 +1041,23 @@ export function createExecutions(deps: {
     },
   };
 }
+
+/**
+ * O que toda mudança de estado zera: o passo, o "tentando de novo (n/m)" e, fora de `retrying`,
+ * a hora da nova tentativa; `since` recomeça. Quem termina ganha `finishedAt`.
+ */
+function leaving(state: ExecutionState, now: Date) {
+  return {
+    state,
+    step: null,
+    since: now,
+    apiRetryAttempt: null,
+    apiRetryMax: null,
+    ...(state === "retrying" ? {} : { retryAt: null }),
+    ...(FINAL_STATES.includes(state) ? { finishedAt: now } : {}),
+  };
+}
+const FINAL_STATES: readonly ExecutionState[] = ["done", "failed", "not_acting", "cancelled"];
 
 /** Quem paga uma execução, pela tabela da Spec: um pagador, "Agentes não agem" ou a fila. */
 type Choice = Payer | { kind: "none"; reason: string } | { kind: "hold"; until: Date | null };
