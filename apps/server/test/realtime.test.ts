@@ -12,6 +12,7 @@ function mensagem(body: string): MessageDto {
     body,
     author: { kind: "member", id: crypto.randomUUID(), displayName: "Juliana", profilePicUrl: null },
     originMessageId: null,
+    threadRootId: null,
     mentions: [],
     createdAt: "2026-11-24T12:00:00.000Z",
   };

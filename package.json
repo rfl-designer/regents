@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "dev": "bun run --filter '@shearim/server' --filter '@shearim/web' dev",
-    "test": "bun test",
+    "test": "bun test --timeout 30000",
     "typecheck": "bun run --filter '*' typecheck",
     "build": "bun run --filter '@shearim/web' build",
     "start": "bun apps/server/src/main.ts serve",

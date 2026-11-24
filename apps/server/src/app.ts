@@ -23,6 +23,7 @@ import { profileRoutes } from "./profile";
 import { createPush, type PushConfig } from "./push";
 import { createReading, unreadOf } from "./reading";
 import type { SecretBox } from "./secrets";
+import { threadRoutes } from "./threads";
 import { workspaceContextRoutes } from "./workspace-context";
 import { workspaceKeyRoutes } from "./workspace-key";
 
@@ -135,6 +136,7 @@ export function createApp(deps: AppDeps) {
   app.route("/api", push.routes);
   app.route("/api", dmRoutes({ db, clock, events }));
   app.route("/api", reading.routes);
+  app.route("/api", threadRoutes({ db }));
   app.route("/api", accounts.routes);
   app.route("/api", agentRoutes({ db, clock }));
   app.route("/api", workspaceKeyRoutes({ db, clock, secrets }));

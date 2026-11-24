@@ -45,7 +45,7 @@ function ThisDeviceBanner({ push }: { push: PushState }) {
             Notificações desligadas neste aparelho{" · "}
             <button
               type="button"
-              className="link"
+              className="banner-link"
               disabled={push.working}
               onClick={async () => {
                 const outcome = await push.enable();

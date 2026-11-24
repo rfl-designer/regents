@@ -10,6 +10,7 @@ import type {
   DeviceDto,
   DmDto,
   ExecutionDto,
+  FollowedThreadDto,
   JoinRequestAdminDto,
   JoinRequestDto,
   MeDto,
@@ -100,6 +101,8 @@ export const api = {
   messages: (conversationId: string) => call<MessageDto[]>(`/api/conversations/${conversationId}/messages`),
   send: (conversationId: string, input: SendMessageInput) =>
     call<MessageDto>(`/api/conversations/${conversationId}/messages`, json("POST", input)),
+  /** As Threads que quem pede segue (de todas as conversas). */
+  followedThreads: () => call<FollowedThreadDto[]>("/api/threads/followed"),
   /** As não-lidas de quem pede, em todas as conversas dele. */
   unread: () => call<UnreadDto>("/api/unread"),
   /** As não-lidas numa conversa, na ordem de exibição (a primeira é onde ela abre). */
