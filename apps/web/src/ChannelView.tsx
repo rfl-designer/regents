@@ -229,7 +229,7 @@ export function Conversation({
   const root = openThread ? messages?.find((m) => m.id === openThread) : undefined;
 
   return (
-    <div className="conversation">
+    <div className="conversation-view">
       <div className="main-flow">
         <Stream
           listRef={listRef}

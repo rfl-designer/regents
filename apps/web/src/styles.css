@@ -136,7 +136,7 @@ body {
   border-bottom: 1px solid var(--line);
 }
 /* A conversa: o fluxo principal e, ao lado, o painel da Thread aberta (no celular, por cima) */
-.conversation {
+.conversation-view {
   position: relative;
   display: flex;
   flex: 1;
