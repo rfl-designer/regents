@@ -17,7 +17,7 @@ export function DmView({ dm, me }: { dm: DmDto; me: MeDto }) {
           <span className="hint">{dm.kind === "group" ? `DM em grupo · ${dm.participants.length} pessoas` : "DM"}</span>
         </div>
       </header>
-      <Conversation conversationId={dm.id} label={title} />
+      <Conversation conversationId={dm.id} label={title} me={me} />
     </main>
   );
 }

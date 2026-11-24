@@ -63,7 +63,7 @@ apps/server/        Bun + Hono + Drizzle
   migrations/       SQL gerado pelo drizzle-kit (commitado)
   test/harness.ts   arnês: testApp(), testDb(), fakeClock(), fakeIdentity, t.addMember(), throwawayAccounts(), eventually()
   test/fake-claude/ o dublê do binário `claude` (processo de verdade, roteirizável)
-  test/fakes/       messages-api.ts: a Messages API falsa (o dublê da Chave)
+  test/fakes/       messages-api.ts: a Messages API falsa (o dublê da Chave); scripted-brain.ts: o cérebro roteirizado
   test/fake-localapi.ts  LocalAPI falsa do tailscaled num Unix socket (contrato do whois)
 apps/web/           PWA em React + Vite, pt-BR
 packages/contracts/ DTOs do HTTP e eventos do WebSocket (ServerEvent), compartilhados
@@ -185,8 +185,18 @@ t.claude.callsOf("auth login")[0]!.env.CLAUDE_CONFIG_DIR;     // o que cada star
 | `POST /api/agents` | Admin | `{ name, photo?, description?, instructions?, model }`; 409 `name_taken` |
 | `POST /api/channels/:id/agents` | quem vê | `{ agentId }`: o Agente vira participante `kind: "agent"` |
 | `GET /api/conversations/:id/executions` | quem vê | o Andamento do que ainda não virou resposta (também em `/api/channels/:id/executions`) |
+| `POST /api/conversations/:id/executions/:executionId/retry` | autor da mensagem | "Tentar de novo" de uma falha: volta para a fila (`attempt: 0`), refazendo só essa execução. `403 not_author`, `409 not_failed` |
+| `POST /api/conversations/:id/messages/:messageId/cancel` | autor da mensagem | cancela, em qualquer passo, o que a mensagem ainda tem aberto (`queued`, `running`, `retrying`) e devolve as canceladas. `403 not_author`, `409 nothing_to_cancel` |
 
-Uma mensagem de pessoa num Canal com `@Nome` de um Agente (qualquer Agente do Workspace, sem diferença de maiúsculas nem acentos; em DM é do #23) é gravada e anunciada; depois, uma execução por Agente mencionado entra na fila (tabela `executions`). O trabalhador (`executions.start()`, um por processo, uma execução por vez) paga pela Chave, chama a porta de modelo e grava a resposta com `originMessageId` (a resposta ancorada). O Andamento sai como `execution.updated` (`queued` → `running`/`writing` → `done`, `failed` com `reason`, ou `not_acting` sem Chave); a resposta sai antes como `message.created`. Ao subir, o que estava `running` volta para a fila.
+Uma mensagem de pessoa num Canal com `@Nome` de um Agente (qualquer Agente do Workspace, sem diferença de maiúsculas nem acentos; em DM é do #23) é gravada e anunciada; depois, uma execução por Agente mencionado entra na fila (tabela `executions`). O trabalhador (`executions.start()`, um por processo, uma execução por vez) paga pela Chave, chama a porta de modelo e grava a resposta com `originMessageId` (a resposta ancorada). O Andamento sai como `execution.updated` (`queued` → `running`/`writing` → `done`, `failed` com `reason`, `not_acting` sem Chave, ou `cancelled`); a resposta sai antes como `message.created`.
+
+Nenhuma execução fica no limbo (ADR 0003, #24):
+
+- **Vigia:** um passo em andamento que fica 2 min (`STALL_MS`) sem progresso vira falha ("ficou 2 minutos sem escrever nada"). Progresso é texto, pensamento ou `api_retry` da porta de modelo; `ping` não conta. O `api_retry` aparece em `apiRetry: { attempt, max }` ("tentando de novo (n/m)") e some quando o texto volta.
+- **Nova tentativa:** a falha que vale nova tentativa (todas, menos credencial recusada, sem crédito e `failed` com `retryable: false`) vira `retrying`, com `reason` e `retryAt` (10 s depois, `RETRY_DELAY_MS`). Na hora, volta para a fila mantendo a hora de chegada, como `attempt: 2`, decidindo de novo quem paga e relendo o contexto. A segunda falha é `failed` de vez (com ", nas duas tentativas" quando o motivo se repete), e só então roda `hooks.executionFailed(dto)`: é onde o push ao autor (#32) se pendura. "Tentar de novo" começa um ciclo novo, com a sua nova tentativa automática, e marca a execução (`retriedByAuthor`) para o #27 pagar pela Conta do autor.
+- **Cancelamento:** a execução que está rodando é interrompida pelo `AbortSignal` da porta de modelo, com o motivo em `signal.reason` (`"stalled" | "cancelled" | "shutdown"`). É por ele que o cérebro da Conta (#26) faz o `SIGINT`, 10 s, `SIGTERM`, 5 s, `SIGKILL`. A resposta e o fim são gravados juntos: um cancelamento no último instante ganha.
+- **Subida:** o que estava `running` ficou sem processo vivo e vira "o servidor reiniciou", seguindo a nova tentativa (ou falha de vez, se já era a segunda).
+- **Dreno:** no `SIGTERM`, `executions.drain()` para de pegar trabalho e espera até 20 s (`DRAIN_MS`) o que está rodando; o resto fica para a subida seguinte. `SIGINT` (Ctrl-C) para na hora.
 
 Nos testes, `testApp()` já traz a Messages API falsa em `t.anthropic` (o app usa ela pela Chave) e a fila rodando:
 
@@ -196,9 +206,27 @@ t.anthropic.reply({ status: 402, errorType: "billing_error" });   // erro HTTP a
 t.anthropic.reply({ streamError: { type: "overloaded_error", message: "Overloaded" }, text: "..." });
 t.anthropic.reply({ hang: true });                                 // fica pendurada até o cliente desistir
 const [chamada] = await t.anthropic.waitForRequests(1);            // apiKey, body (model, system, messages)
+t.anthropic.reply({ hang: true, pingEveryMs: 5 });                 // pendurada, só com pings (não é progresso)
+await t.anthropic.waitForPings(3);
+t.clock.advance(120_000);                                          // a vigia: 2 min sem progresso
+await t.drain();                                                   // o dreno do SIGTERM (20 s do relógio injetável)
 await t.restart();                                                 // mesmo banco, app novo, fila de novo
 await eventually("a resposta sair", async () => /* um GET que devolve algo quando aconteceu */);
 ```
+
+Para o que a Messages API falsa não sabe dizer (o `api_retry` é do Claude Code; progresso no meio de um passo, com o relógio andando entre um evento e outro), o cérebro roteirizado entra no lugar do cérebro da Chave. `emit` só resolve depois que o Shearim tratou o evento:
+
+```ts
+const cerebro = scriptedBrain();                                   // test/fakes/scripted-brain.ts
+const t = await testApp({ keyBrain: cerebro.brain });
+const chamada = await cerebro.nextRun();                           // request, signal, emit
+await chamada.emit({ type: "api_retry", attempt: 1, max: 3 });
+t.clock.advance(100_000);
+await chamada.emit({ type: "text", text: "Pronto." });
+await chamada.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
+```
+
+`testApp({ hooks: { executionFailed } })` recebe as falhas de vez.
 
 ## e2e
 
@@ -210,7 +238,7 @@ bun run e2e                                   # build do PWA + todos os e2e
 (cd e2e && npx e2e run --headed)              # vendo o navegador
 ```
 
-O runner sobe o servidor de verdade (por `e2e/serve.ts`, que antes sobe a Messages API falsa, respondendo devagar para a bolha "escrevendo" aparecer, e aponta o servidor para ela com uma chave mestra temporária) numa porta livre, servindo `apps/web/dist`, com `SHEARIM_IDENTITY=dev` e `SHEARIM_PGLITE_DIR=memory://`: cada execução começa de uma Instalação vazia, e a primeira aba a abrir (a "Pessoa Dev") vira Admin. Os testes da mesma execução dividem esse banco, então use textos únicos (`Date.now()`). Duas abas da mesma pessoa são `browser.newTab()` + `browser.goto("/")` e `tab.activate()`. O cookie `dev_user` vale para o contexto inteiro (todas as abas), então uma segunda pessoa no mesmo teste age pela API, com os helpers de `e2e/support/people.ts`: `newPerson("Bruno")` (id único na execução), `addMember(app.baseUrl, bruno)` (ela pede e a Pessoa Dev aprova), `requestToJoin`/`approve` separados, e `as(app.baseUrl, bruno)("/api/...", init)` para chamar a API como ela (sem pessoa, é a Pessoa Dev). `/dev/como/<id>?nome=Fulana` troca a pessoa do navegador todo; ela chega como não-Membro, no Pedido de entrada. Resultados e traces ficam em `e2e/.e2e/` (ignorado pelo git). Antes de escrever um teste, leia `npx e2e guide writing-tests`.
+O runner sobe o servidor de verdade (por `e2e/serve.ts`, que antes sobe a Messages API falsa, respondendo devagar para a bolha "escrevendo" aparecer, e aponta o servidor para ela com uma chave mestra temporária; uma mensagem com `[falhe 2x]` no texto recebe a sobrecarga da Anthropic nas duas primeiras chamadas, para o cartão de falha, que sai depois dos 10 s de verdade da nova tentativa) numa porta livre, servindo `apps/web/dist`, com `SHEARIM_IDENTITY=dev` e `SHEARIM_PGLITE_DIR=memory://`: cada execução começa de uma Instalação vazia, e a primeira aba a abrir (a "Pessoa Dev") vira Admin. Os testes da mesma execução dividem esse banco, então use textos únicos (`Date.now()`). Duas abas da mesma pessoa são `browser.newTab()` + `browser.goto("/")` e `tab.activate()`. O cookie `dev_user` vale para o contexto inteiro (todas as abas), então uma segunda pessoa no mesmo teste age pela API, com os helpers de `e2e/support/people.ts`: `newPerson("Bruno")` (id único na execução), `addMember(app.baseUrl, bruno)` (ela pede e a Pessoa Dev aprova), `requestToJoin`/`approve` separados, e `as(app.baseUrl, bruno)("/api/...", init)` para chamar a API como ela (sem pessoa, é a Pessoa Dev). `/dev/como/<id>?nome=Fulana` troca a pessoa do navegador todo; ela chega como não-Membro, no Pedido de entrada. Resultados e traces ficam em `e2e/.e2e/` (ignorado pelo git). Antes de escrever um teste, leia `npx e2e guide writing-tests`.
 
 ## Instalação
 
