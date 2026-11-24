@@ -1,18 +1,16 @@
-import type { ChannelDto, MeDto } from "@shearim/contracts";
-import { useEffect, useState } from "react";
+import { type ChannelDto, type MeDto, NO_IDENTITY_TEXT } from "@shearim/contracts";
+import { useCallback, useEffect, useState } from "react";
 import { ApiFailure, api, Offline } from "./api";
 import { ChannelView } from "./ChannelView";
+import { EntryView } from "./EntryView";
+import { JoinRequestsPanel } from "./JoinRequestsPanel";
 
 type State =
   | { kind: "loading" }
   | { kind: "ready"; me: MeDto; channels: ChannelDto[] }
+  /** Tem identidade da tailnet, mas ainda não é Membro: o Pedido de entrada. */
+  | { kind: "entry" }
   | { kind: "blocked"; title: string; detail: string };
-
-const NO_IDENTITY: Record<string, string> = {
-  tagged: "Este aparelho entrou na tailnet com uma tag, e nós com tag não têm uma pessoa por trás.",
-  funnel: "O acesso veio pela internet aberta (Funnel), e o Shearim só atende quem está na tailnet.",
-  unknown: "A tailnet não disse quem é você.",
-};
 
 function explain(err: unknown): State {
   if (err instanceof Offline) {
@@ -22,39 +20,35 @@ function explain(err: unknown): State {
       detail: "Confira se o Tailscale está ligado neste aparelho e tente de novo.",
     };
   }
+  // Em geral quem chega sem identidade já recebe a página estática do servidor;
+  // isto cobre o PWA aberto do cache ou a identidade que some no meio da sessão.
   if (err instanceof ApiFailure && err.body?.error === "no_identity") {
-    return {
-      kind: "blocked",
-      title: "Não sabemos quem é você",
-      detail: `${NO_IDENTITY[err.body.reason] ?? NO_IDENTITY.unknown} Entre pela tailnet com a sua própria conta.`,
-    };
+    const text = NO_IDENTITY_TEXT[err.body.reason] ?? NO_IDENTITY_TEXT.unknown;
+    return { kind: "blocked", title: "Não sabemos quem é você", detail: `${text.why} ${text.whatToDo}` };
   }
-  if (err instanceof ApiFailure && err.body?.error === "not_a_member") {
-    return {
-      kind: "blocked",
-      title: "Você ainda não é Membro deste Workspace",
-      detail: "Peça a um Admin para deixar você entrar.",
-    };
-  }
+  if (err instanceof ApiFailure && err.body?.error === "not_a_member") return { kind: "entry" };
   return { kind: "blocked", title: "Algo deu errado", detail: "Recarregue a página para tentar de novo." };
 }
 
 export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const me = await api.me();
-        const channels = await api.channels();
-        setState({ kind: "ready", me, channels });
-      } catch (err) {
-        setState(explain(err));
-      }
-    })();
+  const load = useCallback(async () => {
+    try {
+      const me = await api.me();
+      const channels = await api.channels();
+      setState({ kind: "ready", me, channels });
+    } catch (err) {
+      setState(explain(err));
+    }
   }, []);
 
+  useEffect(() => {
+    void load();
+  }, [load]);
+
   if (state.kind === "loading") return <main className="center">Carregando…</main>;
+  if (state.kind === "entry") return <EntryView onApproved={load} />;
   if (state.kind === "blocked") {
     return (
       <main className="center">
@@ -71,6 +65,7 @@ export function App() {
         <strong>Shearim</strong>
         <span className="whoami">Você está como {state.me.displayName}</span>
       </header>
+      {state.me.role === "admin" && <JoinRequestsPanel />}
       {channel ? <ChannelView channel={channel} /> : <main className="center">Nenhum Canal ainda.</main>}
     </div>
   );

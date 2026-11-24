@@ -39,6 +39,9 @@
     },
     "e2e": {
       "name": "@shearim/e2e",
+      "dependencies": {
+        "@shearim/contracts": "workspace:*",
+      },
       "devDependencies": {
         "@e2e-dev/web": "0.16.1",
         "e2e": "0.24.0",
