@@ -1,11 +1,15 @@
 import {
+  ACCOUNT_PATH,
+  AGENTS_PATH,
   type ChannelDto,
   conversationPath,
   type DmDto,
   INSTALLATION_PATH,
+  MEMBERS_PATH,
   type MeDto,
   NO_IDENTITY_TEXT,
   type UnreadDto,
+  WORKSPACE_KEY_PATH,
 } from "@shearim/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { AgentsSettings, WorkspaceKeySettings } from "./AgentsAdmin";
@@ -55,6 +59,22 @@ function explain(err: unknown): State {
   return { kind: "blocked", title: "Algo deu errado", detail: "Recarregue a página para tentar de novo." };
 }
 
+type View = "channel" | "account" | "profile" | "notifications" | AdminView;
+
+/** As telas que têm endereço próprio: é para onde levam os pushes que não são de conversa. */
+const VIEW_PATHS: Partial<Record<View, string>> = {
+  installation: INSTALLATION_PATH,
+  members: MEMBERS_PATH,
+  key: WORKSPACE_KEY_PATH,
+  agents: AGENTS_PATH,
+  account: ACCOUNT_PATH,
+};
+
+/** A tela que um endereço pede (`/conta`, `/chave`…), ou `undefined` (uma conversa, ou a raiz). */
+function viewOfPath(pathname: string): View | undefined {
+  return (Object.entries(VIEW_PATHS) as [View, string][]).find(([, path]) => path === pathname)?.[0];
+}
+
 /** A conversa que o endereço pede (`/c/<id>`: é para onde a notificação leva). */
 function conversationFromUrl() {
   return /^\/c\/([0-9a-f-]{36})$/i.exec(location.pathname)?.[1] ?? null;
@@ -91,9 +111,7 @@ function upsert<T extends { id: string }>(list: T[], item: T) {
 export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selectedId, setSelectedId] = useState<string | null>(conversationFromUrl);
-  const [view, setView] = useState<"channel" | "account" | "profile" | "notifications" | AdminView>(() =>
-    location.pathname === INSTALLATION_PATH ? "installation" : "channel",
-  );
+  const [view, setView] = useState<View>(() => viewOfPath(location.pathname) ?? "channel");
   const account = useAccount(state.kind === "ready");
   const push = usePush(state.kind === "ready");
   const installation = useInstallation(state.kind === "ready" && state.me.role === "admin");
@@ -170,10 +188,12 @@ export function App() {
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     const onMessage = (e: MessageEvent) => {
-      // O push do Admin sobre a Instalação leva à seção Instalação, não a uma conversa.
+      // Os pushes do Admin e da Conta levam a uma tela (Instalação, Membros, Chave, Agentes, Minha
+      // Conta), não a uma conversa.
       if (e.data?.type === "open-conversation" && typeof e.data.navigate === "string") {
-        if (new URL(e.data.navigate, location.origin).pathname === INSTALLATION_PATH) {
-          setView("installation");
+        const target = viewOfPath(new URL(e.data.navigate, location.origin).pathname);
+        if (target) {
+          setView(target);
           return;
         }
       }
@@ -200,8 +220,9 @@ export function App() {
     if (watching) void closeNotificationsOf(watching);
   }, [watching]);
   useEffect(() => {
-    if (view === "installation") {
-      if (location.pathname !== INSTALLATION_PATH) history.replaceState(null, "", INSTALLATION_PATH);
+    const path = VIEW_PATHS[view];
+    if (path) {
+      if (location.pathname !== path) history.replaceState(null, "", path);
       return;
     }
     if (shownId && location.pathname !== conversationPath(shownId)) {
