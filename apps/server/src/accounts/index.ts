@@ -10,12 +10,14 @@
  * Quem paga (#27) marca a Conta "No limite até HH:MM" (`markLimited`) e "Precisa ligar de novo"
  * (`markNeedsRelink`) pelo que a execução pela Conta viu; ligar de novo é o mesmo fluxo de ligar.
  *
- * Fora daqui por enquanto: a religação sem perder a ligação atual e a validade (#35), pushes (#34).
+ * Os pushes da Conta (#34) saem pelos ganchos (`AccountHooks`): a queda (uma vez por queda) e a
+ * assinatura repetida (ao primeiro dono). Fora daqui por enquanto: a religação sem perder a
+ * ligação atual e a validade, com o aviso de vencimento 3 dias antes (#35, também por um gancho).
  */
 import { lstat, mkdir, readdir, rm, rmdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { AccountDto, AccountLinkingDto, AccountStatusDto, SubmitAccountCodeInput } from "@shearim/contracts";
-import { and, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
@@ -136,6 +138,20 @@ export const LIMIT_FALLBACK_MS = 60 * 60_000;
 
 type Result = { ok: true; account: AccountDto } | { ok: false; message: string };
 
+/** Ganchos de domínio da Conta: onde os pushes da Conta (#34) se penduram. Só do próprio Membro. */
+export interface AccountHooks {
+  /**
+   * A Conta Ligada do Membro caiu: chegou ao limite (até `until`) ou o login caiu. Uma vez por
+   * queda (outra execução que bate no mesmo limite não chama de novo). Roda depois de gravar.
+   */
+  accountDropped?(memberId: string, drop: { state: "limited"; until: Date } | { state: "needs_relink" }): void;
+  /**
+   * `memberId` ligou uma assinatura (o mesmo e-mail) que `owners` já tinham ligada. Roda depois
+   * de gravar a ligação nova.
+   */
+  subscriptionShared?(owners: string[], memberId: string): void;
+}
+
 const { accounts } = schema;
 
 export function createAccounts(deps: {
@@ -143,6 +159,7 @@ export function createAccounts(deps: {
   clock: Clock;
   events: EventHub;
   config: AccountsConfig;
+  hooks?: AccountHooks;
   /**
    * A Conta do Membro passou a poder pagar de novo, ou deixou de existir (ligou de novo, desligou):
    * quem espera por ela na fila decide de novo quem paga.
@@ -296,8 +313,9 @@ export function createAccounts(deps: {
     return { ok: true, account: await dto(memberId) };
   }
 
-  async function linkedToSomeoneElse(memberId: string, email: string) {
-    const [other] = await db
+  /** Quem mais tem esta assinatura (o mesmo e-mail) ligada. */
+  async function othersLinkedTo(memberId: string, email: string) {
+    const others = await db
       .select({ memberId: accounts.memberId })
       .from(accounts)
       .where(
@@ -306,10 +324,11 @@ export function createAccounts(deps: {
           ne(accounts.memberId, memberId),
           sql`lower(${accounts.email}) = lower(${email})`,
         ),
-      )
-      .limit(1);
-    return Boolean(other);
+      );
+    return others.map((o) => o.memberId);
   }
+  const linkedToSomeoneElse = async (memberId: string, email: string) =>
+    (await othersLinkedTo(memberId, email)).length > 0;
 
   async function validateAndLink(memberId: string, flow: Flow) {
     const v = await validateAccount(config.claudeBin, flow.dir, cli);
@@ -332,6 +351,8 @@ export function createAccounts(deps: {
     flows.delete(memberId);
     await publish(memberId);
     deps.onChanged?.(memberId);
+    const owners = await othersLinkedTo(memberId, s.email);
+    if (owners.length) deps.hooks?.subscriptionShared?.(owners, memberId);
   }
 
   async function confirmDuplicate(memberId: string): Promise<Result> {
@@ -384,13 +405,24 @@ export function createAccounts(deps: {
     // Sem a hora, ou com uma hora que já passou, a Conta volta a ser tentada daqui a 1 h.
     const now = clock.now();
     const at = until && until > now ? until : new Date(now.getTime() + LIMIT_FALLBACK_MS);
-    const updated = await db
-      .update(accounts)
-      .set({ limitedUntil: at, updatedAt: clock.now() })
-      .where(and(eq(accounts.memberId, memberId), eq(accounts.configDir, configDir), eq(accounts.state, "linked")))
-      .returning({ memberId: accounts.memberId });
+    const ofThisDir = and(
+      eq(accounts.memberId, memberId),
+      eq(accounts.configDir, configDir),
+      eq(accounts.state, "linked"),
+    );
+    const mark = (where: typeof ofThisDir) =>
+      db
+        .update(accounts)
+        .set({ limitedUntil: at, updatedAt: clock.now() })
+        .where(where)
+        .returning({ memberId: accounts.memberId });
+    // A queda é a passagem de "pode pagar" para "No limite"; outra execução que bate no mesmo
+    // limite só acerta a hora.
+    const dropped = await mark(and(ofThisDir, or(isNull(accounts.limitedUntil), lte(accounts.limitedUntil, now))));
+    const updated = dropped.length ? dropped : await mark(ofThisDir);
     if (updated.length === 0) return;
     await publish(memberId);
+    if (dropped.length) deps.hooks?.accountDropped?.(memberId, { state: "limited", until: at });
     limitTimers.get(memberId)?.();
     const wait = Math.max(0, at.getTime() - clock.now().getTime());
     limitTimers.set(
@@ -409,7 +441,9 @@ export function createAccounts(deps: {
       .set({ state: "needs_relink", limitedUntil: null, updatedAt: clock.now() })
       .where(and(eq(accounts.memberId, memberId), eq(accounts.configDir, configDir), eq(accounts.state, "linked")))
       .returning({ memberId: accounts.memberId });
-    if (updated.length) await publish(memberId);
+    if (updated.length === 0) return;
+    await publish(memberId);
+    deps.hooks?.accountDropped?.(memberId, { state: "needs_relink" });
   }
 
   /**
