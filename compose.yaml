@@ -12,9 +12,10 @@
 # - O sidecar fica em userspace, sem /dev/net/tun e sem capabilities.
 #
 # Configuração do Admin só no .env (o setup o escreve); segredos em ./secrets (deploy/setup.sh).
-# Atualizar: `docker compose pull && docker compose up -d`. Na subida, o app faz um dump em ./backups
-# antes de migrar; uma versão mais velha não sobe num banco migrado por uma mais nova (voltar de
-# versão é `docker compose run --rm app restore <dump de antes da migração>`).
+# Atualizar: `sh deploy/update.sh` (baixa o compose da release e roda `docker compose pull &&
+# docker compose up -d`). Na subida, o app faz um dump em ./backups antes de migrar; uma versão
+# mais velha não sobe num banco migrado por uma mais nova (voltar de versão é
+# `docker compose run --rm app restore <dump de antes da migração>`).
 # Backup completo: ./backups (um pg_dump por noite, 14 dias) mais ./secrets. Guarde os dois fora daqui.
 
 name: shearim
