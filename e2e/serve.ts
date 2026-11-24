@@ -6,6 +6,9 @@
  * Variáveis: as do servidor (PORT, HOST...) passam direto; `FAKE_MESSAGES_API_DELAY_MS` é a
  * espera entre pedaços da resposta (padrão 400 ms).
  *
+ * O servidor aceita o certificado do push service falso que os testes sobem
+ * (`support/push-service.ts`), para o "parou em" de um aparelho sair de um `410` de verdade.
+ *
  * Uma mensagem com `[falhe Nx]` no texto recebe a sobrecarga da Anthropic (529) nas N primeiras
  * chamadas e a resposta padrão depois: `[falhe 2x]` passa pelas duas tentativas e chega ao
  * cartão de falha com "Tentar de novo".
@@ -22,6 +25,7 @@ import {
   type RecordedRequest,
   startFakeMessagesApi,
 } from "../apps/server/test/fakes/messages-api";
+import { pushServiceCert } from "../apps/server/test/fakes/push-cert";
 
 const delayMs = Number(process.env.FAKE_MESSAGES_API_DELAY_MS ?? 400);
 const failures = new Map<string, number>();
@@ -63,7 +67,13 @@ const masterKeyFile = join(secretsDir, "master_key");
 writeFileSync(masterKeyFile, Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex"), { mode: 0o600 });
 
 const server = Bun.spawn(["bun", resolve(import.meta.dir, "../apps/server/src/main.ts"), "serve"], {
-  env: { ...process.env, SHEARIM_ANTHROPIC_BASE_URL: anthropic.url, SHEARIM_MASTER_KEY_FILE: masterKeyFile },
+  env: {
+    ...process.env,
+    SHEARIM_ANTHROPIC_BASE_URL: anthropic.url,
+    SHEARIM_MASTER_KEY_FILE: masterKeyFile,
+    // O push service falso dos testes (`support/push-service.ts`) fala HTTPS com este certificado.
+    NODE_EXTRA_CA_CERTS: pushServiceCert().certFile,
+  },
   stdio: ["inherit", "inherit", "inherit"],
 });
 

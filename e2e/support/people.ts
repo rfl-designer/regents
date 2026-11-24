@@ -25,9 +25,16 @@ export function as(baseUrl: string, person?: DevPerson) {
     if (person) headers.set("cookie", `dev_user=${encodeURIComponent(JSON.stringify(person))}`);
     const res = await fetch(`${baseUrl}${path}`, { ...init, headers });
     if (!res.ok) throw new Error(`${person?.name ?? "Pessoa Dev"}: ${init.method ?? "GET"} ${path} deu ${res.status}`);
-    return res.json();
+    return res.status === 204 ? undefined : res.json();
   };
 }
+
+/** O `init` de um `fetch` com corpo JSON. */
+export const jsonBody = (method: string, body: unknown): RequestInit => ({
+  method,
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify(body),
+});
 
 /** Garante que a Pessoa Dev já abriu a Instalação e é Admin. */
 export async function ensureAdmin(baseUrl: string): Promise<MeDto> {
