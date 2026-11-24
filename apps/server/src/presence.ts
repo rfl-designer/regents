@@ -17,13 +17,10 @@ export interface Presence {
   watchersOf(conversationId: string): Set<string>;
 }
 
-export function createPresence(deps: {
-  db: Db;
-  events: EventHub;
-  /** O Membro passou a ter essa conversa à vista (o push zera o "3 novas" dela). */
-  onOpened?: (memberId: string, conversationId: string) => void;
-}) {
-  const { db, events, onOpened } = deps;
+export function createPresence(deps: { db: Db; events: EventHub }) {
+  const { db, events } = deps;
+  /** Quem quer saber quando um Membro passa a ter uma conversa à vista (o push zera o "3 novas" dela). */
+  const opened: ((memberId: string, conversationId: string) => void)[] = [];
   /** connectionId → o Membro e a conversa à vista. */
   const watching = new Map<string, { memberId: string; conversationId: string }>();
   events.onClose((connectionId) => watching.delete(connectionId));
@@ -57,9 +54,16 @@ export function createPresence(deps: {
     if (events.ownerOf(connectionId) !== me.id) return c.json({ error: "not_found" }, 404);
     const before = watching.get(connectionId)?.conversationId;
     watching.set(connectionId, { memberId: me.id, conversationId: conversation.id });
-    if (before !== conversation.id) onOpened?.(me.id, conversation.id);
+    if (before !== conversation.id) for (const fn of opened) fn(me.id, conversation.id);
     return c.body(null, 204);
   });
 
-  return { presence, routes };
+  return {
+    presence,
+    routes,
+    /** Avisa `fn` sempre que um Membro passa a ter uma conversa à vista. */
+    onOpened(fn: (memberId: string, conversationId: string) => void) {
+      opened.push(fn);
+    },
+  };
 }

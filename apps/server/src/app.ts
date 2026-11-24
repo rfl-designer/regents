@@ -25,7 +25,7 @@ import { createModelPort, type ModelBrain } from "./model/port";
 import { noIdentityPage } from "./no-identity-page";
 import { createPresence } from "./presence";
 import { profileRoutes } from "./profile";
-import { createPush, type Push, type PushConfig } from "./push";
+import { createPush, type PushConfig } from "./push";
 import { createReading, unreadOf } from "./reading";
 import type { SecretBox } from "./secrets";
 import { threadRoutes } from "./threads";
@@ -51,7 +51,7 @@ export interface AppDeps {
   devRoutes?: Hono;
   /**
    * Ganchos de domínio de fora (os testes). Os do próprio app rodam antes: os pushes do Admin e
-   * da Conta (#34), e os da resposta de Agente e da falha (#32).
+   * da Conta (#34) e o da falha (#32).
    */
   hooks?: AppHooks;
   /** O `sub` do VAPID e, nos testes, o agente HTTPS do coletor de push. */
@@ -88,27 +88,27 @@ export function createApp(deps: AppDeps) {
   const { db, identity, clock, secrets } = deps;
   const app = new Hono<Env>();
   const { hub: events, route: eventsRoute, closeForRestart } = createEventHub();
-  // Os pushes do Admin e da Conta (#34); o `push` só é chamado quando um gancho roda, depois da subida.
-  const notify: Push["notify"] = (memberId, n) => push.notify(memberId, n);
+  // A Presença diz ao push quem está vendo cada conversa; o push zera o "3 novas" de quem a abre.
+  const presence = createPresence({ db, events });
+  const push = createPush({
+    events,
+    db,
+    clock,
+    presence: presence.presence,
+    config: deps.push,
+    badgeOf: async (memberId) => (await unreadOf(db, memberId)).total,
+  });
+  presence.onOpened(push.conversationOpened);
+  // Os pushes do Admin e da Conta (#34) e o da falha de vez ao autor (#32).
   const hooks = chain(
     {
-      ...adminPushes({ db, notify }),
-      ...accountPushes({ db, clock, notify }),
-      // A resposta de Agente e a falha de vez avisam quem escreveu (#32).
-      replyCreated: (message, conversation) => push.messageCreated(message, conversation),
-      executionFailed: (execution) => push.executionFailed(execution),
+      ...adminPushes({ db, notify: push.notify }),
+      ...accountPushes({ db, clock, notify: push.notify }),
+      executionFailed: push.executionFailed,
     },
     deps.hooks,
   );
-  // A volta da Conta (ou a troca da Chave) solta quem espera por ela na fila.
-  const accounts = createAccounts({
-    db,
-    clock,
-    events,
-    config: deps.accounts,
-    hooks,
-    onChanged: (memberId) => void executions.reconsider(memberId).catch(() => {}),
-  });
+  const accounts = createAccounts({ db, clock, events, config: deps.accounts, hooks });
   // Pela Conta, um `claude -p` por execução (ADR 0006); os processos vivos morrem no `close`.
   const runs = processTracker();
   const model = createModelPort({
@@ -117,6 +117,7 @@ export function createApp(deps: AppDeps) {
   });
   const reading = createReading({ db, clock, events });
   const ledger = createKeyLedger({ db, clock, events, hooks });
+  // As mensagens novas (de pessoa e as respostas de Agente) vão ao push pelo mesmo `messageCreated`.
   const executions = createExecutions({
     db,
     clock,
@@ -126,19 +127,13 @@ export function createApp(deps: AppDeps) {
     accounts,
     hooks,
     reading,
+    push,
     ledger,
     limits: deps.limits,
   });
-  // A Presença avisa o push quando uma conversa fica à vista; o push pergunta a ela antes de mandar.
-  const presence = createPresence({ db, events, onOpened: (m, conv) => push.conversationOpened(m, conv) });
-  const push = createPush({
-    events,
-    db,
-    clock,
-    presence: presence.presence,
-    config: deps.push,
-    badgeOf: async (memberId) => (await unreadOf(db, memberId)).total,
-  });
+  // A volta da Conta (ou a troca da Chave, ou do orçamento) solta quem espera por ela na fila.
+  const reconsider = (memberId?: string) => void executions.reconsider(memberId).catch(() => {});
+  accounts.onChanged(reconsider);
 
   const installation = createInstallation({ db, clock, events, push, config: deps.installation });
 
@@ -199,14 +194,8 @@ export function createApp(deps: AppDeps) {
   app.route("/api", reading.routes);
   app.route("/api", threadRoutes({ db }));
   app.route("/api", accounts.routes);
-  app.route(
-    "/api",
-    agentRoutes({ db, clock, ledger, onBudgetChanged: () => void executions.reconsider().catch(() => {}) }),
-  );
-  app.route(
-    "/api",
-    workspaceKeyRoutes({ db, clock, secrets, onChanged: () => void executions.reconsider().catch(() => {}) }),
-  );
+  app.route("/api", agentRoutes({ db, clock, ledger, onBudgetChanged: () => reconsider() }));
+  app.route("/api", workspaceKeyRoutes({ db, clock, secrets, onChanged: () => reconsider() }));
   app.route("/api", workspaceContextRoutes({ db }));
   app.route("/api", installation.routes);
 

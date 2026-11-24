@@ -1,4 +1,4 @@
-import type { ExecutionDto, ExecutionState, ExecutionStep, MessageDto, YourAccountDto } from "@shearim/contracts";
+import type { ExecutionDto, ExecutionState, ExecutionStep, YourAccountDto } from "@shearim/contracts";
 import { type AnyColumn, and, asc, desc, eq, gt, inArray, lte, min, ne, or, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { type AccountStanding, accountStanding } from "./accounts";
@@ -13,7 +13,8 @@ import { recordMentions } from "./mentions";
 import { findMessage } from "./messages";
 import type { ModelEvent, ModelPort, ModelRequest, ModelUsage, Payer, TerminalModelEvent } from "./model/port";
 import { outcomeOf, recordOutcome } from "./outcomes";
-import { audienceOf, type Conversation } from "./participation";
+import { audienceOf } from "./participation";
+import type { Push } from "./push";
 import type { Reading } from "./reading";
 import { buildRouting, parseDecision, ROUTING_SCHEMA } from "./routing";
 import type { SecretBox } from "./secrets";
@@ -112,8 +113,6 @@ export interface ExecutionHooks {
    * não vale nova tentativa). Roda depois de gravar e anunciar: o push ao autor (#32) sai daqui.
    */
   executionFailed?(execution: ExecutionDto): void;
-  /** A resposta de um Agente foi gravada e anunciada: é onde o push dela (#32) se pendura. */
-  replyCreated?(message: MessageDto, conversation: Conversation): void;
 }
 
 /**
@@ -203,12 +202,14 @@ export function createExecutions(deps: {
   hooks?: ExecutionHooks;
   /** A resposta conta como não-lida para quem participa da conversa. */
   reading: Pick<Reading, "messageCreated">;
+  /** O push da resposta (#32), pelo mesmo caminho da mensagem de pessoa. */
+  push: Pick<Push, "messageCreated">;
   /** O gasto na Chave por Agente e por mês, o orçamento e os incidentes da Chave (#28). */
   ledger: KeyLedger;
   /** Os tetos de concorrência (padrão: os da Spec, `DEFAULT_LIMITS`). */
   limits?: Partial<ExecutionLimits>;
 }): Executions {
-  const { db, clock, events, model, secrets, hooks, reading, ledger } = deps;
+  const { db, clock, events, model, secrets, hooks, reading, ledger, push } = deps;
   const limits: ExecutionLimits = { ...DEFAULT_LIMITS, ...deps.limits };
   /** As que o trabalhador olhou e não pôde pôr para rodar agora: "esperando a vez". */
   const waiting = new Set<string>();
@@ -604,7 +605,7 @@ export function createExecutions(deps: {
       events.publish({ members: [memberId] }, { type: "thread.followed", thread });
     }
     await reading.messageCreated(replyDto);
-    hooks?.replyCreated?.(replyDto, channel);
+    push.messageCreated(replyDto, channel);
     await publish(job.id);
   }
 

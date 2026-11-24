@@ -199,13 +199,16 @@ export function createAccounts(deps: {
   events: EventHub;
   config: AccountsConfig;
   hooks?: AccountHooks;
-  /**
-   * A Conta do Membro passou a poder pagar de novo, ou deixou de existir (ligou de novo, desligou):
-   * quem espera por ela na fila decide de novo quem paga.
-   */
-  onChanged?(memberId: string): void;
 }) {
   const { db, clock, events, config } = deps;
+  /**
+   * Quem quer saber que a Conta do Membro passou a poder pagar de novo, ou deixou de existir
+   * (ligou de novo, desligou): a fila, para quem espera por ela decidir de novo quem paga.
+   */
+  const changed: ((memberId: string) => void)[] = [];
+  const onChanged = (memberId: string) => {
+    for (const fn of changed) fn(memberId);
+  };
   /** Quando o "No limite até" de cada Membro vence, "Minha Conta" muda sozinha. */
   const limitTimers = new Map<string, () => void>();
   const procs = processTracker();
@@ -416,7 +419,7 @@ export function createAccounts(deps: {
     });
     flows.delete(memberId);
     await publish(memberId);
-    deps.onChanged?.(memberId);
+    onChanged(memberId);
     await schedule(memberId);
     if (sameSubscription(before, s.email)) return;
     const owners = await othersLinkedTo(memberId, s.email);
@@ -598,7 +601,7 @@ export function createAccounts(deps: {
         limitedUntil: null,
       });
       await publish(memberId);
-      deps.onChanged?.(memberId);
+      onChanged(memberId);
       await schedule(memberId);
     }
     return dto(memberId);
@@ -701,6 +704,10 @@ export function createAccounts(deps: {
 
   return {
     routes,
+    /** Avisa `fn` quando a Conta de um Membro pode pagar de novo ou deixou de existir. */
+    onChanged(fn: (memberId: string) => void) {
+      changed.push(fn);
+    },
     unlink,
     /** Encerra a ligação em andamento, se houver (processo morto, pasta nova apagada). Não mexe na Conta ligada. */
     cancel,
