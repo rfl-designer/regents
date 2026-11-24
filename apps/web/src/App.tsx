@@ -17,6 +17,7 @@ import { DevicesView } from "./DevicesView";
 import { DmView } from "./DmView";
 import { EntryView } from "./EntryView";
 import { JoinRequestsPanel } from "./JoinRequestsPanel";
+import { KeyBanners } from "./KeyBanners";
 import { setPresence, useServerEvents } from "./live";
 import { AccountOffer, MyAccount, useAccount } from "./MyAccount";
 import { NotificationsOnboarding } from "./NotificationsOnboarding";
@@ -251,6 +252,9 @@ export function App() {
         </div>
       </header>
       {state.me.role === "admin" && <JoinRequestsPanel />}
+      {state.me.role === "admin" && (
+        <KeyBanners onOpenKey={() => setView("key")} onOpenAgents={() => setView("agents")} />
+      )}
       {view !== "account" && <AccountOffer state={account} onOpen={() => setView("account")} />}
       <InstallOnIphone />
       <NotificationsOnboarding push={push} />

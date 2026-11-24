@@ -2,6 +2,8 @@ import { AGENT_MODELS, type AgentDto, type AgentModel, type WorkspaceKeyDto } fr
 import { type FormEvent, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
 import { ApiFailure, api } from "./api";
+import { INCIDENT_TEXT, usd } from "./KeyBanners";
+import { useServerEvents } from "./live";
 
 const MODEL_LABEL: Record<AgentModel, string> = {
   "claude-opus-5-5": "Claude Opus 5.5",
@@ -10,6 +12,16 @@ const MODEL_LABEL: Record<AgentModel, string> = {
 };
 
 const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
+
+/** O orçamento no campo do formulário: vazio é sem teto. */
+const budgetField = (v: number | null | undefined) => (v === null || v === undefined ? "" : String(v));
+/** O campo do formulário para o orçamento: vazio é nulo (sem teto); `undefined` se não é um valor válido. */
+function budgetInput(text: string): number | null | undefined {
+  if (text.trim() === "") return null;
+  const value = Number(text.trim().replace(",", "."));
+  return Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+const BUDGET_INVALID = "O orçamento mensal é um valor em dólares, zero ou mais (vazio: sem teto).";
 
 function messageOf(err: unknown, fallback: string) {
   const body = err instanceof ApiFailure ? err.body : null;
@@ -27,6 +39,9 @@ export function WorkspaceKeySettings() {
   useEffect(() => {
     api.workspaceKey().then(setStatus, () => setState({ kind: "error", message: "Não foi possível carregar." }));
   }, []);
+  useServerEvents((event) => {
+    if (event.type === "key_incident.updated") setStatus((s) => s && { ...s, incident: event.incident });
+  });
 
   async function save(e: FormEvent) {
     e.preventDefault();
@@ -56,6 +71,12 @@ export function WorkspaceKeySettings() {
               ? `Chave gravada${status.updatedAt ? ` em ${dateTime.format(new Date(status.updatedAt))}` : ""}.`
               : "Nenhuma Chave gravada."}
         </p>
+        {status?.incident && (
+          <p className="error" role="alert">
+            {INCIDENT_TEXT[status.incident.kind].title}. {INCIDENT_TEXT[status.incident.kind].whatToDo} A faixa some na
+            primeira resposta que a Chave pagar.
+          </p>
+        )}
         <input
           type="password"
           aria-label="Chave da API"
@@ -88,6 +109,14 @@ export function AgentsSettings() {
   useEffect(() => {
     api.agents().then(setAgents, () => setLoadError(true));
   }, []);
+  // O gasto na Chave anda a cada resposta que ela paga.
+  useServerEvents((event) => {
+    if (event.type !== "agent_budget.updated") return;
+    const { agentId, monthlyBudgetUsd, keySpendUsd, overBudget } = event.budget;
+    setAgents(
+      (list) => list?.map((a) => (a.id === agentId ? { ...a, monthlyBudgetUsd, keySpendUsd, overBudget } : a)) ?? null,
+    );
+  });
 
   return (
     <main className="settings">
@@ -131,6 +160,12 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
           </button>
         </div>
         <p className="body">{a.description || "Sem descrição."}</p>
+        <p className={a.overBudget ? "error" : "hint"}>
+          Gasto na Chave este mês: {usd.format(a.keySpendUsd ?? 0)}
+          {a.monthlyBudgetUsd === null || a.monthlyBudgetUsd === undefined
+            ? " · sem orçamento"
+            : ` de ${usd.format(a.monthlyBudgetUsd)}${a.overBudget ? " · estourado: não usa a Chave até o mês virar" : ""}`}
+        </p>
         {editing && (
           <EditAgent
             agent={a}
@@ -151,17 +186,20 @@ function EditAgent({ agent, onSaved }: { agent: AgentDto; onSaved(agent: AgentDt
   const [description, setDescription] = useState(agent.description);
   const [instructions, setInstructions] = useState(agent.instructions ?? "");
   const [model, setModel] = useState<AgentModel>(agent.model);
+  const [budget, setBudget] = useState(budgetField(agent.monthlyBudgetUsd));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!name.trim() || busy) return;
+    const monthlyBudgetUsd = budgetInput(budget);
+    if (monthlyBudgetUsd === undefined) return setError(BUDGET_INVALID);
     setBusy(true);
     setError(null);
     try {
       const own = agent.builtin ? {} : { description, instructions };
-      onSaved(await api.updateAgent(agent.id, { name, photo, model, ...own }));
+      onSaved(await api.updateAgent(agent.id, { name, photo, model, monthlyBudgetUsd, ...own }));
     } catch (err) {
       setError(messageOf(err, "O Agente não foi salvo. Tente de novo."));
     } finally {
@@ -205,6 +243,7 @@ function EditAgent({ agent, onSaved }: { agent: AgentDto; onSaved(agent: AgentDt
           ))}
         </select>
       </label>
+      <BudgetField value={budget} onChange={setBudget} />
       <div className="row">
         <button type="submit" disabled={busy || !name.trim()}>
           Salvar
@@ -216,6 +255,22 @@ function EditAgent({ agent, onSaved }: { agent: AgentDto; onSaved(agent: AgentDt
         )}
       </div>
     </form>
+  );
+}
+
+/** O orçamento mensal do Agente na Chave, em dólares: vazio é sem teto. */
+function BudgetField({ value, onChange }: { value: string; onChange(value: string): void }) {
+  return (
+    <label className="hint">
+      Orçamento mensal na Chave (US$){" "}
+      <input
+        aria-label="Orçamento mensal na Chave"
+        inputMode="decimal"
+        placeholder="sem teto"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </label>
   );
 }
 
@@ -233,17 +288,21 @@ function NewAgent({ onCreated }: { onCreated(agent: AgentDto): void }) {
   const [description, setDescription] = useState("");
   const [instructions, setInstructions] = useState("");
   const [model, setModel] = useState<AgentModel>("claude-sonnet-5-5");
+  const [budget, setBudget] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!name.trim() || busy) return;
+    const monthlyBudgetUsd = budgetInput(budget);
+    if (monthlyBudgetUsd === undefined) return setError(BUDGET_INVALID);
     setBusy(true);
     setError(null);
     try {
-      onCreated(await api.createAgent({ name, photo, description, instructions, model }));
+      onCreated(await api.createAgent({ name, photo, description, instructions, model, monthlyBudgetUsd }));
       setName("");
+      setBudget("");
       setPhoto(null);
       setDescription("");
       setInstructions("");
@@ -289,6 +348,7 @@ function NewAgent({ onCreated }: { onCreated(agent: AgentDto): void }) {
           ))}
         </select>
       </label>
+      <BudgetField value={budget} onChange={setBudget} />
       <div className="row">
         <button type="submit" disabled={busy || !name.trim()}>
           Criar Agente
