@@ -302,7 +302,7 @@ describe("troca no meio: refeita pela Chave, sem gastar a nova tentativa", () =>
     expect(t.anthropic.requests).toHaveLength(0);
   });
 
-  test("sem Chave no Workspace, a troca não tem para onde ir: Agentes não agem (a fila até a volta é do #27)", async () => {
+  test("sem Chave no Workspace, a troca não tem para onde ir: a mensagem espera na fila a Conta voltar (#27)", async () => {
     const t = await testApp();
     const { geral } = await comContaLigada(t, { chave: false });
     const aba = await t.socket(juliana);
@@ -310,8 +310,8 @@ describe("troca no meio: refeita pela Chave, sem gastar a nova tentativa", () =>
 
     await enviar(t, geral.id, "@Faro tá aí?");
 
-    const fim = await andamento(aba, (e) => e.state !== "queued" && e.state !== "running");
-    expect(fim).toMatchObject({ state: "not_acting", reason: "o Workspace não tem Chave" });
+    const naFila = await andamento(aba, (e) => e.held);
+    expect(naFila).toMatchObject({ state: "queued", attempt: 0, reason: null });
   });
 });
 

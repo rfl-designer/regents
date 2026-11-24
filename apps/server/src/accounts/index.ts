@@ -7,7 +7,10 @@
  * Tudo aqui é do próprio Membro: as rotas não recebem id de ninguém, e os eventos vão
  * só para `{ members: [ele] }`. Nem o Admin vê.
  *
- * Fora daqui por enquanto: religar e validade (#35), pushes (#34).
+ * Quem paga (#27) marca a Conta "No limite até HH:MM" (`markLimited`) e "Precisa ligar de novo"
+ * (`markNeedsRelink`) pelo que a execução pela Conta viu; ligar de novo é o mesmo fluxo de ligar.
+ *
+ * Fora daqui por enquanto: a religação sem perder a ligação atual e a validade (#35), pushes (#34).
  */
 import { lstat, mkdir, readdir, rm, rmdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -109,12 +112,46 @@ interface Flow {
 }
 
 type Env = { Variables: { member: Member } };
+type AccountRow = typeof schema.accounts.$inferSelect;
+
+/**
+ * Em que pé a Conta está para pagar, agora (Spec, módulo 6, "Quem paga"). `linked` paga; o limite
+ * vence sozinho em `until`.
+ */
+export type AccountStanding =
+  | { state: "linked"; configDir: string }
+  | { state: "limited"; until: Date }
+  | { state: "needs_relink" }
+  | { state: "not_linked" };
+
+export function accountStanding(row: AccountRow | undefined | null, now: Date): AccountStanding {
+  if (row?.state === "needs_relink") return { state: "needs_relink" };
+  if (row?.state !== "linked" || !row.configDir) return { state: "not_linked" };
+  if (row.limitedUntil && row.limitedUntil > now) return { state: "limited", until: row.limitedUntil };
+  return { state: "linked", configDir: row.configDir };
+}
+
+/** O limite sem `resetsAt` (o limite semanal pode sair sem a hora): a Conta é tentada de novo em 1 h. */
+export const LIMIT_FALLBACK_MS = 60 * 60_000;
+
 type Result = { ok: true; account: AccountDto } | { ok: false; message: string };
 
 const { accounts } = schema;
 
-export function createAccounts(deps: { db: Db; clock: Clock; events: EventHub; config: AccountsConfig }) {
+export function createAccounts(deps: {
+  db: Db;
+  clock: Clock;
+  events: EventHub;
+  config: AccountsConfig;
+  /**
+   * A Conta do Membro passou a poder pagar de novo, ou deixou de existir (ligou de novo, desligou):
+   * quem espera por ela na fila decide de novo quem paga.
+   */
+  onChanged?(memberId: string): void;
+}) {
   const { db, clock, events, config } = deps;
+  /** Quando o "No limite até" de cada Membro vence, "Minha Conta" muda sozinha. */
+  const limitTimers = new Map<string, () => void>();
   const procs = processTracker();
   const cli = { clock, procs };
   const flows = new Map<string, Flow>();
@@ -136,10 +173,16 @@ export function createAccounts(deps: { db: Db; clock: Clock; events: EventHub; c
 
   async function dto(memberId: string): Promise<AccountDto> {
     const r = await row(memberId);
+    const standing = accountStanding(r, clock.now());
+    const who = { email: r?.email ?? "", plan: planLabel(r?.subscriptionType ?? null) };
     const status: AccountStatusDto =
-      r?.state === "linked" && r.email
-        ? { state: "linked", email: r.email, plan: planLabel(r.subscriptionType) }
-        : { state: "not_linked" };
+      standing.state === "linked"
+        ? { state: "linked", ...who }
+        : standing.state === "limited"
+          ? { state: "limited", ...who, until: standing.until.toISOString() }
+          : standing.state === "needs_relink"
+            ? { state: "needs_relink", ...who }
+            : { state: "not_linked" };
     return {
       status,
       linking: flows.get(memberId)?.dto ?? null,
@@ -284,9 +327,11 @@ export function createAccounts(deps: { db: Db; clock: Clock; events: EventHub; c
       configDir: flow.dir,
       linkedAt: now,
       offerDismissedAt: now,
+      limitedUntil: null,
     });
     flows.delete(memberId);
     await publish(memberId);
+    deps.onChanged?.(memberId);
   }
 
   async function confirmDuplicate(memberId: string): Promise<Result> {
@@ -311,7 +356,7 @@ export function createAccounts(deps: { db: Db; clock: Clock; events: EventHub; c
   /** Desligar: `claude auth logout` e a pasta apagada. Também serve à remoção do Membro (#16). */
   async function unlink(memberId: string): Promise<AccountDto> {
     const r = await row(memberId);
-    if (r?.state === "linked" && r.configDir) {
+    if (r?.state !== "not_linked" && r?.configDir) {
       await authLogout(config.claudeBin, r.configDir, cli).catch(() => {});
       await rm(r.configDir, { recursive: true, force: true });
       await upsert(memberId, {
@@ -323,10 +368,48 @@ export function createAccounts(deps: { db: Db; clock: Clock; events: EventHub; c
         loginExpiresAt: null,
         configDir: null,
         linkedAt: null,
+        limitedUntil: null,
       });
       await publish(memberId);
+      deps.onChanged?.(memberId);
     }
     return dto(memberId);
+  }
+
+  /**
+   * A execução pela pasta `configDir` bateu no limite: a Conta fica "No limite até `until`" e as
+   * próximas execuções nem tentam por ela até lá. Só vale se a Conta ainda usa essa pasta.
+   */
+  async function markLimited(memberId: string, configDir: string, until: Date | null) {
+    // Sem a hora, ou com uma hora que já passou, a Conta volta a ser tentada daqui a 1 h.
+    const now = clock.now();
+    const at = until && until > now ? until : new Date(now.getTime() + LIMIT_FALLBACK_MS);
+    const updated = await db
+      .update(accounts)
+      .set({ limitedUntil: at, updatedAt: clock.now() })
+      .where(and(eq(accounts.memberId, memberId), eq(accounts.configDir, configDir), eq(accounts.state, "linked")))
+      .returning({ memberId: accounts.memberId });
+    if (updated.length === 0) return;
+    await publish(memberId);
+    limitTimers.get(memberId)?.();
+    const wait = Math.max(0, at.getTime() - clock.now().getTime());
+    limitTimers.set(
+      memberId,
+      clock.after(wait, () => {
+        limitTimers.delete(memberId);
+        void publish(memberId).catch(() => {});
+      }),
+    );
+  }
+
+  /** O login da pasta `configDir` caiu (`authentication_failed`): "Precisa ligar de novo". */
+  async function markNeedsRelink(memberId: string, configDir: string) {
+    const updated = await db
+      .update(accounts)
+      .set({ state: "needs_relink", limitedUntil: null, updatedAt: clock.now() })
+      .where(and(eq(accounts.memberId, memberId), eq(accounts.configDir, configDir), eq(accounts.state, "linked")))
+      .returning({ memberId: accounts.memberId });
+    if (updated.length) await publish(memberId);
   }
 
   /**
@@ -378,9 +461,13 @@ export function createAccounts(deps: { db: Db; clock: Clock; events: EventHub; c
     routes,
     unlink,
     recover,
+    markLimited,
+    markNeedsRelink,
     /** Encerra os processos do `claude` em andamento (testes e parada do servidor). */
     async close() {
       closed = true;
+      for (const cancel of limitTimers.values()) cancel();
+      limitTimers.clear();
       const pending = [...flows.values()];
       flows.clear();
       for (const flow of pending) flow.stopTimer?.();

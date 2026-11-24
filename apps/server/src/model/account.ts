@@ -293,7 +293,11 @@ function failure(
     case "oauth_org_not_allowed":
     case "account_on_hold":
     case "verification_required":
-      return failed("a Conta do Claude não pode ser usada agora", false);
+      // O estado da Conta é só do autor: os outros veem a recusa, sem a Conta.
+      return {
+        ...failed("a Anthropic recusou o pedido", false),
+        authorReason: "a sua Conta do Claude não pode ser usada agora",
+      };
     case "server_error":
     case "unknown":
       // Inclui o lock de renovação ("another Claude Code process is refreshing it"): falha comum.

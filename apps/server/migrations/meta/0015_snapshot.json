@@ -1,5 +1,5 @@
 {
-  "id": "3d38c571-781e-4b5d-a33f-51ce9b0c1a68",
+  "id": "4e68511f-a353-4e54-bd99-db830ca5d0aa",
   "prevId": "c847157d-d889-4897-96fa-498502dbb2d3",
   "version": "7",
   "dialect": "postgresql",
@@ -60,6 +60,12 @@
         "config_dir": {
           "name": "config_dir",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "limited_until": {
+          "name": "limited_until",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -188,77 +194,6 @@
           ],
           "isUnique": true,
           "where": "\"agents\".\"builtin\"",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.backups": {
-      "name": "backups",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "finished_at": {
-          "name": "finished_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "ok": {
-          "name": "ok",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "file": {
-          "name": "file",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "bytes": {
-          "name": "bytes",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "error": {
-          "name": "error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "backups_finished_at_index": {
-          "name": "backups_finished_at_index",
-          "columns": [
-            {
-              "expression": "finished_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -676,6 +611,25 @@
           "primaryKey": false,
           "notNull": false
         },
+        "author_reason": {
+          "name": "author_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "held": {
+          "name": "held",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "held_until": {
+          "name": "held_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "arrived_at": {
           "name": "arrived_at",
           "type": "timestamp with time zone",
@@ -813,76 +767,6 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.installation": {
-      "name": "installation",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "default": 1
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "installation_uma_linha": {
-          "name": "installation_uma_linha",
-          "value": "\"installation\".\"id\" = 1"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.installation_alerts": {
-      "name": "installation_alerts",
-      "schema": "",
-      "columns": {
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "ref": {
-          "name": "ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "sent_at": {
-          "name": "sent_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "installation_alerts_kind_ref_pk": {
-          "name": "installation_alerts_kind_ref_pk",
-          "columns": [
-            "kind",
-            "ref"
-          ]
-        }
-      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -1991,7 +1875,8 @@
       "schema": "public",
       "values": [
         "not_linked",
-        "linked"
+        "linked",
+        "needs_relink"
       ]
     },
     "public.channel_kind": {
