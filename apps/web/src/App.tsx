@@ -28,7 +28,7 @@ import { setPresence, useServerEvents } from "./live";
 import { MembersSettings } from "./MembersAdmin";
 import { AccountOffer, MyAccount, useAccount } from "./MyAccount";
 import { NotificationsOnboarding } from "./NotificationsOnboarding";
-import { closeNotificationsOf, usePush } from "./notifications";
+import { closeNotificationsOf, showBadge, usePush } from "./notifications";
 import { ProfileView } from "./ProfileView";
 import { InstallOnIphone, PushBanners } from "./PushBanners";
 import { type AdminView, Sidebar } from "./Sidebar";
@@ -76,8 +76,20 @@ function viewOfPath(pathname: string): View | undefined {
 }
 
 /** A conversa que o endereço pede (`/c/<id>`: é para onde a notificação leva). */
+function conversationOfPath(pathname: string) {
+  return /^\/c\/([0-9a-f-]{36})$/i.exec(pathname)?.[1] ?? null;
+}
+
 function conversationFromUrl() {
-  return /^\/c\/([0-9a-f-]{36})$/i.exec(location.pathname)?.[1] ?? null;
+  return conversationOfPath(location.pathname);
+}
+
+/** A mensagem que o endereço pede (`/c/<id>?m=<mensagem>`: o push da falha leva a ela). */
+function focusOfUrl(href: string) {
+  const url = new URL(href, location.origin);
+  const conversationId = conversationOfPath(url.pathname);
+  const messageId = url.searchParams.get("m");
+  return conversationId && messageId ? { conversationId, messageId } : null;
 }
 
 const isPageVisible = () => document.visibilityState === "visible" && document.hasFocus();
@@ -115,8 +127,12 @@ export function App() {
   const account = useAccount(state.kind === "ready");
   const push = usePush(state.kind === "ready");
   const installation = useInstallation(state.kind === "ready" && state.me.role === "admin");
-  /** As não-lidas do Membro. O `total` é o badge do ícone (o `setAppBadge` é do #32). */
+  /** As não-lidas do Membro. O `total` é o badge do ícone. */
   const [unread, setUnread] = useState<UnreadDto | null>(null);
+  /** A mensagem para onde a notificação levou (a da falha, com "Tentar de novo"), na conversa dela. */
+  const [focus, setFocus] = useState<{ conversationId: string; messageId: string } | null>(() =>
+    focusOfUrl(location.href),
+  );
 
   const load = useCallback(async () => {
     try {
@@ -172,6 +188,12 @@ export function App() {
     void load();
   }, [load]);
 
+  // O badge do ícone acompanha o total de não-lidas: ao abrir e a cada mudança.
+  const badge = unread?.total;
+  useEffect(() => {
+    if (badge !== undefined) showBadge(badge);
+  }, [badge]);
+
   // Sem conexão ao abrir: tenta de novo sozinho, e na hora em que a internet volta.
   const down = state.kind === "down";
   useEffect(() => {
@@ -188,17 +210,19 @@ export function App() {
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     const onMessage = (e: MessageEvent) => {
+      if (e.data?.type !== "open-conversation") return;
+      const navigate = typeof e.data.navigate === "string" ? new URL(e.data.navigate, location.origin) : null;
       // Os pushes do Admin e da Conta levam a uma tela (Instalação, Membros, Chave, Agentes, Minha
       // Conta), não a uma conversa.
-      if (e.data?.type === "open-conversation" && typeof e.data.navigate === "string") {
-        const target = viewOfPath(new URL(e.data.navigate, location.origin).pathname);
-        if (target) {
-          setView(target);
-          return;
-        }
+      const target = navigate ? viewOfPath(navigate.pathname) : undefined;
+      if (target) {
+        setView(target);
+        return;
       }
-      if (e.data?.type === "open-conversation" && typeof e.data.conversationId === "string") {
-        setSelectedId(e.data.conversationId);
+      const conversationId = navigate ? conversationOfPath(navigate.pathname) : null;
+      if (conversationId) {
+        setFocus(focusOfUrl(navigate!.href));
+        setSelectedId(conversationId);
         setView("channel");
       }
     };
@@ -252,7 +276,9 @@ export function App() {
 
   const dm = state.dms.find((d) => d.id === selectedId);
   const channel = dm ? undefined : (state.channels.find((c) => c.id === selectedId) ?? state.channels[0]);
+  const focusIn = (conversationId: string) => (focus?.conversationId === conversationId ? focus.messageId : undefined);
   const open = (id: string) => {
+    setFocus(null);
     setSelectedId(id);
     setView("channel");
   };
@@ -343,12 +369,13 @@ export function App() {
         ) : view === "installation" ? (
           <InstallationSettings state={installation} />
         ) : dm ? (
-          <DmView key={dm.id} dm={dm} me={state.me} />
+          <DmView key={dm.id} dm={dm} me={state.me} focus={focusIn(dm.id)} />
         ) : channel ? (
           <ChannelView
             key={channel.id}
             channel={channel}
             me={state.me}
+            focus={focusIn(channel.id)}
             onChanged={(changed) => setChannels((list) => upsert(list, changed))}
           />
         ) : (

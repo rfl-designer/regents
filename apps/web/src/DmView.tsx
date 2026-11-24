@@ -13,7 +13,7 @@ function dmHint(dm: DmDto) {
   return dm.participants.some((p) => p.kind === "agent") ? "DM com Agente · responde a cada mensagem" : "DM";
 }
 
-export function DmView({ dm, me }: { dm: DmDto; me: MeDto }) {
+export function DmView({ dm, me, focus }: { dm: DmDto; me: MeDto; focus?: string }) {
   const title = dmTitle(dm, me);
   return (
     <main className="channel">
@@ -23,7 +23,7 @@ export function DmView({ dm, me }: { dm: DmDto; me: MeDto }) {
           <span className="hint">{dmHint(dm)}</span>
         </div>
       </header>
-      <Conversation conversationId={dm.id} label={title} me={me} />
+      <Conversation conversationId={dm.id} label={title} me={me} focus={focus} />
     </main>
   );
 }

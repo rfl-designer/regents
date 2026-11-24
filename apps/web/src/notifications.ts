@@ -133,10 +133,27 @@ export async function closeNotificationsOf(conversationId: string) {
   if (!("serviceWorker" in navigator)) return;
   try {
     const registration = await navigator.serviceWorker.getRegistration();
-    for (const n of (await registration?.getNotifications({ tag: conversationId })) ?? []) n.close();
+    // As da conversa têm a `tag` dela; a de falha tem `tag` própria e a conversa em `data`.
+    for (const n of (await registration?.getNotifications()) ?? []) {
+      if (n.tag === conversationId || n.data?.conversationId === conversationId) n.close();
+    }
   } catch {
     // Sem service worker (ou sem notificações) não há o que fechar.
   }
+}
+
+/**
+ * O badge do ícone do app (Spec, módulo 14, "Badge"): o total de não-lidas das conversas do
+ * Membro. Chamado ao abrir e a cada mudança; zero tira o badge. Sem suporte, não faz nada.
+ */
+export function showBadge(total: number) {
+  const nav = navigator as Navigator & {
+    setAppBadge?: (n?: number) => Promise<void>;
+    clearAppBadge?: () => Promise<void>;
+  };
+  const done = total > 0 ? nav.setAppBadge?.(total) : nav.clearAppBadge?.();
+  // Recusado (sem permissão de notificação, em alguns navegadores): o badge só não aparece.
+  done?.catch(() => {});
 }
 
 /** O resultado de "Ligar": ligadas, bloqueadas pelo navegador, ou o erro. */

@@ -96,9 +96,11 @@ interface Props {
   me: MeDto;
   /** O Canal mudou por uma ação desta tela (entrar, adicionar alguém). */
   onChanged(channel: ChannelDto): void;
+  /** A mensagem para onde a notificação levou (vem para o meio da tela e pisca). */
+  focus?: string;
 }
 
-export function ChannelView({ channel, me, onChanged }: Props) {
+export function ChannelView({ channel, me, onChanged, focus }: Props) {
   const joined = channel.participants.some((p) => p.kind === "member" && p.id === me.id);
   return (
     <main className="channel">
@@ -107,6 +109,7 @@ export function ChannelView({ channel, me, onChanged }: Props) {
         conversationId={channel.id}
         label={`#${channel.name}`}
         me={me}
+        focus={focus}
         // Escrever num Canal público é entrar nele; o `channel.updated` também chega, mas a tela não espera.
         onSent={() => {
           if (!joined) api.channel(channel.id).then(onChanged, () => {});
@@ -129,12 +132,18 @@ export function Conversation({
   label,
   me,
   onSent,
+  focus,
 }: {
   conversationId: string;
   label: string;
   /** Quem está vendo: a mensagem que o menciona aparece destacada. */
   me: MeDto;
   onSent?(): void;
+  /**
+   * A mensagem para onde a notificação levou (a da falha, com "Tentar de novo"): quando ela
+   * chega, vem para o meio da tela e pisca; numa Thread, a Thread abre.
+   */
+  focus?: string;
 }) {
   const [messages, setMessages] = useState<MessageDto[] | null>(null);
   const [executions, setExecutions] = useState<Record<string, ExecutionDto>>({});
@@ -177,6 +186,17 @@ export function Conversation({
   }, [conversationId, loaded]);
 
   useEffect(load, [load]);
+
+  // Uma vez por foco pedido, depois de a conversa abrir (o salto vem depois da linha "Novas").
+  const focused = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!focus || focused.current === focus || reading.divider === undefined) return;
+    const target = messages?.find((m) => m.id === focus);
+    if (!target) return;
+    focused.current = focus;
+    if (target.threadRootId) setOpenThread(target.threadRootId);
+    else reading.jump(focus);
+  }, [focus, messages, reading]);
 
   useServerEvents((event) => {
     // Cada (re)conexão começa com `ready`: recarrega o que pode ter passado enquanto ela não estava aberta.
