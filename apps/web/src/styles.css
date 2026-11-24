@@ -591,8 +591,12 @@ button.link[aria-current="page"] {
   margin: 0;
   padding: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
+  flex-direction: column;
+  gap: 6px;
+}
+.dm-agents li {
+  display: flex;
+  flex-direction: column;
 }
 .new-channel input[type="text"],
 .new-channel input:not([type]),

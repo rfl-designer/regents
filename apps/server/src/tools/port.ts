@@ -1,4 +1,4 @@
-import type { MessageDto, ToolAccess, ToolCallDto, ToolOrigin } from "@shearim/contracts";
+import type { AgentToolSummaryDto, MessageDto, ToolAccess, ToolCallDto, ToolOrigin } from "@shearim/contracts";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
@@ -217,6 +217,29 @@ export function createToolPort(deps: {
         access: d.access,
         granted: granted.has(d.id),
       }));
+    },
+
+    /**
+     * As Ferramentas concedidas a cada Agente (todos, ou só `agentIds`), na ordem do catálogo: o que
+     * a lista de Agentes mostra a todo Membro e o que a Articuladora sabe ao rotear. Agente sem
+     * concessão fica de fora do mapa.
+     */
+    async grantsOf(agentIds?: readonly string[]): Promise<Map<string, AgentToolSummaryDto[]>> {
+      const out = new Map<string, AgentToolSummaryDto[]>();
+      if (agentIds && agentIds.length === 0) return out;
+      const rows = await db
+        .select()
+        .from(agentTools)
+        .where(agentIds ? inArray(agentTools.agentId, [...agentIds]) : undefined);
+      for (const def of definitions) {
+        for (const row of rows) {
+          if (row.tool !== def.id) continue;
+          const list = out.get(row.agentId) ?? [];
+          list.push({ id: def.id, title: def.title, origin: def.origin });
+          out.set(row.agentId, list);
+        }
+      }
+      return out;
     },
 
     exists: (toolId: string) => byId.has(toolId),

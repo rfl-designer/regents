@@ -786,7 +786,7 @@ export function createExecutions(deps: {
   async function route(job: Row, payer: Choice, controller: AbortController, articuladora: Agent) {
     let routing: Awaited<ReturnType<typeof buildRouting>> | undefined;
     const result = await byPayer(job, payer, controller, async (payer) => {
-      routing = await buildRouting(db, articuladora, job.originMessageId);
+      routing = await buildRouting(db, articuladora, job.originMessageId, deps.tools.grantsOf);
       const { team: _, ...request } = routing;
       return { model: ROUTING_MODEL, ...request, output: { schema: ROUTING_SCHEMA }, payer };
     });

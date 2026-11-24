@@ -96,6 +96,8 @@ describe("Agentes", () => {
       handle: "faro",
       builtin: false,
       ...faro,
+      // Nasce sem Ferramentas: o Admin as concede na tela do Agente (Spec #44).
+      tools: [],
       // O orçamento e o gasto na Chave, só para o Admin (#28).
       monthlyBudgetUsd: null,
       keySpendUsd: 0,
