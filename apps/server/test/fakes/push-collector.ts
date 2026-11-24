@@ -10,13 +10,10 @@
  *
  * Nos testes: `t.push` (o arnês sobe um por teste).
  */
-import { spawnSync } from "node:child_process";
 import { createECDH, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import https from "node:https";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import ece from "http_ece";
+import { pushServiceCert } from "./push-cert";
 
 /** O que o navegador recebe e mostra: o JSON do Declarative Web Push. */
 export interface DeclarativePushPayload {
@@ -64,36 +61,6 @@ export interface PushCollector {
   stop(): Promise<void>;
 }
 
-let cert: { cert: string; key: string } | undefined;
-/** Fica no tmp entre execuções (vale 30 dias): o `openssl` roda quase nunca. */
-const CERT_DIR = join(tmpdir(), "shearim-push-collector-cert");
-
-/** Um certificado autoassinado para 127.0.0.1, só para o coletor. */
-function selfSignedCert() {
-  if (cert) return cert;
-  const keyFile = join(CERT_DIR, "key.pem");
-  const certFile = join(CERT_DIR, "cert.pem");
-  const fresh = existsSync(certFile) && Date.now() - statSync(certFile).mtimeMs < 29 * 24 * 3600_000;
-  if (!fresh) {
-    // Gera numa pasta própria e só então troca, para dois processos de teste não se atropelarem.
-    mkdirSync(CERT_DIR, { recursive: true });
-    const work = mkdtempSync(join(CERT_DIR, "gerando-"));
-    const args = ["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes"];
-    args.push("-keyout", join(work, "key.pem"), "-out", join(work, "cert.pem"), "-days", "30");
-    args.push("-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1");
-    const r = spawnSync("openssl", args, { encoding: "utf8", timeout: 30_000 });
-    if (r.status !== 0 || !existsSync(join(work, "cert.pem"))) {
-      const why = r.error ?? r.stderr ?? `status ${r.status}, sinal ${r.signal}`;
-      throw new Error(`coletor de push: o openssl não gerou o certificado (${why})`);
-    }
-    renameSync(join(work, "key.pem"), keyFile);
-    renameSync(join(work, "cert.pem"), certFile);
-    rmSync(work, { recursive: true, force: true });
-  }
-  cert = { cert: readFileSync(certFile, "utf8"), key: readFileSync(keyFile, "utf8") };
-  return cert;
-}
-
 /** Mais folga que o WebSocket: o primeiro push do processo cifra, assina e abre TLS a frio. */
 const NEXT_TIMEOUT_MS = 2_000;
 
@@ -110,7 +77,7 @@ export async function startPushCollector(): Promise<PushCollector> {
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    tls: selfSignedCert(),
+    tls: { cert: pushServiceCert().cert, key: pushServiceCert().key },
     async fetch(req) {
       const endpoint = req.url;
       const browser = browsers.get(endpoint);

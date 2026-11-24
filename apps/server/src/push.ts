@@ -10,6 +10,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
+import type { EventHub } from "./events";
 import type { TailnetUser } from "./join-requests";
 import type { Member } from "./members";
 import { type Conversation, participantsOf } from "./participation";
@@ -33,22 +34,22 @@ export interface PushConfig {
 }
 
 /**
- * Push (Spec, módulo 12), no recorte do #31: o par VAPID, as inscrições por aparelho e os pushes
- * de Menção e de DM. Fica para depois, com o seam indicado:
+ * Push (Spec, módulo 12): o par VAPID, as inscrições por aparelho, os pushes de Menção e de DM
+ * (#31) e os aparelhos do Membro, com "parou em", remoção e `devices.updated` (#33). Fica para
+ * depois, com o seam indicado:
  * - resposta de Agente, falha e Thread seguida (#32): chamam `notify` com outra `urgency`;
- * - a lista de aparelhos e as faixas de push parado (#33): leem `devices` (`push_stopped_at`,
- *   `last_push_at`);
  * - os pushes do Admin e da Conta (#28, #34, #35, #38): `notify`.
  */
 export function createPush(deps: {
   db: Db;
   clock: Clock;
+  events: EventHub;
   presence: Presence;
   config: PushConfig;
   /** O total de não-lidas do Membro: o `app_badge` (o `setAppBadge` da página é do #32). */
   badgeOf: (memberId: string) => Promise<number>;
 }) {
-  const { db, clock, presence } = deps;
+  const { db, clock, events, presence } = deps;
   const { badgeOf } = deps;
   const send = webPushSender(deps.config);
 
@@ -72,6 +73,33 @@ export function createPush(deps: {
     return keys;
   }
 
+  // ---------- os aparelhos ----------
+
+  /** Os aparelhos do Membro, na ordem em que foram ligados, com o estado do push de cada um. */
+  async function devicesOf(memberId: string): Promise<DeviceDto[]> {
+    const rows = await db
+      .select({ d: devices, endpoint: pushSubscriptions.endpoint })
+      .from(devices)
+      .leftJoin(
+        pushSubscriptions,
+        and(eq(pushSubscriptions.memberId, devices.memberId), eq(pushSubscriptions.deviceId, devices.id)),
+      )
+      .where(eq(devices.memberId, memberId))
+      .orderBy(asc(devices.createdAt), asc(devices.id));
+    return rows.map(({ d, endpoint }) => ({
+      id: d.id,
+      label: d.label,
+      pushing: endpoint !== null,
+      pushStoppedAt: d.pushStoppedAt?.toISOString() ?? null,
+      lastPushAt: d.lastPushAt?.toISOString() ?? null,
+    }));
+  }
+
+  /** Avisa as conexões do Membro que os aparelhos dele mudaram (as faixas de push parado). */
+  async function announceDevices(memberId: string) {
+    events.publish({ members: [memberId] }, { type: "devices.updated", devices: await devicesOf(memberId) });
+  }
+
   // ---------- a fila de envio ----------
 
   // Um envio de cada vez, na ordem em que as mensagens foram gravadas: assim o "3 novas" de uma
@@ -92,11 +120,12 @@ export function createPush(deps: {
       if (result.kind === "delivered") {
         await db.update(devices).set({ lastPushAt: clock.now() }).where(device);
       } else if (result.kind === "gone") {
-        // A inscrição morreu: some, e o aparelho fica com "parou em DD/MM" (as faixas são do #33).
+        // A inscrição morreu: some, e o aparelho fica com "parou em DD/MM", à vista nas faixas.
         await db.transaction(async (tx) => {
           await tx.delete(pushSubscriptions).where(eq(pushSubscriptions.endpoint, s.endpoint));
           await tx.update(devices).set({ pushStoppedAt: clock.now() }).where(device);
         });
+        await announceDevices(s.memberId);
       } else {
         console.error(`shearim: o push service recusou um push (${result.detail})`);
       }
@@ -208,29 +237,26 @@ export function createPush(deps: {
 
   const routes = new Hono<Env>();
 
-  /** Os aparelhos do Membro (a base da lista de Notificações do #33). */
-  routes.get("/devices", async (c) => {
+  /** Os aparelhos do Membro: a lista de Notificações e a base das faixas de push parado. */
+  routes.get("/devices", async (c) => c.json(await devicesOf(c.get("member").id)));
+
+  /** Remove um aparelho que o Membro não usa mais: some da lista, com a inscrição dele. */
+  routes.delete("/devices/:deviceId", async (c) => {
     const me = c.get("member");
-    const rows = await db
-      .select({ d: devices, endpoint: pushSubscriptions.endpoint })
-      .from(devices)
-      .leftJoin(
-        pushSubscriptions,
-        and(eq(pushSubscriptions.memberId, devices.memberId), eq(pushSubscriptions.deviceId, devices.id)),
-      )
-      .where(eq(devices.memberId, me.id))
-      .orderBy(asc(devices.createdAt));
-    return c.json(
-      rows.map(
-        ({ d, endpoint }): DeviceDto => ({
-          id: d.id,
-          label: d.label,
-          pushing: endpoint !== null,
-          pushStoppedAt: d.pushStoppedAt?.toISOString() ?? null,
-          lastPushAt: d.lastPushAt?.toISOString() ?? null,
-        }),
-      ),
-    );
+    const deviceId = c.req.param("deviceId");
+    if (!UUID.test(deviceId)) return c.json({ error: "not_found" }, 404);
+    const removed = await db.transaction(async (tx) => {
+      await tx
+        .delete(pushSubscriptions)
+        .where(and(eq(pushSubscriptions.memberId, me.id), eq(pushSubscriptions.deviceId, deviceId)));
+      return tx
+        .delete(devices)
+        .where(and(eq(devices.memberId, me.id), eq(devices.id, deviceId)))
+        .returning({ id: devices.id });
+    });
+    if (removed.length === 0) return c.json({ error: "not_found" }, 404);
+    await announceDevices(me.id);
+    return c.body(null, 204);
   });
 
   routes.get("/push/key", async (c) => c.json({ publicKey: (await vapid()).publicKey } satisfies PushKeyDto));
@@ -248,7 +274,12 @@ export function createPush(deps: {
     }
     const now = clock.now();
     const origin = originOf(c.req.raw);
-    await db.transaction(async (tx) => {
+    const previousOwners = await db.transaction(async (tx) => {
+      // De quem era este navegador, se de outra pessoa: o aparelho dela fica sem push.
+      const previous = await tx
+        .select({ memberId: pushSubscriptions.memberId })
+        .from(pushSubscriptions)
+        .where(eq(pushSubscriptions.endpoint, endpoint));
       await tx
         .insert(devices)
         .values({ memberId: me.id, id: deviceId, label: c.get("who").device ?? null, createdAt: now })
@@ -261,7 +292,9 @@ export function createPush(deps: {
       await tx
         .insert(pushSubscriptions)
         .values({ endpoint, memberId: me.id, deviceId, p256dh, auth, origin, createdAt: now });
+      return previous.map((p) => p.memberId).filter((id) => id !== me.id);
     });
+    for (const memberId of new Set([me.id, ...previousOwners])) await announceDevices(memberId);
     return c.body(null, 204);
   });
 
