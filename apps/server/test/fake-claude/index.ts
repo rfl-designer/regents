@@ -6,7 +6,14 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { FakeClaudeCall, FakeClaudeScript } from "./script";
+import {
+  DEFAULT_FAKE_ACCOUNT,
+  FAKE_ACCESS_TOKEN,
+  type FakeAccount,
+  type FakeClaudeCall,
+  type FakeClaudeScript,
+  type FakeClaudeSignal,
+} from "./script";
 
 export * from "./script";
 
@@ -21,6 +28,8 @@ export interface FakeClaude {
   calls(): FakeClaudeCall[];
   /** Os starts de um subcomando: `"auth login"`, `"auth status"`, `"auth logout"` ou `"-p"`. */
   callsOf(kind: "auth login" | "auth status" | "auth logout" | "-p"): FakeClaudeCall[];
+  /** Os sinais que os `-p` levaram, em ordem (de um só processo, com `pid`). */
+  signals(pid?: number): FakeClaudeSignal[];
   dispose(): void;
 }
 
@@ -44,6 +53,15 @@ export function fakeClaude(script: FakeClaudeScript = {}): FakeClaude {
         .filter(Boolean)
         .map((l) => JSON.parse(l) as FakeClaudeCall);
     },
+    signals(pid) {
+      const log = join(home, "signals.jsonl");
+      if (!existsSync(log)) return [];
+      return readFileSync(log, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as FakeClaudeSignal)
+        .filter((s) => pid === undefined || s.pid === pid);
+    },
     callsOf(kind) {
       return fake.calls().filter((c) => {
         if (kind === "-p") return c.argv.includes("-p");
@@ -55,4 +73,21 @@ export function fakeClaude(script: FakeClaudeScript = {}): FakeClaude {
   };
   fake.script(script);
   return fake;
+}
+
+/**
+ * Deixa `configDir` "logada", como o `auth login` do dublê deixaria: para testar o `claude -p`
+ * de uma Conta sem passar pelo fluxo de ligar.
+ */
+export function fakeLogin(configDir: string, account: Partial<FakeAccount> = {}) {
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(
+    join(configDir, ".credentials.json"),
+    JSON.stringify({ claudeAiOauth: { accessToken: FAKE_ACCESS_TOKEN } }),
+    { mode: 0o600 },
+  );
+  writeFileSync(
+    join(configDir, ".claude.json"),
+    JSON.stringify({ oauthAccount: { ...DEFAULT_FAKE_ACCOUNT, ...account } }),
+  );
 }

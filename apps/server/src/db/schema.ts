@@ -252,7 +252,7 @@ export const executions = pgTable(
     apiRetryMax: integer(),
     /** A tentativa atual veio do "Tentar de novo" do autor (a Spec quer a Conta dele pagando: #27). */
     retriedByAuthor: boolean().notNull().default(false),
-    /** Quem paga a tentativa atual: `key` (a Conta chega no #26). */
+    /** Quem paga a tentativa atual: `account` (a Conta do autor) ou `key` (a Chave do Workspace). */
     payer: text(),
     /** O motivo da última falha (fica durante a nova tentativa, para dizer "nas duas tentativas"). */
     reason: text(),
@@ -365,6 +365,11 @@ export const accounts = pgTable("accounts", {
   planTier: text(),
   /** `loginExpiresAt` do `auth status --json`. A validade mostrada sai daqui (#35). */
   loginExpiresAt: timestamp({ withTimezone: true }),
+  /**
+   * O `credential_expires_at` da execução mais recente pela Conta. A validade mostrada é a mais
+   * cedo entre esta e `loginExpiresAt`, menos 3 dias (#35).
+   */
+  credentialExpiresAt: timestamp({ withTimezone: true }),
   /** A pasta de `CLAUDE_CONFIG_DIR` em uso. */
   configDir: text(),
   linkedAt: timestamp({ withTimezone: true }),

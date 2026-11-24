@@ -121,7 +121,7 @@ async function main(command: string | undefined) {
   });
   // O par VAPID nasce na primeira subida (e daí em diante é sempre o mesmo, guardado no banco).
   await shearim.push.ensureKeys();
-  shearim.executions.start();
+  await shearim.start();
 
   const root = new Hono();
   root.route("/", shearim.app);

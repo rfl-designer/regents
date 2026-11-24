@@ -1,0 +1,1 @@
+ALTER TABLE "accounts" ADD COLUMN "credential_expires_at" timestamp with time zone;
