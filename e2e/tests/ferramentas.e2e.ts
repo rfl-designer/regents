@@ -53,4 +53,38 @@ describe("Ferramentas dos Agentes", () => {
       { timeout: 30_000 },
     );
   });
+
+  test("a lista de Agentes mostra as Ferramentas de cada um ao lado da descrição", { timeout: 60_000 }, async ({
+    app,
+    screen,
+  }) => {
+    const agente = `Mapa${Date.now() % 1_000_000}`;
+    await chamar(app, "POST", "/api/agents", {
+      name: agente,
+      description: "Sabe quem é quem.",
+      instructions: "Responda curto.",
+      model: "claude-haiku-5-5",
+    });
+
+    await app.open("/");
+    await screen.getByRole("button", "Agentes").tap();
+    const item = screen
+      .getByRole("list", "Agentes do Workspace")
+      .getByRole("listitem")
+      .filter({ hasText: `@${agente.toLowerCase()}` });
+    await expect(item).toContainText("Sabe quem é quem. Sem Ferramentas");
+    await item.getByRole("button", "Editar").tap();
+    await item
+      .getByRole("group", `Ferramentas de ${agente}`)
+      .getByRole("checkbox", /listar Agentes/)
+      .tap();
+    await expect(item).toContainText("Sabe quem é quem. Ferramentas: listar Agentes");
+
+    // A lista que todo Membro vê ao abrir uma DM com um Agente.
+    await screen.getByRole("button", /^# geral/).tap();
+    await screen.getByRole("button", "+ Nova DM").tap();
+    await expect(
+      screen.getByRole("list", "Conversar com um Agente").getByRole("listitem").filter({ hasText: agente }),
+    ).toContainText("Sabe quem é quem. · Ferramentas: listar Agentes");
+  });
 });
