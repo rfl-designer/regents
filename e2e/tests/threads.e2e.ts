@@ -66,13 +66,13 @@ describe("Threads", () => {
       .getByRole("listitem")
       .filter({ hasText: pergunta });
     await expect(naThread.getByRole("button", `↳ Sophya passou para ${faro} e ${prisma}`)).toBeVisible({
-      timeout: 90_000,
+      timeout: 20_000,
     });
     const respostas = naThread.getByRole("list", "Respostas a Pessoa Dev");
-    // A fila é uma só e serial (#42 traz o paralelismo): as respostas esperam as dos outros testes.
-    await expect(respostas.getByRole("article", `Mensagem de ${faro}`)).toContainText(RESPOSTA, { timeout: 90_000 });
+    // Os dois delegados respondem em paralelo (#42).
+    await expect(respostas.getByRole("article", `Mensagem de ${faro}`)).toContainText(RESPOSTA, { timeout: 20_000 });
     await expect(respostas.getByRole("article", `Mensagem de ${prisma}`)).toContainText(RESPOSTA, {
-      timeout: 90_000,
+      timeout: 20_000,
     });
     await expect(painel.getByText("Você segue esta Thread")).toBeVisible();
 

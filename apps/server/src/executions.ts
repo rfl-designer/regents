@@ -1,5 +1,6 @@
 import type { ExecutionDto, ExecutionState, ExecutionStep, YourAccountDto } from "@shearim/contracts";
-import { and, asc, eq, inArray, isNotNull, lte, min, ne, or, type SQL, sql } from "drizzle-orm";
+import { type AnyColumn, and, asc, desc, eq, gt, inArray, lte, min, ne, or, type SQL, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { type AccountStanding, accountStanding } from "./accounts";
 import type { Agent } from "./agents";
 import { ROUTING_MODEL } from "./articuladora";
@@ -32,6 +33,40 @@ export const RETRY_DELAY_MS = 10_000;
 export const DRAIN_MS = 20_000;
 /** A original e a nova tentativa automática. */
 const MAX_ATTEMPTS = 2;
+
+/** Os tetos de concorrência (Spec, módulo 6, Tetos), ajustáveis no `.env` (`main.ts`). */
+export interface ExecutionLimits {
+  /** Respostas ao mesmo tempo pela Conta de um Membro. O roteamento fica fora dessa conta. */
+  perAccount: number;
+  /** Execuções ao mesmo tempo pela Chave do Workspace (roteamento incluso). */
+  key: number;
+  /** Processos `claude -p` ao mesmo tempo no host: as execuções pela Conta, roteamento incluso. */
+  processes: number;
+}
+export const DEFAULT_LIMITS: ExecutionLimits = { perAccount: 2, key: 4, processes: 8 };
+
+const LIMIT_VARS = {
+  perAccount: "SHEARIM_MAX_PER_ACCOUNT",
+  key: "SHEARIM_MAX_ON_KEY",
+  processes: "SHEARIM_MAX_PROCESSES",
+} as const satisfies Record<keyof ExecutionLimits, string>;
+
+/**
+ * Os tetos que o `.env` ajusta (`SHEARIM_MAX_PER_ACCOUNT`, `SHEARIM_MAX_ON_KEY`,
+ * `SHEARIM_MAX_PROCESSES`); o que falta fica com o padrão. Valor que não é inteiro maior que zero
+ * é erro (o servidor não sobe).
+ */
+export function limitsFromEnv(env: Record<string, string | undefined>): Partial<ExecutionLimits> {
+  const limits: Partial<ExecutionLimits> = {};
+  for (const [field, name] of Object.entries(LIMIT_VARS) as [keyof ExecutionLimits, string][]) {
+    const raw = env[name]?.trim();
+    if (!raw) continue;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1) throw new Error(`${name}=${raw} não é um número inteiro maior que zero.`);
+    limits[field] = n;
+  }
+  return limits;
+}
 
 /** O motivo da vigia, por passo ("Faro não respondeu: ficou 2 minutos sem escrever nada"). */
 const STALL_REASON: Record<ExecutionStep, string> = {
@@ -66,7 +101,17 @@ export interface ExecutionHooks {
 
 /**
  * Execuções (Spec, módulo 6): a fila fica no Postgres e sobrevive ao reinício; um trabalhador
- * por processo pega uma de cada vez, na ordem de chegada.
+ * por processo põe várias para rodar ao mesmo tempo (#42):
+ *
+ * - **Ordem:** as respostas de um mesmo Agente numa conversa (`seriesOf`) saem em série, na ordem
+ *   de chegada; uma resposta também espera o roteamento ainda aberto de uma mensagem anterior da
+ *   mesma conversa (ele pode pôr na fila uma resposta que vem antes dela). Agentes diferentes
+ *   respondem em paralelo. Quem espera a própria Conta (`held`) sai da série.
+ * - **Tetos:** `ExecutionLimits` (2 respostas por Conta, 4 na Chave, 8 processos no host). O que
+ *   não cabe agora fica "esperando a vez" (`waitingTurn`) até abrir lugar.
+ * - **Prioridade:** o roteamento passa na frente das respostas; entre as respostas, a ordem de
+ *   chegada. Quem troca de fila (a troca no meio da Conta para a Chave, a volta da espera por
+ *   quem pague) mantém a hora de chegada.
  *
  * Nenhuma termina no limbo (ADR 0003): cada passo tem a vigia de 2 min sem progresso; a falha
  * é tentada de novo sozinha uma vez, 10 s depois (decidindo de novo quem paga e relendo o
@@ -79,9 +124,6 @@ export interface ExecutionHooks {
  *
  * Fica para depois, com o seam indicado:
  * - o orçamento do Agente na Chave (#28): `keyUsableFor`;
- * - ordem por Agente e conversa, paralelismo e tetos (#42): `claim` e o laço em `work`. A
- *   conversa para a ordem é `(channel_id, thread_root_id)`: o fluxo principal e cada Thread
- *   contam como conversas separadas (`seriesOf`);
  * - incidente da Chave em `auth_failed`/`billing_failed` e o gasto por Agente (#28): `settle`;
  * - push da falha ao autor (#32): `hooks.executionFailed`.
  */
@@ -134,15 +176,37 @@ export function createExecutions(deps: {
   hooks?: ExecutionHooks;
   /** A resposta conta como não-lida para quem participa da conversa. */
   reading: Pick<Reading, "messageCreated">;
+  /** Os tetos de concorrência (padrão: os da Spec, `DEFAULT_LIMITS`). */
+  limits?: Partial<ExecutionLimits>;
 }): Executions {
   const { db, clock, events, model, secrets, hooks, reading } = deps;
+  const limits: ExecutionLimits = { ...DEFAULT_LIMITS, ...deps.limits };
+  /** As que o trabalhador olhou e não pôde pôr para rodar agora: "esperando a vez". */
+  const waiting = new Set<string>();
+  const views = (where: SQL | undefined) => selectViews(db, where, clock.now(), waiting);
+
+  /**
+   * Os anúncios de uma mesma execução saem um depois do outro: cada um lê o estado na sua vez,
+   * então um anúncio mais velho nunca chega depois de um mais novo (várias rodam ao mesmo tempo).
+   */
+  const announcing = new Map<string, Promise<unknown>>();
+  function publish(id: string): Promise<ExecutionDto> {
+    const next = (announcing.get(id) ?? Promise.resolve()).catch(() => {}).then(() => announce(id));
+    announcing.set(id, next);
+    void next
+      .finally(() => {
+        if (announcing.get(id) === next) announcing.delete(id);
+      })
+      .catch(() => {});
+    return next;
+  }
 
   /**
    * Anuncia o Andamento a quem vê a conversa. O autor recebe a sua cópia, com o que é da Conta
    * dele; os outros, a de todos. Devolve a cópia do autor (quem chama os comandos é ele).
    */
-  async function publish(id: string) {
-    const [view] = await selectViews(db, eq(executions.id, id), clock.now());
+  async function announce(id: string) {
+    const [view] = await views(eq(executions.id, id));
     const { everyone, author, authorId } = view!;
     const [channel] = await db.select().from(channels).where(eq(channels.id, everyone.channelId));
     const audience = await audienceOf(db, channel!);
@@ -161,26 +225,27 @@ export function createExecutions(deps: {
     for (const job of orphans) await fail(job, RESTART_REASON);
   }
 
-  /** A próxima da fila (ou cuja nova tentativa venceu), por ordem de chegada, já em andamento. */
-  async function claim(): Promise<Row | undefined> {
-    const now = clock.now();
+  /**
+   * As que podem sair agora (prontas e na vez da sua série), na ordem da Prioridade: o roteamento
+   * na frente, depois a ordem de chegada.
+   */
+  function candidates(now: Date) {
+    return db
+      .select()
+      .from(executions)
+      .where(and(readyAt(now), onTurn(now)))
+      .orderBy(desc(sql`${executions.kind} = 'route'`), ...arrivalOrder(executions).map((c) => asc(c)));
+  }
+
+  /**
+   * Põe a execução em andamento, se ela ainda está pronta e na vez. Atômico no Postgres: o
+   * `UPDATE` só pega a linha no estado de fila (dois trabalhadores nunca pegam a mesma), e o lock
+   * da conversa faz duas pegas da mesma conversa se verem (a série nunca anda em dobro).
+   */
+  async function claim(candidate: Row, now: Date): Promise<Row | undefined> {
+    const conversation = `${candidate.channelId}:${candidate.threadRootId ?? ""}`;
     return db.transaction(async (tx) => {
-      const [next] = await tx
-        .select({ id: executions.id })
-        .from(executions)
-        .where(
-          or(
-            and(
-              eq(executions.state, "queued"),
-              or(eq(executions.held, false), and(isNotNull(executions.heldUntil), lte(executions.heldUntil, now))),
-            ),
-            and(eq(executions.state, "retrying"), lte(executions.retryAt, now)),
-          ),
-        )
-        .orderBy(asc(executions.arrivedAt), asc(executions.seq))
-        .limit(1)
-        .for("update", { skipLocked: true });
-      if (!next) return undefined;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${conversation}, 0))`);
       const [claimed] = await tx
         .update(executions)
         .set({
@@ -195,22 +260,25 @@ export function createExecutions(deps: {
           apiRetryMax: null,
           attempt: sql`${executions.attempt} + 1`,
         })
-        .where(eq(executions.id, next.id))
+        .where(and(eq(executions.id, candidate.id), readyAt(now), onTurn(now)))
         .returning();
       return claimed;
     });
   }
 
-  /** Quando sai a próxima nova tentativa automática, ou quando a próxima espera da fila vence. */
-  async function nextRetryAt(): Promise<Date | null> {
+  /**
+   * Quando sai a próxima nova tentativa automática, ou quando a próxima espera da fila vence,
+   * depois de `now` (as de até `now` o trabalhador já olhou).
+   */
+  async function nextRetryAt(now: Date): Promise<Date | null> {
     const [retry] = await db
       .select({ at: min(executions.retryAt) })
       .from(executions)
-      .where(and(eq(executions.state, "retrying"), isNotNull(executions.retryAt)));
+      .where(and(eq(executions.state, "retrying"), gt(executions.retryAt, now)));
     const [held] = await db
       .select({ at: min(executions.heldUntil) })
       .from(executions)
-      .where(and(eq(executions.state, "queued"), eq(executions.held, true), isNotNull(executions.heldUntil)));
+      .where(and(eq(executions.state, "queued"), eq(executions.held, true), gt(executions.heldUntil, now)));
     const at = [retry?.at, held?.at].filter((d): d is Date => d instanceof Date);
     return at.length ? new Date(Math.min(...at.map((d) => d.getTime()))) : null;
   }
@@ -233,10 +301,7 @@ export function createExecutions(deps: {
    * - Precisa ligar de novo: a Chave utilizável; sem ela, a fila sem hora (`hold` sem `until`);
    * - Não ligada: a Chave utilizável; sem ela, "Agentes não agem" com o motivo.
    */
-  async function choosePayer(
-    job: Row,
-    agent: Agent,
-  ): Promise<Payer | { kind: "none"; reason: string } | { kind: "hold"; until: Date | null }> {
+  async function choosePayer(job: Row, agent: Agent): Promise<Choice> {
     const [author] = await db
       .select({ memberId: messages.authorMemberId, account: accounts })
       .from(messages)
@@ -278,51 +343,72 @@ export function createExecutions(deps: {
   }
 
   /**
-   * Decide quem paga e faz a chamada (`complete`). Troca no meio (Spec, módulo 6): se a Conta
-   * bate no limite ou cai (`limit`, `auth_failed`), ela fica "No limite até HH:MM" ou "Precisa
-   * ligar de novo", o parcial é descartado e a chamada é refeita inteira por quem a tabela disser
-   * agora (a Chave, ou a fila), na mesma tentativa. Nada quando "Agentes não agem" ou a fila (já
+   * Troca de fila (a Conta caiu no meio): volta para a fila, na vez, sem gastar a tentativa e
+   * mantendo a hora de chegada. O trabalhador decide de novo quem paga quando houver lugar.
+   */
+  async function requeue(job: Row) {
+    const updated = await db
+      .update(executions)
+      .set({
+        state: "queued",
+        step: null,
+        since: clock.now(),
+        attempt: job.attempt - 1,
+        payer: null,
+        apiRetryAttempt: null,
+        apiRetryMax: null,
+      })
+      .where(and(eq(executions.id, job.id), eq(executions.state, "running")))
+      .returning({ id: executions.id });
+    if (updated.length) await publish(job.id);
+    wake();
+  }
+
+  /**
+   * Faz a chamada (`complete`) por quem o trabalhador decidiu que paga. Troca no meio (Spec,
+   * módulo 6): se a Conta bate no limite ou cai (`limit`, `auth_failed`), ela fica "No limite até
+   * HH:MM" ou "Precisa ligar de novo", o parcial é descartado e a execução volta para a fila com
+   * a hora de chegada, para ser refeita inteira por quem a tabela disser agora (a Chave, cabendo
+   * no teto dela, ou a espera), na mesma tentativa. Nada quando "Agentes não agem" ou a fila (já
    * gravados) ou quando o `signal` abortou.
    */
   async function byPayer(
     job: Row,
-    agent: Agent,
+    payer: Choice,
     controller: AbortController,
     build: (payer: Payer) => Promise<ModelRequest>,
   ) {
-    for (;;) {
-      const payer = await choosePayer(job, agent);
-      if (payer.kind === "none") {
-        await settle(job, "not_acting", { reason: payer.reason });
-        return undefined;
-      }
-      if (payer.kind === "hold") {
-        await hold(job, payer.until);
-        return undefined;
-      }
-      await db
-        .update(executions)
-        .set({ payer: payer.kind, apiRetryAttempt: null, apiRetryMax: null })
-        .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
-      await publish(job.id);
-      const result = await complete(job, controller, await build(payer));
-      if (!result || payer.kind !== "account") return result;
-      if (result.end?.type === "limit") {
-        await deps.accounts.markLimited(payer.memberId, payer.configDir, result.end.resetsAt);
-        continue;
-      }
-      if (result.end?.type === "auth_failed") {
-        await deps.accounts.markNeedsRelink(payer.memberId, payer.configDir);
-        continue;
-      }
-      if (result.end?.type === "done" && result.end.credentialExpiresAt) {
-        await db
-          .update(accounts)
-          .set({ credentialExpiresAt: result.end.credentialExpiresAt })
-          .where(and(eq(accounts.memberId, payer.memberId), eq(accounts.configDir, payer.configDir)));
-      }
-      return result;
+    if (payer.kind === "none") {
+      await settle(job, "not_acting", { reason: payer.reason });
+      return undefined;
     }
+    if (payer.kind === "hold") {
+      await hold(job, payer.until);
+      return undefined;
+    }
+    await db
+      .update(executions)
+      .set({ payer: payer.kind, apiRetryAttempt: null, apiRetryMax: null })
+      .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
+    await publish(job.id);
+    const result = await complete(job, controller, await build(payer));
+    if (!result || payer.kind !== "account") return result;
+    if (result.end?.type === "limit" || result.end?.type === "auth_failed") {
+      if (result.end.type === "limit") {
+        await deps.accounts.markLimited(payer.memberId, payer.configDir, result.end.resetsAt);
+      } else {
+        await deps.accounts.markNeedsRelink(payer.memberId, payer.configDir);
+      }
+      await requeue(job);
+      return undefined;
+    }
+    if (result.end?.type === "done" && result.end.credentialExpiresAt) {
+      await db
+        .update(accounts)
+        .set({ credentialExpiresAt: result.end.credentialExpiresAt })
+        .where(and(eq(accounts.memberId, payer.memberId), eq(accounts.configDir, payer.configDir)));
+    }
+    return result;
   }
 
   /**
@@ -399,13 +485,11 @@ export function createExecutions(deps: {
     if (failed) hooks?.executionFailed?.(failed);
   }
 
-  async function run(job: Row, controller: AbortController) {
-    const [agent] = await db.select().from(agents).where(eq(agents.id, job.agentId));
-    if (job.kind === "route") return route(job, controller, agent!);
-    let context: Awaited<ReturnType<typeof buildContext>> | undefined;
-    const result = await byPayer(job, agent!, controller, async (payer) => {
-      context ??= await buildContext(db, agent!, job.originMessageId, await callOf(job));
-      return { model: agent!.model, ...context, payer };
+  async function run(job: Row, agent: Agent, payer: Choice, controller: AbortController) {
+    if (job.kind === "route") return route(job, payer, controller, agent);
+    const result = await byPayer(job, payer, controller, async (payer) => {
+      const context = await buildContext(db, agent, job.originMessageId, await callOf(job));
+      return { model: agent.model, ...context, payer };
     });
     if (!result) return;
     const { text, end } = result;
@@ -430,7 +514,7 @@ export function createExecutions(deps: {
       await tx.insert(messages).values({
         id: reply.id,
         channelId: job.channelId,
-        authorAgentId: agent!.id,
+        authorAgentId: agent.id,
         originMessageId: job.originMessageId,
         threadRootId: origin?.threadRootId ?? null,
         body: text.trim(),
@@ -500,10 +584,10 @@ export function createExecutions(deps: {
    * como qualquer execução dela. Depois de gravado e anunciado, "responder" põe na fila a
    * resposta dela e "delegar" a de cada delegado; quem entra na fila mantém a hora de chegada.
    */
-  async function route(job: Row, controller: AbortController, articuladora: Agent) {
+  async function route(job: Row, payer: Choice, controller: AbortController, articuladora: Agent) {
     let routing: Awaited<ReturnType<typeof buildRouting>> | undefined;
-    const result = await byPayer(job, articuladora, controller, async (payer) => {
-      routing ??= await buildRouting(db, articuladora, job.originMessageId);
+    const result = await byPayer(job, payer, controller, async (payer) => {
+      routing = await buildRouting(db, articuladora, job.originMessageId);
       const { team: _, ...request } = routing;
       return { model: ROUTING_MODEL, ...request, output: { schema: ROUTING_SCHEMA }, payer };
     });
@@ -514,38 +598,42 @@ export function createExecutions(deps: {
     const decided = parseDecision(text, team);
     if (!decided) return fail(job, "a Articuladora não devolveu um Desfecho válido");
 
-    // O Desfecho e o fim do roteamento juntos: um cancelamento que chegou antes ganha.
+    // O Desfecho, o fim do roteamento e as respostas na fila juntos: um cancelamento que chegou
+    // antes ganha, e a resposta que esperava este roteamento (Ordem) já vê quem vem antes dela.
     const origin = { id: job.originMessageId, channelId: job.channelId };
+    const next =
+      decided.decision === "reply"
+        ? [{ agent: articuladora, kind: "reply" as const }]
+        : decided.delegates.map((d) => ({ agent: { id: d.agentId }, kind: "delegated" as const }));
     const delivered = await db.transaction(async (tx) => {
       const [row] = await tx
         .select({ state: executions.state })
         .from(executions)
         .where(eq(executions.id, job.id))
         .for("update");
-      if (row?.state !== "running") return false;
-      return close(job, "done", {}, tx);
+      if (row?.state !== "running") return undefined;
+      await close(job, "done", {}, tx);
+      const outcome = await recordOutcome(tx, origin, decided, clock.now());
+      return { outcome, queued: await insertRows(tx, origin, next, job.arrivedAt) };
     });
     if (!delivered) return;
-    const outcome = await recordOutcome(db, origin, decided, clock.now());
     const [channel] = await db.select().from(channels).where(eq(channels.id, job.channelId));
-    events.publish(await audienceOf(db, channel!), { type: "outcome.created", outcome });
+    events.publish(await audienceOf(db, channel!), { type: "outcome.created", outcome: delivered.outcome });
     await publish(job.id);
-    const next =
-      decided.decision === "reply"
-        ? [{ agent: articuladora, kind: "reply" as const }]
-        : decided.delegates.map((d) => ({ agent: { id: d.agentId }, kind: "delegated" as const }));
-    await insert(origin, next, job.arrivedAt);
+    for (const id of delivered.queued) await publish(id);
+    wake();
   }
 
-  /** Põe as chamadas na fila, chegando em `arrivedAt`, e acorda o trabalhador. */
-  async function insert(
+  /** Grava as chamadas na fila, chegando em `arrivedAt`; devolve os ids, na ordem. */
+  async function insertRows(
+    tx: Db,
     origin: { id: string; channelId: string },
     calls: readonly { agent: Pick<Agent, "id">; kind: ExecutionKind }[],
     arrivedAt: Date,
   ) {
-    if (calls.length === 0) return;
+    if (calls.length === 0) return [];
     const now = clock.now();
-    const [message] = await db
+    const [message] = await tx
       .select({ threadRootId: messages.threadRootId })
       .from(messages)
       .where(eq(messages.id, origin.id));
@@ -560,9 +648,18 @@ export function createExecutions(deps: {
       since: now,
       arrivedAt,
     }));
-    await db.insert(executions).values(rows);
-    for (const r of rows) await publish(r.id);
-    wake();
+    await tx.insert(executions).values(rows);
+    return rows.map((r) => r.id);
+  }
+
+  /** Põe as chamadas na fila, chegando agora, anuncia e acorda o trabalhador. */
+  async function enqueue(
+    origin: { id: string; channelId: string },
+    calls: readonly { agent: Pick<Agent, "id">; kind: ExecutionKind }[],
+  ) {
+    const ids = await insertRows(db, origin, calls, clock.now());
+    for (const id of ids) await publish(id);
+    if (ids.length) wake();
   }
 
   // ---------- o trabalhador ----------
@@ -572,7 +669,11 @@ export function createExecutions(deps: {
   let pending = false;
   let wakeUp: (() => void) | undefined;
   let alarm: (() => void) | undefined;
+  /** As que estão rodando agora, cada uma com o seu `AbortController` (vigia, cancelamento, parada). */
   const running = new Map<string, AbortController>();
+  const inflight = new Set<Promise<void>>();
+  /** O que está ocupado de cada teto. */
+  const used = { key: 0, processes: 0, accounts: new Map<string, number>() };
 
   function wake() {
     pending = true;
@@ -587,11 +688,14 @@ export function createExecutions(deps: {
     wakeUp = undefined;
   }
 
-  /** Arma o despertador para a próxima nova tentativa; devolve `true` se ela já venceu. */
-  async function armRetryAlarm() {
+  /**
+   * Arma o despertador para a próxima nova tentativa (ou espera da fila) depois de `now`; devolve
+   * `true` se ela já venceu enquanto o trabalhador olhava a fila.
+   */
+  async function armRetryAlarm(now: Date) {
     alarm?.();
     alarm = undefined;
-    const at = await nextRetryAt();
+    const at = await nextRetryAt(now);
     if (!at) return false;
     const wait = at.getTime() - clock.now().getTime();
     if (wait <= 0) return true;
@@ -599,28 +703,39 @@ export function createExecutions(deps: {
     return false;
   }
 
-  async function work() {
-    await recover();
-    while (!stopping) {
-      pending = false;
-      let job: Row | undefined;
+  /** Os tetos que uma execução ocupa, pelo pagador: "Agentes não agem" e a fila não ocupam nada. */
+  function slotsOf(job: Row, payer: Choice): Slots {
+    if (payer.kind === "key") return { key: true };
+    if (payer.kind !== "account") return {};
+    // O roteamento fica fora da conta de respostas da Conta, mas é um processo no host.
+    return job.kind === "route" ? { process: true } : { process: true, account: payer.memberId };
+  }
+
+  function fits(slots: Slots) {
+    if (slots.key && used.key >= limits.key) return false;
+    if (slots.process && used.processes >= limits.processes) return false;
+    if (slots.account && (used.accounts.get(slots.account) ?? 0) >= limits.perAccount) return false;
+    return true;
+  }
+
+  function occupy(slots: Slots, delta: 1 | -1) {
+    if (slots.key) used.key += delta;
+    if (slots.process) used.processes += delta;
+    if (slots.account) {
+      const n = (used.accounts.get(slots.account) ?? 0) + delta;
+      if (n > 0) used.accounts.set(slots.account, n);
+      else used.accounts.delete(slots.account);
+    }
+  }
+
+  /** Roda uma execução ao lado das outras; ao terminar, solta o lugar e acorda o trabalhador. */
+  function launch(job: Row, agent: Agent, payer: Choice, slots: Slots) {
+    const controller = new AbortController();
+    running.set(job.id, controller);
+    occupy(slots, 1);
+    const task = (async () => {
       try {
-        job = await claim();
-        if (!job && (await armRetryAlarm())) continue;
-      } catch (err) {
-        if (stopping) break;
-        console.error("shearim: a fila de execuções falhou ao pegar trabalho", err);
-        await new Promise((r) => setTimeout(r, 1_000));
-        continue;
-      }
-      if (!job) {
-        await idle();
-        continue;
-      }
-      const controller = new AbortController();
-      running.set(job.id, controller);
-      try {
-        await run(job, controller);
+        await run(job, agent, payer, controller);
       } catch (err) {
         if (!controller.signal.aborted) {
           console.error("shearim: execução falhou", err);
@@ -628,10 +743,69 @@ export function createExecutions(deps: {
         }
       } finally {
         running.delete(job.id);
+        occupy(slots, -1);
+        wake();
       }
+    })();
+    inflight.add(task);
+    void task.finally(() => inflight.delete(task));
+  }
+
+  /**
+   * Uma passada pela fila: põe para rodar, na ordem da Prioridade, cada uma que está na vez e cabe
+   * nos tetos do seu pagador. O resto fica "esperando a vez".
+   */
+  async function schedule(now: Date) {
+    for (const candidate of await candidates(now)) {
+      if (stopping) return;
+      const [agent] = await db.select().from(agents).where(eq(agents.id, candidate.agentId));
+      const payer = await choosePayer(candidate, agent!);
+      const slots = slotsOf(candidate, payer);
+      if (!fits(slots)) continue;
+      const job = await claim(candidate, now);
+      if (!job) continue;
+      waiting.delete(job.id);
+      launch(job, agent!, payer, slots);
+    }
+    await markWaiting(now);
+  }
+
+  /** Anuncia quem passou a esperar a vez (e quem deixou de esperar sem mudar de estado). */
+  async function markWaiting(now: Date) {
+    const ready = await db.select({ id: executions.id }).from(executions).where(readyAt(now));
+    const still = new Set(ready.map((r) => r.id));
+    for (const id of still) {
+      if (waiting.has(id)) continue;
+      waiting.add(id);
+      await publish(id);
+    }
+    for (const id of [...waiting]) {
+      if (still.has(id)) continue;
+      waiting.delete(id);
+      await publish(id);
+    }
+  }
+
+  async function work() {
+    await recover();
+    while (!stopping) {
+      pending = false;
+      const now = clock.now();
+      try {
+        await schedule(now);
+        if (await armRetryAlarm(now)) continue;
+      } catch (err) {
+        if (stopping) break;
+        console.error("shearim: a fila de execuções falhou ao pegar trabalho", err);
+        await new Promise((r) => setTimeout(r, 1_000));
+        continue;
+      }
+      await idle();
     }
     alarm?.();
     alarm = undefined;
+    // Parar é esperar o que estava rodando sair (no `stop`, já interrompido).
+    while (inflight.size) await Promise.allSettled([...inflight]);
   }
 
   async function stop() {
@@ -643,11 +817,11 @@ export function createExecutions(deps: {
   }
 
   return {
-    enqueue: (origin, calls) => insert(origin, calls, clock.now()),
+    enqueue,
 
     openIn: async (channelId, viewerId) =>
-      (await selectViews(db, and(eq(executions.channelId, channelId), ne(executions.state, "done")), clock.now())).map(
-        (v) => (v.authorId === viewerId ? v.author : v.everyone),
+      (await views(and(eq(executions.channelId, channelId), ne(executions.state, "done")))).map((v) =>
+        v.authorId === viewerId ? v.author : v.everyone,
       ),
 
     async cancel(originMessageId) {
@@ -670,19 +844,20 @@ export function createExecutions(deps: {
         .where(and(eq(executions.originMessageId, originMessageId), inArray(executions.state, OPEN_STATES)))
         .returning({ id: executions.id });
       for (const { id } of cancelled) {
+        waiting.delete(id);
         running.get(id)?.abort("cancelled" satisfies Interruption);
         await publish(id);
       }
       if (cancelled.length === 0) return [];
-      const views = await selectViews(
-        db,
+      // A que saiu da fila pode ter sido a que segurava a série.
+      wake();
+      const done = await views(
         inArray(
           executions.id,
           cancelled.map((c) => c.id),
         ),
-        clock.now(),
       );
-      return views.map((v) => v.author);
+      return done.map((v) => v.author);
     },
 
     async retry(executionId) {
@@ -753,9 +928,70 @@ export function createExecutions(deps: {
   };
 }
 
+/** Quem paga uma execução, pela tabela da Spec: um pagador, "Agentes não agem" ou a fila. */
+type Choice = Payer | { kind: "none"; reason: string } | { kind: "hold"; until: Date | null };
+/** Os tetos que uma execução ocupa enquanto roda. */
+type Slots = { key?: true; process?: true; account?: string };
+
+/**
+ * Pronta para sair agora: na fila (sem esperar quem pague, ou com a espera vencida) ou com a nova
+ * tentativa automática vencida.
+ */
+function readyAt(now: Date) {
+  return or(
+    and(eq(executions.state, "queued"), or(eq(executions.held, false), lte(executions.heldUntil, now))),
+    and(eq(executions.state, "retrying"), lte(executions.retryAt, now)),
+  )!;
+}
+
+const other = alias(executions, "other");
+
+/**
+ * A ordem de chegada: a hora de chegada (que fica com quem troca de fila) e, no empate, a ordem
+ * das mensagens de origem (a resposta que um roteamento põe na fila chega com a hora dele, que
+ * pode empatar com a de uma mensagem seguinte) e a da fila.
+ */
+function arrivalOrder(e: Record<"arrivedAt" | "originMessageId" | "seq", AnyColumn>): SQL[] {
+  const originSeq = sql`(select ${messages.seq} from ${messages} where ${messages.id} = ${e.originMessageId})`;
+  return [sql`${e.arrivedAt}`, originSeq, sql`${e.seq}`];
+}
+
+/**
+ * Na vez da sua série (Spec, módulo 6, Ordem). O roteamento não é resposta e sai sempre. Uma
+ * resposta espera, na mesma conversa (`seriesOf`: o fluxo principal e cada Thread à parte):
+ * - a do mesmo Agente que está rodando, ou que chegou antes e ainda vai sair;
+ * - o roteamento de uma mensagem anterior que ainda vai sair ou está rodando, porque ele pode
+ *   pôr na fila uma resposta que chegou antes dela.
+ * Quem espera a própria Conta (`held`) não segura ninguém; a nova tentativa marcada, sim.
+ */
+function onTurn(now: Date) {
+  const stillToGo = or(
+    and(eq(other.state, "queued"), or(eq(other.held, false), lte(other.heldUntil, now))),
+    eq(other.state, "retrying"),
+  );
+  const earlier = sql`(${sql.join(arrivalOrder(other), sql`, `)}) < (${sql.join(arrivalOrder(executions), sql`, `)})`;
+  const ahead = and(
+    ne(other.id, executions.id),
+    eq(other.channelId, executions.channelId),
+    sql`${other.threadRootId} is not distinct from ${executions.threadRootId}`,
+    or(
+      and(
+        ne(other.kind, "route"),
+        eq(other.agentId, executions.agentId),
+        or(eq(other.state, "running"), and(stillToGo, earlier)),
+      ),
+      and(eq(other.kind, "route"), earlier, or(eq(other.state, "running"), stillToGo)),
+    ),
+  );
+  return or(
+    eq(executions.kind, "route"),
+    sql`not exists (select 1 from ${executions} as ${sql.identifier("other")} where ${ahead})`,
+  )!;
+}
+
 /**
  * A conversa para a ordem (Spec, módulo 6): as respostas de um mesmo Agente numa conversa saem
- * em série, e o fluxo principal e cada Thread contam como conversas separadas. SEAM do #42.
+ * em série, e o fluxo principal e cada Thread contam como conversas separadas (`onTurn`).
  */
 export function seriesOf(job: Pick<Row, "agentId" | "channelId" | "threadRootId">) {
   return { agentId: job.agentId, channelId: job.channelId, threadRootId: job.threadRootId };
@@ -817,6 +1053,7 @@ async function selectViews(
   db: Db,
   where: SQL | undefined,
   now: Date,
+  waiting: ReadonlySet<string>,
 ): Promise<{ everyone: ExecutionDto; author: ExecutionDto; authorId: string | null }[]> {
   const rows = await db
     .select({
@@ -852,6 +1089,7 @@ async function selectViews(
       payer: e.payer === "key" ? "key" : null,
       reason,
       held: e.state === "queued" && e.held,
+      waitingTurn: (e.state === "queued" || e.state === "retrying") && waiting.has(e.id),
       yourAccount: null,
       replyMessageId: e.replyMessageId,
     };

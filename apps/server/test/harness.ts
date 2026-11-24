@@ -396,6 +396,8 @@ export async function testApp(
     masterKey?: Uint8Array;
     /** A versão e o vencimento da chave do nó da seção Instalação. */
     installation?: AppDeps["installation"];
+    /** Os tetos de concorrência das execuções (padrão: os da Spec). */
+    limits?: AppDeps["limits"];
   } = {},
 ) {
   const db = opts.db ?? (await testDb()).db;
@@ -418,6 +420,7 @@ export async function testApp(
       keyBrain: opts.keyBrain,
       push: { contact: TEST_VAPID_CONTACT, agent: push.agent },
       installation: opts.installation,
+      limits: opts.limits,
     });
     await built.start();
     return built;

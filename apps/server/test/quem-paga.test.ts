@@ -307,8 +307,13 @@ describe("No limite até HH:MM", () => {
       await eventually("a do Bruno subir", async () => execucoes(t)[1], 10_000);
       await enviar(t, geral.id, "@Faro segunda do Bruno", bruno);
       t.clock.set(QUINZE_E_QUARENTA_E_CINCO);
+      // O salto do relógio deixa a do Bruno 2 min sem progresso: ela vai para a nova tentativa, em
+      // 10 s, e segura a segunda dele (as respostas do Faro na conversa saem em série, #42). A da
+      // Juliana, que chegou antes de todas, não espera: sai já.
+      await eventually("a da Juliana subir de novo", async () => execucoes(t)[2], 10_000);
+      t.clock.advance(10_000);
 
-      const ordem = await eventually("as quatro subirem", async () => execucoes(t)[3] && execucoes(t), 15_000);
+      const ordem = await eventually("as cinco subirem", async () => execucoes(t)[4] && execucoes(t), 15_000);
       // A mensagem de origem é a última de pessoa no contexto.
       const ultima = (c: FakeClaudeCall) =>
         c
@@ -319,6 +324,7 @@ describe("No limite até HH:MM", () => {
         "Juliana (pessoa): @Faro da Juliana",
         "Bruno (pessoa): @Faro primeira do Bruno",
         "Juliana (pessoa): @Faro da Juliana",
+        "Bruno (pessoa): @Faro primeira do Bruno",
         "Bruno (pessoa): @Faro segunda do Bruno",
       ]);
     },
