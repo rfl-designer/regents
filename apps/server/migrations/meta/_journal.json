@@ -57,6 +57,13 @@
       "when": 1795517231098,
       "tag": "0007_contexto-do-workspace",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795517411937,
+      "tag": "0008_execucao-em-dm-com-agente",
+      "breakpoints": true
     }
   ]
 }

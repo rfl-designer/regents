@@ -133,7 +133,7 @@ export interface UpdateProfileInput {
 export type ChannelKind = "public" | "private";
 
 /**
- * `dm`: entre duas partes (duas pessoas; com o #23, uma pessoa e um Agente).
+ * `dm`: entre duas partes (duas pessoas, ou uma pessoa e um Agente).
  * `group`: DM em grupo, aberta com três pessoas ou mais. Um grupo continua grupo
  * mesmo se ficar com menos gente (quem é removido sai das DMs em grupo, não das `dm`).
  */
@@ -209,10 +209,13 @@ export interface DmDto {
 /**
  * Corpo de `POST /api/dms`: abre a DM com essas pessoas (quem abre entra sozinho; pode vir na lista).
  * Uma pessoa: `dm`; duas ou mais: `group`. Abrir de novo com as mesmas pessoas devolve a mesma
- * DM (200); uma nova responde 201. A DM com Agente (#23) entra como mais um campo aqui.
+ * DM (200); uma nova responde 201.
+ * Com `agentId` (e nenhuma outra pessoa), é a DM de quem abre com aquele Agente (`dm`), uma por
+ * Agente; o Agente responde a cada mensagem dela. Numa DM entre pessoas, Agente só entra por Menção.
  */
 export interface OpenDmInput {
   memberIds: string[];
+  agentId?: string;
 }
 
 /**

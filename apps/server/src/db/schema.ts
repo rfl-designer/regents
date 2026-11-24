@@ -176,11 +176,12 @@ export const workspaceSettings = pgTable(
 );
 
 export const executionState = pgEnum("execution_state", ["queued", "running", "done", "failed", "not_acting"]);
-export const executionKind = pgEnum("execution_kind", ["mention"]);
+/** `mention`: um Agente mencionado. `dm`: o Agente de uma DM com Agente, a cada mensagem. */
+export const executionKind = pgEnum("execution_kind", ["mention", "dm"]);
 
 /**
  * A fila de execuções (Spec, módulo 6): cada chamada a modelo por causa de uma mensagem.
- * Sobrevive ao reinício. Hoje só há a Menção (`kind`); o roteamento, a resposta da
+ * Sobrevive ao reinício. Hoje há a Menção e a resposta na DM com Agente (`kind`); o roteamento, a resposta da
  * Articuladora e os delegados (#22) entram como outros tipos.
  */
 export const executions = pgTable(
