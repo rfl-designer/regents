@@ -18,7 +18,7 @@ const { messages, messageMentions, threadFollows } = schema;
  * Menção que o #19 registra, só de quem vê a conversa). Agentes não seguem. Seguir é uma vez só,
  * desde a mensagem que fez seguir.
  *
- * SEAM do #32 (push de Thread seguida): `followersOf(db, raiz)` diz quem avisar.
+ * O push de Thread seguida (#32) pergunta a `followersOf(db, raiz)` quem avisar.
  */
 
 /**

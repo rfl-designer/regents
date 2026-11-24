@@ -110,7 +110,7 @@ export interface PayingAccounts {
 export interface ExecutionHooks {
   /**
    * Uma execução falhou de vez (depois da nova tentativa automática, ou sem ela, quando a falha
-   * não vale nova tentativa). Roda depois de gravar e anunciar: é onde o push ao autor (#32) se pendura.
+   * não vale nova tentativa). Roda depois de gravar e anunciar: o push ao autor (#32) sai daqui.
    */
   executionFailed?(execution: ExecutionDto): void;
   /** A resposta de um Agente foi gravada e anunciada: é onde o push dela (#32) se pendura. */
@@ -143,8 +143,7 @@ export interface ExecutionHooks {
  * O gasto na Chave, o orçamento e os incidentes da Chave (#28) ficam no `ledger` (`key-budget.ts`):
  * `byPayer` avisa cada chamada que a Chave pagou e cada recusa dela; `keyUsableFor` confere o orçamento.
  *
- * Fica para depois, com o seam indicado:
- * - push da falha ao autor (#32): `hooks.executionFailed`.
+ * A falha de vez sai pelo gancho `hooks.executionFailed` (é dali que sai o push ao autor, #32).
  */
 export interface Executions {
   /**

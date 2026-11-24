@@ -57,8 +57,8 @@ export interface PushConfig {
  * mensagem têm `tag`/`Topic` da conversa ("3 novas em #vendas"); o da falha, os da execução,
  * para não ser engolido pela conversa.
  *
- * Fica para depois: o aviso de vencimento da Conta (#35): `notify`, como os do Admin e da Conta
- * (#34, em `admin-pushes.ts` e `account-pushes.ts`) e os da Instalação (#38).
+ * Os pushes que não são de conversa saem por `notify`: os do Admin e da Conta, o aviso de
+ * vencimento da Conta (#34 e #35, em `admin-pushes.ts` e `account-pushes.ts`) e os da Instalação (#38).
  */
 export function createPush(deps: {
   db: Db;
@@ -66,7 +66,7 @@ export function createPush(deps: {
   events: EventHub;
   presence: Presence;
   config: PushConfig;
-  /** O total de não-lidas do Membro: o `app_badge` (o `setAppBadge` da página é do #32). */
+  /** O total de não-lidas do Membro: o `app_badge`. */
   badgeOf: (memberId: string) => Promise<number>;
 }) {
   const { db, clock, events, presence } = deps;
