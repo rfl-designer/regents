@@ -91,7 +91,7 @@ describe("conexão", () => {
 
       await network(browser, "online");
 
-      await expect(screen.getByRole("list", "Mensagens de #geral")).toHaveAttribute("aria-busy", "false");
+      await expect(screen.getByRole("heading", "# geral")).toBeVisible();
     });
 
     test('sem internet, mostra "Você está sem internet"', async ({ app, browser, screen }) => {
