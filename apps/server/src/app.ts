@@ -1,7 +1,10 @@
+import { EVENTS_PATH } from "@shearim/contracts";
 import { Hono } from "hono";
+import { websocket } from "hono/bun";
 import type { Clock } from "./clock";
 import { conversationRoutes } from "./conversations";
 import type { Db } from "./db/client";
+import { createEventHub } from "./events";
 import type { IdentityPort } from "./identity/port";
 import { type Member, memberFor, toMeDto } from "./members";
 
@@ -22,6 +25,7 @@ type Env = { Variables: { member: Member } };
 export function createApp(deps: AppDeps) {
   const { db, identity, clock } = deps;
   const app = new Hono<Env>();
+  const { hub: events, route: eventsRoute } = createEventHub();
 
   app.get("/api/health", (c) => c.json({ ok: true }));
   if (deps.devRoutes) app.route("/dev", deps.devRoutes);
@@ -37,9 +41,11 @@ export function createApp(deps: AppDeps) {
   });
 
   app.get("/api/me", (c) => c.json(toMeDto(c.get("member"))));
-  app.route("/api", conversationRoutes({ db, clock }));
+  app.get(EVENTS_PATH, eventsRoute);
+  app.route("/api", conversationRoutes({ db, clock, events }));
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
 
-  return { app };
+  /** `websocket` vai no `Bun.serve` junto com `app.fetch`; `events` é onde se publica. */
+  return { app, websocket, events };
 }

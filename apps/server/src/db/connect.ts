@@ -14,9 +14,12 @@ export interface Connection {
   describe: string;
 }
 
+/** Valor de `pgliteDir` para um PGlite em memória (some ao parar). */
+export const MEMORY = "memory://";
+
 /**
  * Com `DATABASE_URL`, fala com o Postgres (produção, compose).
- * Sem ela, usa um PGlite em disco em `pgliteDir` (só para `bun run dev`).
+ * Sem ela, usa um PGlite em disco em `pgliteDir` (só para `bun run dev`), ou em memória com `MEMORY`.
  */
 export function connect(env: { DATABASE_URL?: string; pgliteDir: string }): Connection {
   if (env.DATABASE_URL) {
@@ -29,13 +32,13 @@ export function connect(env: { DATABASE_URL?: string; pgliteDir: string }): Conn
       describe: "Postgres (DATABASE_URL)",
     };
   }
-  mkdirSync(env.pgliteDir, { recursive: true });
+  if (env.pgliteDir !== MEMORY) mkdirSync(env.pgliteDir, { recursive: true });
   const client = new PGlite(env.pgliteDir);
   const db = drizzlePglite(client, { schema, casing: "snake_case" });
   return {
     db,
     migrate: () => migratePglite(db, { migrationsFolder }),
     close: () => client.close(),
-    describe: `PGlite em ${env.pgliteDir}`,
+    describe: env.pgliteDir === MEMORY ? "PGlite em memória" : `PGlite em ${env.pgliteDir}`,
   };
 }

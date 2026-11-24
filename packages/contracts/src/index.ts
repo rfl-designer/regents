@@ -49,6 +49,27 @@ export interface SendMessageInput {
   body: string;
 }
 
+// ---------- eventos do WebSocket ----------
+
+/** Onde o PWA abre o WebSocket de eventos. A identidade é a da requisição de upgrade. */
+export const EVENTS_PATH = "/api/events";
+
+/**
+ * Tudo o que o servidor empurra pelo WebSocket. Cada evento é um JSON com `type`.
+ * Comandos continuam no HTTP: o cliente não manda nada por aqui.
+ *
+ * Novos eventos (Desfecho, Andamento, não-lido, badge, presença, faixas) entram
+ * como mais membros desta união, com `type` no formato `assunto.fato`.
+ */
+export type ServerEvent =
+  /** Primeiro evento de toda conexão: daqui em diante, nada publicado se perde. */
+  | { type: "ready"; me: MeDto }
+  /** Mensagem nova numa conversa que o Membro vê. Também chega a quem a enviou. */
+  | { type: "message.created"; message: MessageDto };
+
+export type ServerEventType = ServerEvent["type"];
+export type ServerEventOf<T extends ServerEventType> = Extract<ServerEvent, { type: T }>;
+
 // ---------- erros ----------
 
 export type ApiError =

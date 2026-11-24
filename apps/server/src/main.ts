@@ -3,7 +3,8 @@
  *
  * Variáveis:
  * - `SHEARIM_IDENTITY`: `dev` (cookie, só desenvolvimento). O `whois` da tailnet chega no #37.
- * - `DATABASE_URL`: Postgres. Sem ela, PGlite em `SHEARIM_PGLITE_DIR` (padrão `.data/pglite`).
+ * - `DATABASE_URL`: Postgres. Sem ela, PGlite em `SHEARIM_PGLITE_DIR` (padrão `.data/pglite`;
+ *   `memory://` para um banco em memória que some ao parar).
  * - `HOST` (padrão `0.0.0.0`), `PORT` (padrão `3000`).
  * - `SHEARIM_WEB_DIST`: build do PWA servido em `/` (padrão `apps/web/dist`).
  */
@@ -13,7 +14,7 @@ import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { createApp } from "./app";
 import { systemClock } from "./clock";
-import { connect } from "./db/connect";
+import { connect, MEMORY } from "./db/connect";
 import { createDevIdentity } from "./identity/dev";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
@@ -34,10 +35,16 @@ function identityFromEnv() {
   );
 }
 
+/** `memory://` é um PGlite em memória, que some ao parar (o e2e usa para começar do zero). */
+function pgliteDirFromEnv(raw: string | undefined) {
+  if (raw === MEMORY) return raw;
+  return resolve(raw ?? resolve(repoRoot, ".data/pglite"));
+}
+
 async function main(command: string | undefined) {
   const conn = connect({
     DATABASE_URL: process.env.DATABASE_URL,
-    pgliteDir: resolve(process.env.SHEARIM_PGLITE_DIR ?? resolve(repoRoot, ".data/pglite")),
+    pgliteDir: pgliteDirFromEnv(process.env.SHEARIM_PGLITE_DIR),
   });
 
   if (command === "migrate") {
@@ -50,7 +57,12 @@ async function main(command: string | undefined) {
 
   const dev = identityFromEnv();
   await conn.migrate();
-  const { app } = createApp({ db: conn.db, identity: dev.identity, clock: systemClock, devRoutes: dev.routes });
+  const { app, websocket } = createApp({
+    db: conn.db,
+    identity: dev.identity,
+    clock: systemClock,
+    devRoutes: dev.routes,
+  });
 
   const root = new Hono();
   root.route("/", app);
@@ -66,6 +78,7 @@ async function main(command: string | undefined) {
     hostname: process.env.HOST ?? "0.0.0.0",
     port: Number(process.env.PORT ?? 3000),
     fetch: root.fetch,
+    websocket,
   });
   console.log(`shearim: ouvindo em http://${server.hostname}:${server.port} (${conn.describe})`);
 

@@ -3,6 +3,7 @@ import { asc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
+import type { Audience, EventHub } from "./events";
 import type { Member } from "./members";
 
 type Env = { Variables: { member: Member } };
@@ -10,8 +11,8 @@ type Env = { Variables: { member: Member } };
 const { channels, messages, members } = schema;
 
 /** Rotas de Canais e mensagens. Uma mensagem de pessoa é gravada antes de qualquer outra coisa. */
-export function conversationRoutes(deps: { db: Db; clock: Clock }) {
-  const { db, clock } = deps;
+export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHub }) {
+  const { db, clock, events } = deps;
   const routes = new Hono<Env>();
 
   routes.get("/channels", async (c) => {
@@ -74,10 +75,16 @@ export function conversationRoutes(deps: { db: Db; clock: Clock }) {
       author: { id: author.id, displayName: author.displayName },
       createdAt: values.createdAt.toISOString(),
     };
+    events.publish(audienceOf(channel), { type: "message.created", message: dto });
     return c.json(dto, 201);
   });
 
   return routes;
+}
+
+/** Quem recebe os eventos de um Canal. Hoje só há Canal público, que todo Membro vê. */
+function audienceOf(_channel: typeof channels.$inferSelect): Audience {
+  return "everyone";
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

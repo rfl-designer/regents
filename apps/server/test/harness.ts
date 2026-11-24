@@ -6,6 +6,7 @@
  * o que se verifica é o que um cliente veria.
  */
 import { PGlite } from "@electric-sql/pglite";
+import { EVENTS_PATH, type ServerEvent, type ServerEventOf, type ServerEventType } from "@shearim/contracts";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { createApp } from "../src/app";
@@ -116,6 +117,111 @@ export const fakeIdentity: IdentityPort = {
   },
 };
 
+// ---------- WebSocket de eventos, como um cliente ----------
+
+/** Quanto `next` espera por padrão. Curto: um evento que vai chegar chega em milissegundos. */
+const EVENT_TIMEOUT_MS = 1_000;
+
+/** Uma conexão aberta no WebSocket de eventos, com a fila do que chegou. */
+export interface EventSocket {
+  /**
+   * O próximo evento desse tipo ainda não lido (os de outros tipos ficam na fila).
+   * Falha depois de `timeoutMs` dizendo o que chegou no lugar.
+   */
+  next<T extends ServerEventType>(type: T, opts?: { timeoutMs?: number }): Promise<ServerEventOf<T>>;
+  /** Tudo o que chegou até agora, na ordem, inclusive o que `next` já leu. */
+  received(): ServerEvent[];
+  close(): Promise<void>;
+}
+
+/**
+ * Abre o WebSocket com estes headers e só devolve depois do `ready`:
+ * a partir daí, todo evento publicado para essa conexão chega a ela.
+ */
+async function openEventSocket(url: string, headers: Record<string, string>, label: string): Promise<EventSocket> {
+  // O WebSocket do Bun aceita `headers` no construtor (é assim que a identidade falsa chega
+  // no handshake); os tipos do DOM, que o tsconfig inclui, só conhecem `protocols`.
+  const ws = new WebSocket(url, { headers } as unknown as string[]);
+  const all: ServerEvent[] = [];
+  const unread: ServerEvent[] = [];
+  const waiters: { type: ServerEventType; resolve: (e: ServerEvent) => void }[] = [];
+  let closed: Promise<void> | undefined;
+
+  const deliver = () => {
+    for (const w of [...waiters]) {
+      const i = unread.findIndex((e) => e.type === w.type);
+      if (i < 0) continue;
+      const [event] = unread.splice(i, 1);
+      waiters.splice(waiters.indexOf(w), 1);
+      w.resolve(event!);
+    }
+  };
+  ws.addEventListener("message", (e) => {
+    const event = JSON.parse(String(e.data)) as ServerEvent;
+    all.push(event);
+    unread.push(event);
+    deliver();
+  });
+
+  const socket: EventSocket = {
+    next(type, opts = {}) {
+      const timeoutMs = opts.timeoutMs ?? EVENT_TIMEOUT_MS;
+      return new Promise((resolve, reject) => {
+        const waiter = {
+          type,
+          resolve: (e: ServerEvent) => {
+            clearTimeout(timer);
+            resolve(e as ServerEventOf<typeof type>);
+          },
+        };
+        const timer = setTimeout(() => {
+          waiters.splice(waiters.indexOf(waiter), 1);
+          const got = all.map((e) => e.type).join(", ") || "nenhum";
+          reject(new Error(`${label}: nenhum evento "${type}" em ${timeoutMs} ms (chegaram: ${got})`));
+        }, timeoutMs);
+        waiters.push(waiter);
+        deliver();
+      });
+    },
+    received: () => [...all],
+    close() {
+      closed ??= new Promise((resolve) => {
+        if (ws.readyState === WebSocket.CLOSED) return resolve();
+        ws.addEventListener("close", () => resolve(), { once: true });
+        ws.close();
+      });
+      return closed;
+    },
+  };
+
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label}: o WebSocket não mandou "ready" em ${EVENT_TIMEOUT_MS} ms`)),
+      EVENT_TIMEOUT_MS,
+    );
+    const done = (err?: Error) => {
+      clearTimeout(timer);
+      ws.removeEventListener("message", onMessage);
+      ws.removeEventListener("close", onClose);
+      err ? reject(err) : resolve();
+    };
+    const onMessage = () => all.some((e) => e.type === "ready") && done();
+    const onClose = (e: CloseEvent) =>
+      done(new Error(`${label}: o WebSocket fechou antes do "ready" (código ${e.code}); o upgrade foi recusado?`));
+    ws.addEventListener("message", onMessage);
+    ws.addEventListener("close", onClose);
+  });
+  return socket;
+}
+
+/** Os headers de um upgrade de WebSocket, para pedir um sem abrir a conexão. */
+const UPGRADE_HEADERS = {
+  connection: "Upgrade",
+  upgrade: "websocket",
+  "sec-websocket-version": "13",
+  "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+};
+
 // ---------- app de teste ----------
 
 export interface Client {
@@ -130,7 +236,18 @@ export type TestApp = Awaited<ReturnType<typeof testApp>>;
 export async function testApp(opts: { clock?: FakeClock } = {}) {
   const { db } = await testDb();
   const clock = opts.clock ?? fakeClock();
-  const { app } = createApp({ db, identity: fakeIdentity, clock });
+  const { app, websocket, events } = createApp({ db, identity: fakeIdentity, clock });
+
+  // O WebSocket precisa de um servidor de verdade; ele só sobe quando um teste abre conexão.
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  function origin() {
+    if (!server) {
+      const s = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: app.fetch, websocket });
+      server = s;
+      onCleanup(() => s.stop(true));
+    }
+    return `127.0.0.1:${server.port}`;
+  }
 
   function client(extra: Record<string, string>): Client {
     const request = (path: string, init: RequestInit = {}) => {
@@ -159,5 +276,19 @@ export async function testApp(opts: { clock?: FakeClock } = {}) {
     as: (who: Person) => client(identityHeaders(who)),
     /** Cliente HTTP sem identidade (nó com tag, Funnel). */
     anonymous: (reason: NoIdentityReason = "tagged") => client(identityHeaders({ none: reason })),
+    /**
+     * Abre o WebSocket de eventos como essa pessoa (uma aba do PWA) e espera o `ready`.
+     * Fecha sozinho no fim do teste.
+     */
+    async socket(who: Person, label = `WebSocket de ${who.name ?? who.id}`) {
+      const socket = await openEventSocket(`ws://${origin()}${EVENTS_PATH}`, identityHeaders(who), label);
+      onCleanup(() => socket.close());
+      return socket;
+    },
+    /** Pede o upgrade do WebSocket sem abrir a conexão; para ver a recusa (`res.status`). */
+    upgrade: (who: Person | { none: NoIdentityReason }) =>
+      fetch(`http://${origin()}${EVENTS_PATH}`, { headers: { ...UPGRADE_HEADERS, ...identityHeaders(who) } }),
+    /** O ponto único de publicação de eventos do app, para testar o envio direto. */
+    events,
   };
 }
