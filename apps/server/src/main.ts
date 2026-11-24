@@ -259,8 +259,9 @@ async function main(command: string | undefined) {
     if (stopping) return;
     stopping = true;
     await (drain ? shearim.drain() : shearim.halt());
-    // No Bun 1.3.11, depois que o servidor fecha um WebSocket (o 1012 acima), a promessa do
-    // `stop()` nunca resolve, embora a porta feche na hora: espera as requisições em curso até 1 s.
+    // No Bun 1.3.11, depois que o servidor fecha um WebSocket (o 1012 acima, ou o 4403 de um Membro
+    // removido), a promessa do `stop()` nunca resolve, embora a porta feche na hora: espera as
+    // requisições em curso até 1 s.
     await Promise.race([server.stop(), Bun.sleep(1_000)]);
     await shearim.close();
     await conn.close();

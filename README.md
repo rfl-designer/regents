@@ -61,6 +61,7 @@ apps/server/        Bun + Hono + Drizzle
   src/dms.ts        rotas de DMs (abrir, listar)
   src/participation.ts  quem participa, quem vê (canSee) e quem recebe eventos (audienceOf)
   src/agents.ts     rotas de Agentes; src/workspace-key.ts a Chave do Workspace (cifrada por src/secrets.ts)
+  src/key-budget.ts Chave e orçamentos: o gasto na Chave por Agente e mês, o orçamento e os incidentes da Chave
   src/articuladora.ts  a Articuladora: descrição, instruções e modelo do roteamento (do código)
   src/routing.ts    o contrato de roteamento (pedido, `ROUTING_SCHEMA`, conferência) e o mapa do Workspace visto pelo autor
   src/outcomes.ts   os Desfechos gravados (`outcomes`) e o `OutcomeDto`
@@ -80,6 +81,7 @@ apps/server/        Bun + Hono + Drizzle
   src/identity/     porta de identidade: whois.ts (tailnet) e dev.ts
   src/join-requests.ts  Pedido de entrada (pedir, aprovar, recusar)
   src/members.ts    Membro (com o identificador), primeira entrada, lista de Membros
+  src/member-admin.ts  o Admin gerencia Membros: papel (`PATCH /api/members/:id`) e remoção (`DELETE`)
   src/profile.ts    perfil do próprio Membro (`/api/me`)
   src/mention-handles.ts  espaço de nomes dos identificadores de Menção (Membros e Agentes)
   src/mentions.ts   `@nome` no texto: extração, quem foi mencionado, registro
@@ -158,6 +160,26 @@ aba.received();                                             // tudo o que chegou
 t.events.publish({ members: [id] }, evento);                 // publicar direto no hub
 ```
 
+`events.disconnect(memberId, código, motivo)` fecha todas as conexões de um Membro: a remoção usa `MEMBER_REMOVED_CLOSE_CODE` (4403), que o `aba.closed` mostra. O mesmo cuidado com o `server.stop()` do Bun 1.3.11 vale aqui.
+
+### Admin gerencia Membros (#36)
+
+| Rota | Quem | O quê |
+|---|---|---|
+| `PATCH /api/members/:id` | Admin | `{ role: "admin" \| "member" }`: torna Admin ou rebaixa (inclusive a si mesmo). Devolve o `MemberSummaryDto` (que agora traz `role`) e publica `member.updated` para todos. Rebaixar o último Admin: `409 last_admin` |
+| `DELETE /api/members/:id` | Admin | remove o Membro (204). A si mesmo: `409 cannot_remove_self` (ninguém sai sozinho); o último Admin: `409 last_admin`; quem já saiu: 404 |
+
+As decisões de papel passam por uma trava (`pg_advisory_xact_lock`) que reconfere, dentro dela, que quem decide ainda é Admin e quantos Admins há: dois Admins rebaixando ou removendo um ao outro ao mesmo tempo não zeram os Admins.
+
+**Remoção** (o Membro "saiu do Workspace"): a linha fica, com `members.left_at` e o papel de volta a Membro comum.
+- O acesso acaba: o HTTP responde `403 not_a_member` (o `memberFor` não o reconhece), o upgrade do WebSocket dá 403 e as conexões abertas recebem `member.removed` (que vai a todos) e fecham com 4403. O push dele para (`push.forget`: inscrições, aparelhos e contagens apagados).
+- Sai dos Canais privados e das DMs em grupo (`channel.updated`/`dm.updated` para quem fica), e deixa de seguir as Threads deles. Continua nos Canais públicos e nas DMs a dois, que são o histórico dele (e nas Threads seguidas ali).
+- As execuções abertas das mensagens dele são canceladas pelo Shearim (`executions.cancelAuthoredBy`), à vista: `cancelled` com `reason: "quem escreveu saiu do Workspace"`. O `cancelled` sem motivo continua sendo o "cancelada por quem escreveu".
+- A Conta é desligada (`accounts.unlink`: `claude auth logout` e a pasta apagada) e uma ligação pela metade, encerrada (`accounts.cancel`).
+- As mensagens dele saem com `author.leftWorkspace: true` (a marca "saiu do Workspace"). Quem saiu não está em `GET /api/members`, não entra no "quem é quem" do contexto e não pode ser posto numa conversa (400).
+
+**Volta:** quem foi removido vê `removedAt` em `GET /api/join-request` (o pedido aprovado de antes não conta: `joinRequest: null`) e pede de novo. Aprovado, é o mesmo Membro (mesmo `UserProfile.ID`, mesmo id, nome e identificador), como Membro comum, com as mensagens e as DMs a dois de antes, e fora dos Canais privados e das DMs em grupo.
+
 ### Perfil e identificador de Menção (#19)
 
 - O nome e a foto vêm da tailnet na **primeira entrada** (o primeiro Admin pelo `whois`, quem foi aprovado pelo que o Pedido de entrada guardou). Depois, nada do `whois` é regravado: o nome é do Membro e a tailnet não o sobrescreve.
@@ -178,7 +200,7 @@ Um Canal público é visto por todo Membro; um privado só por quem participa. P
 | `GET /api/channels/:id` | quem vê | o Canal |
 | `POST /api/channels/:id/join` | Membro | entra num público (privado: 404) |
 | `POST /api/channels/:id/participants` | quem vê | `{ memberId }`; adiciona uma pessoa |
-| `GET /api/members` | Membro | `MemberSummaryDto[]` (`id`, `displayName`, `handle`, `profilePicUrl`, `about`), para escolher quem adicionar |
+| `GET /api/members` | Membro | `MemberSummaryDto[]` (`id`, `displayName`, `handle`, `profilePicUrl`, `about`, `role`), sem quem saiu do Workspace, para escolher quem adicionar |
 | `GET /api/channel-settings` | Admin | Instruções e N de todo Canal, sem mensagens nem participantes |
 | `PATCH /api/channel-settings/:id` | Admin | `{ instructions?, recentMessages? }` (N inteiro ≥ 0, padrão 30) |
 
@@ -283,10 +305,10 @@ t.claude.callsOf("auth login")[0]!.env.CLAUDE_CONFIG_DIR;     // o que cada star
 
 | Rota | Quem | O quê |
 |---|---|---|
-| `GET /api/workspace-key` | Admin | `{ configured, updatedAt }`. A Chave nunca volta |
+| `GET /api/workspace-key` | Admin | `{ configured, updatedAt, incident }` (o incidente da Chave aberto, ou `null`). A Chave nunca volta |
 | `PUT /api/workspace-key` | Admin | `{ apiKey }`: grava (cifrada com a chave mestra) |
-| `GET /api/agents` | Membro | `AgentDto[]` (com `handle`); `instructions` só para o Admin |
-| `POST /api/agents` | Admin | `{ name, photo?, description?, instructions?, model }`; 409 `name_taken` |
+| `GET /api/agents` | Membro | `AgentDto[]` (com `handle`); `instructions`, `monthlyBudgetUsd`, `keySpendUsd` e `overBudget` só para o Admin |
+| `POST /api/agents` | Admin | `{ name, photo?, description?, instructions?, model, monthlyBudgetUsd? }`; 409 `name_taken` |
 | `PATCH /api/agents/:id` | Admin | `UpdateAgentInput` (campo ausente fica); trocar o nome troca o `handle`. Na Articuladora, `description`/`instructions` dão `403 builtin_locked`; 409 `name_taken` |
 | `GET /api/conversations/:id/outcomes` | quem vê | os Desfechos da Articuladora (`OutcomeDto[]`), na ordem das mensagens; numa DM, vazio |
 | `POST /api/channels/:id/agents` | quem vê | `{ agentId }`: o Agente vira participante `kind: "agent"` |
@@ -323,7 +345,7 @@ Nos testes (`apps/server/test/concorrencia.test.ts`), `testApp({ limits: { key: 
 
 ### Quem paga e fila (#27)
 
-A tabela da Spec (módulo 6) vale para cada execução, inclusive o roteamento da Articuladora e o "Tentar de novo" (que a mesma tabela põe na Conta do autor). "Chave utilizável" é `keyUsableFor(agent)` em `executions.ts`: hoje, só que existe Chave; o orçamento do Agente entra ali (#28).
+A tabela da Spec (módulo 6) vale para cada execução, inclusive o roteamento da Articuladora e o "Tentar de novo" (que a mesma tabela põe na Conta do autor). "Chave utilizável" é `keyUsableFor(agent)` em `executions.ts`: existe Chave e o Agente tem orçamento no mês (#28, abaixo).
 
 | Conta do autor | Chave utilizável | Sem Chave utilizável |
 |---|---|---|
@@ -338,6 +360,16 @@ A tabela da Spec (módulo 6) vale para cada execução, inclusive o roteamento d
 - **A resposta pela Chave:** `MessageDto.payer` é `"key"` na resposta de Agente paga pela Chave (ausente pela Conta), para o "⚠ pela Chave do Workspace" ficar depois que o Andamento some.
 
 Nos testes (`apps/server/test/quem-paga.test.ts`), o limite é um roteiro do `fake-claude` com `{ rateLimit: { status: "rejected", resetsAt } }` (em segundos) e a volta é `t.clock.set(hora)`. A validação do "Ligar minha Conta" também consome a fila `runs` do `fake-claude`: roteirize depois de `t.linkAccount`. Duas Contas no mesmo teste precisam de assinaturas diferentes (`t.claude.script({ login: { account: { email } } })`), senão a segunda cai em "Ligar mesmo assim".
+
+### Chave e orçamentos (#28)
+
+`src/key-budget.ts` (o `ledger` das execuções), Spec módulo 9:
+
+- **Gasto:** cada chamada que a Chave pagou e terminou bem grava uma linha em `execution_usage` (execução, Agente, pagador `key`, modelo, tokens, `cost_usd` pelos preços de `model/key.ts`, `month` `YYYY-MM` em UTC pelo relógio injetado). A Conta não grava nada aqui. O gasto do mês de um Agente é a soma do mês (`keySpend`). A Articuladora paga do orçamento dela o roteamento (no Haiku) e as respostas.
+- **Orçamento:** `agents.monthly_budget_usd` (dólares, `>= 0`; nulo é sem teto), em `POST`/`PATCH /api/agents` (`monthlyBudgetUsd`; inválido dá 400). Para o Admin, `AgentDto` traz `monthlyBudgetUsd`, `keySpendUsd` (o mês corrente) e `overBudget` (gasto `>=` teto); os outros não veem nenhum dos três. É conferido em `keyUsableFor` antes de cada execução pela Chave (inclusive na troca no meio); a que já roda termina. Estourado, a Chave não é utilizável: quem não tem Conta vê "Agentes não agem: … Faro estourou o orçamento do mês na Chave", e quem tem Conta no limite espera na fila.
+- **Faixas do Admin:** `agent_budget.updated` (`AgentBudgetDto`) a cada uso da Chave e a cada mudança de teto; `key_incident.updated` (`KeyIncidentDto` ou `null`). Só para Admins. `GET /api/workspace-key` traz `incident`.
+- **Incidente da Chave:** `auth_failed`/`billing_failed` pela Chave abre um em `key_incidents` (um aberto por vez, índice parcial); a próxima chamada bem-sucedida pela Chave o encerra.
+- **Ganchos do push aos Admins (#34):** `hooks.keyIncidentOpened(incident)` (um por incidente) e `hooks.budgetExceeded(budget)` (no máximo um por Agente por mês, pela tabela `budget_overruns`, mesmo que o teto suba e estoure de novo). Nos testes, `testApp({ hooks })`. No e2e, `[chave recusada]` no texto faz a Messages API falsa recusar a Chave (401).
 
 ### Montagem de contexto
 
@@ -371,7 +403,7 @@ await chamada.emit({ type: "text", text: "Pronto." });
 await chamada.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
 ```
 
-`testApp({ hooks: { executionFailed } })` recebe as falhas de vez; `testApp({ limits })`, os tetos de concorrência.
+`testApp({ hooks: { executionFailed } })` recebe as falhas de vez; `keyIncidentOpened` e `budgetExceeded`, os avisos da Chave (#28). `testApp({ limits })` troca os tetos de concorrência.
 
 ### A Articuladora e o Desfecho (#22, ADR 0004)
 
@@ -391,7 +423,7 @@ bun run e2e                                   # build do PWA + todos os e2e
 (cd e2e && npx e2e run --headed)              # vendo o navegador
 ```
 
-O runner sobe o servidor de verdade (por `e2e/serve.ts`, que antes sobe a Messages API falsa, respondendo devagar para a bolha "escrevendo" aparecer, e aponta o servidor para ela com uma chave mestra temporária; uma mensagem com `[falhe 2x]` no texto recebe a sobrecarga da Anthropic nas duas primeiras chamadas, para o cartão de falha, que sai depois dos 10 s de verdade da nova tentativa) numa porta livre, servindo `apps/web/dist`, com `SHEARIM_IDENTITY=dev` e `SHEARIM_PGLITE_DIR=memory://`: cada execução começa de uma Instalação vazia, e a primeira aba a abrir (a "Pessoa Dev") vira Admin. Os testes da mesma execução dividem esse banco, então use textos únicos (`Date.now()`). O Chromium do e2e nega toda permissão; para o caminho de "Ligar notificações", `tests/notificacoes.e2e.ts` troca o push service do navegador por um falso com `browser.addInitScript`. Para o servidor ver uma inscrição morrer, `support/push-service.ts` sobe, no processo do teste, um push service falso em HTTPS (`dead()` responde `410`, `alive()` responde `201`); o `serve.ts` faz o servidor aceitar o certificado dele por `NODE_EXTRA_CA_CERTS` (`apps/server/test/fakes/push-cert.ts`, o mesmo do coletor). Em `tests/aparelhos.e2e.ts`, cada teste tem o seu (fixture `push`), porque os testes rodam ao mesmo tempo. Duas abas da mesma pessoa são `browser.newTab()` + `browser.goto("/")` e `tab.activate()`. O cookie `dev_user` vale para o contexto inteiro (todas as abas), então uma segunda pessoa no mesmo teste age pela API, com os helpers de `e2e/support/people.ts`: `newPerson("Bruno")` (id único na execução), `addMember(app.baseUrl, bruno)` (ela pede e a Pessoa Dev aprova), `requestToJoin`/`approve` separados, e `as(app.baseUrl, bruno)("/api/...", init)` para chamar a API como ela (sem pessoa, é a Pessoa Dev). `/dev/como/<id>?nome=Fulana` troca a pessoa do navegador todo; ela chega como não-Membro, no Pedido de entrada. Para os avisos de conexão, `e2e/support/network.ts` é uma rede de mentira (o runner não tem `setOffline`): `emulateNetwork(browser, modo?)` antes do `app.open` e `network(browser, "offline" | "server-down" | "socket-down" | "online")` depois; `socketsOpened(browser)` conta os WebSockets que a página tentou abrir. O dreno de verdade está em `tests/atualizacao.e2e.ts`, que sobe um Shearim só seu (o fixture `shearim`, com `update()` = SIGTERM e `start()` = a versão nova na mesma porta), porque o servidor da execução é de todos. Resultados e traces ficam em `e2e/.e2e/` (ignorado pelo git). Antes de escrever um teste, leia `npx e2e guide writing-tests`.
+O runner sobe o servidor de verdade (por `e2e/serve.ts`, que antes sobe a Messages API falsa, respondendo devagar para a bolha "escrevendo" aparecer, e aponta o servidor para ela com uma chave mestra temporária; uma mensagem com `[falhe 2x]` no texto recebe a sobrecarga da Anthropic nas duas primeiras chamadas, para o cartão de falha, que sai depois dos 10 s de verdade da nova tentativa, e uma com `[chave recusada]` recebe o 401 que abre o incidente da Chave) numa porta livre, servindo `apps/web/dist`, com `SHEARIM_IDENTITY=dev` e `SHEARIM_PGLITE_DIR=memory://`: cada execução começa de uma Instalação vazia, e a primeira aba a abrir (a "Pessoa Dev") vira Admin. Os testes da mesma execução dividem esse banco, então use textos únicos (`Date.now()`). O Chromium do e2e nega toda permissão; para o caminho de "Ligar notificações", `tests/notificacoes.e2e.ts` troca o push service do navegador por um falso com `browser.addInitScript`. Para o servidor ver uma inscrição morrer, `support/push-service.ts` sobe, no processo do teste, um push service falso em HTTPS (`dead()` responde `410`, `alive()` responde `201`); o `serve.ts` faz o servidor aceitar o certificado dele por `NODE_EXTRA_CA_CERTS` (`apps/server/test/fakes/push-cert.ts`, o mesmo do coletor). Em `tests/aparelhos.e2e.ts`, cada teste tem o seu (fixture `push`), porque os testes rodam ao mesmo tempo. Duas abas da mesma pessoa são `browser.newTab()` + `browser.goto("/")` e `tab.activate()`. O cookie `dev_user` vale para o contexto inteiro (todas as abas), então uma segunda pessoa no mesmo teste age pela API, com os helpers de `e2e/support/people.ts`: `newPerson("Bruno")` (id único na execução), `addMember(app.baseUrl, bruno)` (ela pede e a Pessoa Dev aprova), `requestToJoin`/`approve` separados, e `as(app.baseUrl, bruno)("/api/...", init)` para chamar a API como ela (sem pessoa, é a Pessoa Dev). `/dev/como/<id>?nome=Fulana` troca a pessoa do navegador todo; ela chega como não-Membro, no Pedido de entrada. Para os avisos de conexão, `e2e/support/network.ts` é uma rede de mentira (o runner não tem `setOffline`): `emulateNetwork(browser, modo?)` antes do `app.open` e `network(browser, "offline" | "server-down" | "socket-down" | "online")` depois; `socketsOpened(browser)` conta os WebSockets que a página tentou abrir. O dreno de verdade está em `tests/atualizacao.e2e.ts`, que sobe um Shearim só seu (o fixture `shearim`, com `update()` = SIGTERM e `start()` = a versão nova na mesma porta), porque o servidor da execução é de todos. Resultados e traces ficam em `e2e/.e2e/` (ignorado pelo git). Antes de escrever um teste, leia `npx e2e guide writing-tests`.
 
 ## Instalação
 

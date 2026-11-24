@@ -7,12 +7,12 @@ import {
   NODE_KEY_WARNING_DAYS,
   type NodeKeyDto,
 } from "@shearim/contracts";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
 import type { EventHub } from "../events";
-import type { Member } from "../members";
+import { isActive, type Member } from "../members";
 import type { Push } from "../push";
 import { migrationState } from "./migrations";
 import { type NodeKeyPort, noNodeKey } from "./node-key";
@@ -111,7 +111,12 @@ export function createInstallation(deps: {
   }
 
   async function admins() {
-    return (await db.select({ id: members.id }).from(members).where(eq(members.role, "admin"))).map((m) => m.id);
+    return (
+      await db
+        .select({ id: members.id })
+        .from(members)
+        .where(and(isActive, eq(members.role, "admin")))
+    ).map((m) => m.id);
   }
 
   /** Marca o aviso como enviado; `true` só na primeira vez. */

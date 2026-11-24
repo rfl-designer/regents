@@ -185,6 +185,28 @@ describe("avisos ao Admin sobre o backup", () => {
     expect(cleared.installation.backup.last).toMatchObject({ ok: true });
   }, 60_000);
 
+  test("Admin removido do Workspace não é mais Admin: nem a seção Instalação nem os avisos do backup", async () => {
+    const t = await testApp({ installation: { watch: true } });
+    const brunoMembro = await t.addMember(bruno, { by: juliana });
+    await t.as(juliana).patch(`/api/members/${brunoMembro.id}`, { role: "admin" });
+    expect((await t.as(bruno).get("/api/installation")).status).toBe(200);
+    const celularDaJuliana = await t.pushDevice(juliana);
+    const celularDoBruno = await t.pushDevice(bruno);
+    expect((await t.as(juliana).delete(`/api/members/${brunoMembro.id}`)).status).toBeLessThan(300);
+    const { job, dumper } = nightly(t, backupsDir());
+    dumper.failWith("pg_dump: error: connection to server failed");
+
+    await job.runNow();
+    t.clock.advance(CHECK);
+
+    // Os pushes saem em fila: quando o da Juliana chega, o do Bruno já teria chegado.
+    expect((await celularDaJuliana.next({ timeoutMs: 5_000 })).payload.notification.title).toBe(
+      "O backup do Shearim falhou",
+    );
+    expect(t.push.deliveries.filter((d) => d.endpoint === celularDoBruno.subscription.endpoint)).toEqual([]);
+    expect((await t.as(bruno).get("/api/installation")).status).not.toBe(200);
+  }, 60_000);
+
   test("36 h sem backup bom depois de um que deu certo: push com quando foi o último, e a faixa", async () => {
     const t = await testApp({ installation: { watch: true } });
     const celular = await t.pushDevice(juliana);

@@ -40,10 +40,10 @@ describe("Chave do Workspace", () => {
     const res = await t.as(juliana).put("/api/workspace-key", { apiKey: "sk-ant-api03-segredo-do-workspace" });
     const depois = await t.as(juliana).get("/api/workspace-key");
 
-    expect(antes).toEqual({ configured: false, updatedAt: null });
+    expect(antes).toEqual({ configured: false, updatedAt: null, incident: null });
     expect(res.status).toBe(200);
     const gravada: WorkspaceKeyDto = await res.json();
-    expect(gravada).toEqual({ configured: true, updatedAt: "2026-11-24T12:00:00.000Z" });
+    expect(gravada).toEqual({ configured: true, updatedAt: "2026-11-24T12:00:00.000Z", incident: null });
     expect(await depois.text()).not.toContain("segredo");
   });
 
@@ -91,7 +91,16 @@ describe("Agentes", () => {
     const res = await t.as(juliana).post("/api/agents", faro);
 
     expect(res.status).toBe(201);
-    expect(await res.json()).toEqual({ id: expect.any(String), handle: "faro", builtin: false, ...faro });
+    expect(await res.json()).toEqual({
+      id: expect.any(String),
+      handle: "faro",
+      builtin: false,
+      ...faro,
+      // O orçamento e o gasto na Chave, só para o Admin (#28).
+      monthlyBudgetUsd: null,
+      keySpendUsd: 0,
+      overBudget: false,
+    });
   });
 
   test("o Agente ganha o identificador de Menção do nome inteiro, sem espaço nem acento", async () => {
@@ -113,7 +122,7 @@ describe("Agentes", () => {
     const visto = await semArticuladora(t, bruno);
     const doAdmin = await semArticuladora(t, juliana);
 
-    const { instructions: _, ...publico } = criado;
+    const { instructions: _, monthlyBudgetUsd: _b, keySpendUsd: _g, overBudget: _o, ...publico } = criado;
     expect(visto).toEqual([publico]);
     expect(doAdmin).toEqual([criado]);
   });

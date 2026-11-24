@@ -8,6 +8,7 @@ import type { Clock } from "./clock";
 import { buildContext, type Call } from "./context";
 import { type Db, schema } from "./db/client";
 import { type EventHub, without } from "./events";
+import type { KeyLedger } from "./key-budget";
 import { findMessage } from "./messages";
 import type { ModelEvent, ModelPort, ModelRequest, Payer, TerminalModelEvent } from "./model/port";
 import { outcomeOf, recordOutcome } from "./outcomes";
@@ -122,9 +123,10 @@ export interface ExecutionHooks {
  * utilizável, quem espera a própria Conta fica "⏸ na fila" (`held`), fora da vez, sem segurar os
  * outros, e volta com a hora de chegada de antes.
  *
+ * O gasto na Chave, o orçamento e os incidentes da Chave (#28) ficam no `ledger` (`key-budget.ts`):
+ * `byPayer` avisa cada chamada que a Chave pagou e cada recusa dela; `keyUsableFor` confere o orçamento.
+ *
  * Fica para depois, com o seam indicado:
- * - o orçamento do Agente na Chave (#28): `keyUsableFor`;
- * - incidente da Chave em `auth_failed`/`billing_failed` e o gasto por Agente (#28): `settle`;
  * - push da falha ao autor (#32): `hooks.executionFailed`.
  */
 export interface Executions {
@@ -144,6 +146,11 @@ export interface Executions {
    * A conferência de que é o autor fica com quem chama.
    */
   cancel(originMessageId: string): Promise<ExecutionDto[]>;
+  /**
+   * Cancela, pelo Shearim, tudo o que as mensagens desse Membro ainda têm aberto (o Admin o
+   * removeu), com o motivo à vista de quem vê a conversa. Devolve as canceladas.
+   */
+  cancelAuthoredBy(memberId: string, reason: string): Promise<ExecutionDto[]>;
   /**
    * "Tentar de novo" de uma falha: refaz só esta execução (o passo que falhou), do começo, com
    * o contexto relido e o pagador decidido de novo (marcada como do autor, para o #27). Devolve
@@ -176,10 +183,12 @@ export function createExecutions(deps: {
   hooks?: ExecutionHooks;
   /** A resposta conta como não-lida para quem participa da conversa. */
   reading: Pick<Reading, "messageCreated">;
+  /** O gasto na Chave por Agente e por mês, o orçamento e os incidentes da Chave (#28). */
+  ledger: KeyLedger;
   /** Os tetos de concorrência (padrão: os da Spec, `DEFAULT_LIMITS`). */
   limits?: Partial<ExecutionLimits>;
 }): Executions {
-  const { db, clock, events, model, secrets, hooks, reading } = deps;
+  const { db, clock, events, model, secrets, hooks, reading, ledger } = deps;
   const limits: ExecutionLimits = { ...DEFAULT_LIMITS, ...deps.limits };
   /** As que o trabalhador olhou e não pôde pôr para rodar agora: "esperando a vez". */
   const waiting = new Set<string>();
@@ -284,12 +293,15 @@ export function createExecutions(deps: {
   }
 
   /**
-   * "Chave utilizável" (Spec, módulo 6): existe Chave e o Agente tem orçamento. O orçamento é do
-   * #28; por enquanto, só a existência da Chave. Sem ela, o motivo (o de todos, sem a Conta).
+   * "Chave utilizável" (Spec, módulo 6): existe Chave e o Agente tem orçamento no mês (conferido
+   * antes de cada execução pela Chave, inclusive na troca no meio). Sem ela, o motivo (o de todos,
+   * sem a Conta).
    */
-  async function keyUsableFor(_agent: Agent): Promise<{ apiKey: string } | { reason: string }> {
+  async function keyUsableFor(agent: Agent): Promise<{ apiKey: string } | { reason: string }> {
     const apiKey = await readWorkspaceKey(db, secrets);
-    return apiKey ? { apiKey } : { reason: "o Workspace não tem Chave" };
+    if (!apiKey) return { reason: "o Workspace não tem Chave" };
+    const budget = await ledger.usable(agent.id);
+    return budget.ok ? { apiKey } : { reason: budget.reason };
   }
 
   /**
@@ -391,7 +403,14 @@ export function createExecutions(deps: {
       .set({ payer: payer.kind, apiRetryAttempt: null, apiRetryMax: null })
       .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
     await publish(job.id);
-    const result = await complete(job, controller, await build(payer));
+    const request = await build(payer);
+    const result = await complete(job, controller, request);
+    if (result && payer.kind === "key") {
+      const end = result.end;
+      if (end?.type === "done") await ledger.charged(job, { model: request.model, ...end });
+      if (end?.type === "auth_failed" || end?.type === "billing_failed") await ledger.refused(end.type);
+      return result;
+    }
     if (!result || payer.kind !== "account") return result;
     if (result.end?.type === "limit" || result.end?.type === "auth_failed") {
       if (result.end.type === "limit") {
@@ -528,6 +547,46 @@ export function createExecutions(deps: {
     events.publish(await audienceOf(db, channel!), { type: "message.created", message: replyDto });
     await reading.messageCreated(replyDto);
     await publish(job.id);
+  }
+
+  /**
+   * Cancela, em qualquer passo, as execuções abertas que atendem a `where`: a que está rodando é
+   * interrompida. `reason` nulo é o cancelamento por quem escreveu; com motivo, foi o Shearim.
+   */
+  async function cancelWhere(where: SQL, reason: string | null): Promise<ExecutionDto[]> {
+    const now = clock.now();
+    const cancelled = await db
+      .update(executions)
+      .set({
+        state: "cancelled",
+        step: null,
+        since: now,
+        finishedAt: now,
+        retryAt: null,
+        apiRetryAttempt: null,
+        apiRetryMax: null,
+        reason,
+        authorReason: null,
+        held: false,
+        heldUntil: null,
+      })
+      .where(and(where, inArray(executions.state, OPEN_STATES)))
+      .returning({ id: executions.id });
+    for (const { id } of cancelled) {
+      waiting.delete(id);
+      running.get(id)?.abort("cancelled" satisfies Interruption);
+      await publish(id);
+    }
+    if (cancelled.length === 0) return [];
+    // A que saiu da fila pode ter sido a que segurava a série.
+    wake();
+    const done = await views(
+      inArray(
+        executions.id,
+        cancelled.map((c) => c.id),
+      ),
+    );
+    return done.map((v) => v.author);
   }
 
   /**
@@ -824,41 +883,16 @@ export function createExecutions(deps: {
         v.authorId === viewerId ? v.author : v.everyone,
       ),
 
-    async cancel(originMessageId) {
-      const now = clock.now();
-      const cancelled = await db
-        .update(executions)
-        .set({
-          state: "cancelled",
-          step: null,
-          since: now,
-          finishedAt: now,
-          retryAt: null,
-          apiRetryAttempt: null,
-          apiRetryMax: null,
-          reason: null,
-          authorReason: null,
-          held: false,
-          heldUntil: null,
-        })
-        .where(and(eq(executions.originMessageId, originMessageId), inArray(executions.state, OPEN_STATES)))
-        .returning({ id: executions.id });
-      for (const { id } of cancelled) {
-        waiting.delete(id);
-        running.get(id)?.abort("cancelled" satisfies Interruption);
-        await publish(id);
-      }
-      if (cancelled.length === 0) return [];
-      // A que saiu da fila pode ter sido a que segurava a série.
-      wake();
-      const done = await views(
+    cancel: (originMessageId) => cancelWhere(eq(executions.originMessageId, originMessageId), null),
+
+    cancelAuthoredBy: (memberId, reason) =>
+      cancelWhere(
         inArray(
-          executions.id,
-          cancelled.map((c) => c.id),
+          executions.originMessageId,
+          db.select({ id: messages.id }).from(messages).where(eq(messages.authorMemberId, memberId)),
         ),
-      );
-      return done.map((v) => v.author);
-    },
+        reason,
+      ),
 
     async retry(executionId) {
       const now = clock.now();
@@ -1042,7 +1076,7 @@ function failureReason(end: TerminalModelEvent | undefined) {
 }
 
 /** Estados em que o motivo aparece. */
-const WITH_REASON: readonly ExecutionState[] = ["retrying", "failed", "not_acting"];
+const WITH_REASON: readonly ExecutionState[] = ["retrying", "failed", "not_acting", "cancelled"];
 
 /**
  * O Andamento de cada execução nas duas cópias: a de todos e a do autor da mensagem de origem,

@@ -19,7 +19,9 @@ import { DmView } from "./DmView";
 import { EntryView } from "./EntryView";
 import { InstallationBanner, InstallationSettings, useInstallation } from "./Installation";
 import { JoinRequestsPanel } from "./JoinRequestsPanel";
+import { KeyBanners } from "./KeyBanners";
 import { setPresence, useServerEvents } from "./live";
+import { MembersSettings } from "./MembersAdmin";
 import { AccountOffer, MyAccount, useAccount } from "./MyAccount";
 import { NotificationsOnboarding } from "./NotificationsOnboarding";
 import { closeNotificationsOf, usePush } from "./notifications";
@@ -144,6 +146,8 @@ export function App() {
     if (event.type === "member.updated") {
       setMe((me) => (me.id === event.member.id ? { ...me, ...event.member } : me));
     }
+    // Um Admin me removeu: o Workspace some e fica a tela do Pedido de entrada.
+    if (event.type === "member.removed" && state.kind === "ready" && event.memberId === state.me.id) void load();
   }, state.kind === "ready");
 
   useEffect(() => {
@@ -267,6 +271,9 @@ export function App() {
         </div>
       </header>
       {state.me.role === "admin" && <JoinRequestsPanel />}
+      {state.me.role === "admin" && (
+        <KeyBanners onOpenKey={() => setView("key")} onOpenAgents={() => setView("agents")} />
+      )}
       {view !== "installation" && (
         <InstallationBanner installation={installation.installation} onOpen={() => setView("installation")} />
       )}
@@ -300,6 +307,8 @@ export function App() {
           <ProfileView key={state.me.id} me={state.me} onSaved={(me) => setMe(() => me)} />
         ) : view === "account" ? (
           <MyAccount state={account} />
+        ) : view === "members" ? (
+          <MembersSettings me={state.me} />
         ) : view === "notifications" ? (
           <DevicesView push={push} />
         ) : view === "context" ? (

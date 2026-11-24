@@ -11,7 +11,8 @@
  *
  * Uma mensagem com `[falhe Nx]` no texto recebe a sobrecarga da Anthropic (529) nas N primeiras
  * chamadas e a resposta padrão depois: `[falhe 2x]` passa pelas duas tentativas e chega ao
- * cartão de falha com "Tentar de novo".
+ * cartão de falha com "Tentar de novo". Com `[chave recusada]`, a Anthropic recusa a Chave (401
+ * `authentication_error`): abre o incidente da Chave, que a próxima resposta bem-sucedida encerra.
  *
  * O roteamento da Articuladora (o pedido com `output_config`) nunca falha: uma mensagem com
  * `[delegar]` é passada aos dois primeiros Agentes do Canal; as outras recebem o Desfecho "nenhum".
@@ -35,6 +36,9 @@ const anthropic = await startFakeMessagesApi({
     // O contexto leva as mensagens recentes num só `user`, uma por parágrafo, e fecha com
     // "Responda à última mensagem…": a de origem é o penúltimo parágrafo.
     const text = lastUserText(req.body).split("\n\n").at(-2) ?? "";
+    if (text.includes("[chave recusada]")) {
+      return { status: 401, errorType: "authentication_error", errorMessage: "invalid x-api-key" };
+    }
     const times = Number(text.match(/\[falhe (\d+)x\]/)?.[1] ?? 0);
     const failed = failures.get(text) ?? 0;
     if (failed < times) {
