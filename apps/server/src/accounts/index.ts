@@ -434,7 +434,7 @@ export function createAccounts(deps: {
     if (!leases.get(dir)) void rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 
-  function lease(_memberId: string, configDir: string): (() => void) | null {
+  function lease(configDir: string): (() => void) | null {
     const dir = resolve(configDir);
     if (retired.has(dir)) return null;
     leases.set(dir, (leases.get(dir) ?? 0) + 1);

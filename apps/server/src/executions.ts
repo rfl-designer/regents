@@ -97,7 +97,7 @@ export interface PayingAccounts {
    * antiga só é apagada quando o último solta (ADR 0005). `null` quando a pasta já saiu de uso (a
    * Conta acabou de ser ligada de novo): a execução volta para a fila e decide de novo quem paga.
    */
-  lease(memberId: string, configDir: string): (() => void) | null;
+  lease(configDir: string): (() => void) | null;
   /** O fim com sucesso pela pasta `configDir`: a validade (`credential_expires_at`) e o uso extra. */
   runEnded(
     memberId: string,
@@ -121,7 +121,7 @@ export interface ExecutionHooks {
  * Execuções (Spec, módulo 6): a fila fica no Postgres e sobrevive ao reinício; um trabalhador
  * por processo põe várias para rodar ao mesmo tempo (#42):
  *
- * - **Ordem:** as respostas de um mesmo Agente numa conversa (`seriesOf`) saem em série, na ordem
+ * - **Ordem:** as respostas de um mesmo Agente numa conversa (`onTurn`) saem em série, na ordem
  *   de chegada; uma resposta também espera o roteamento ainda aberto de uma mensagem anterior da
  *   mesma conversa (ele pode pôr na fila uma resposta que vem antes dela). Agentes diferentes
  *   respondem em paralelo. Quem espera a própria Conta (`held`) sai da série.
@@ -436,7 +436,7 @@ export function createExecutions(deps: {
     }
     // A pasta fica segura até o fim do `claude -p`; se ela acabou de sair de uso (a Conta foi
     // ligada de novo), a execução volta para a fila e o trabalhador decide de novo.
-    const release = payer.kind === "account" ? deps.accounts.lease(payer.memberId, payer.configDir) : undefined;
+    const release = payer.kind === "account" ? deps.accounts.lease(payer.configDir) : undefined;
     if (release === null) {
       await requeue(job);
       return undefined;
@@ -1098,7 +1098,8 @@ function arrivalOrder(e: Record<"arrivedAt" | "originMessageId" | "seq", AnyColu
 
 /**
  * Na vez da sua série (Spec, módulo 6, Ordem). O roteamento não é resposta e sai sempre. Uma
- * resposta espera, na mesma conversa (`seriesOf`: o fluxo principal e cada Thread à parte):
+ * resposta espera, na mesma conversa (`channel_id`, `thread_root_id`: o fluxo principal e cada
+ * Thread à parte):
  * - a do mesmo Agente que está rodando, ou que chegou antes e ainda vai sair;
  * - o roteamento de uma mensagem anterior que ainda vai sair ou está rodando, porque ele pode
  *   pôr na fila uma resposta que chegou antes dela.
@@ -1127,14 +1128,6 @@ function onTurn(now: Date) {
     eq(executions.kind, "route"),
     sql`not exists (select 1 from ${executions} as ${sql.identifier("other")} where ${ahead})`,
   )!;
-}
-
-/**
- * A conversa para a ordem (Spec, módulo 6): as respostas de um mesmo Agente numa conversa saem
- * em série, e o fluxo principal e cada Thread contam como conversas separadas (`onTurn`).
- */
-export function seriesOf(job: Pick<Row, "agentId" | "channelId" | "threadRootId">) {
-  return { agentId: job.agentId, channelId: job.channelId, threadRootId: job.threadRootId };
 }
 
 /** Contam como progresso para a vigia: texto, pensamento e nova tentativa da API (nunca `ping`). */
