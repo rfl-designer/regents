@@ -76,7 +76,8 @@ export function createApp(deps: AppDeps) {
     badgeOf: async (memberId) => (await unreadOf(db, memberId)).total,
   });
 
-  const installation = createInstallation({ db, clock, config: deps.installation });
+  const installation = createInstallation({ db, clock, events, push, config: deps.installation });
+  if (deps.installation?.watch) installation.start();
 
   /** Pergunta à porta; tailscaled fora do ar é falha da Instalação, não "sem identidade": vai para o log. */
   async function whoAmI(req: Request): Promise<Identity | typeof UNAVAILABLE> {
@@ -152,6 +153,7 @@ export function createApp(deps: AppDeps) {
     executions,
     push,
     close: async () => {
+      await installation.stop();
       await accounts.close();
       await push.idle();
     },

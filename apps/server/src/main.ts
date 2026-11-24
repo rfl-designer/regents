@@ -16,6 +16,11 @@
  *   Workspace. No compose, `/run/secrets/master_key`. Sem a variável, `.data/secrets/master_key`,
  *   gerada se faltar (só desenvolvimento).
  * - `SHEARIM_ANTHROPIC_BASE_URL`: a Messages API (padrão: a da Anthropic; o e2e usa a falsa).
+ * - `SHEARIM_BACKUPS_DIR`: `./backups` (padrão `.data/backups`; no compose, `/backups`): os dumps de
+ *   antes de migrar e de restaurar, e os backups noturnos do comando `backup`.
+ * - `SHEARIM_BACKUP_AT`: a hora do backup noturno, `HH:MM` na hora local do container (padrão 03:00).
+ * - `SHEARIM_PG_BIN_DIR`: pasta do `pg_dump`/`pg_restore` (padrão: os do `PATH`).
+ * - `SHEARIM_VERSION`: a versão que aparece na seção Instalação (a imagem traz a tag).
  * - `SHEARIM_VAPID_CONTACT`: o `sub` do VAPID (`mailto:` com domínio real; o `deploy/setup.sh`
  *   grava no `.env`). Sem ela, só em desenvolvimento, um `mailto:` de exemplo.
  */
@@ -38,6 +43,7 @@ import {
   restoreFrom,
 } from "./installation/commands";
 import { migrationState, NewerDatabaseError } from "./installation/migrations";
+import { localApiNodeKey, type NodeKeyPort, noNodeKey } from "./installation/node-key";
 import { loadMasterKey, secretBox } from "./secrets";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
@@ -52,11 +58,11 @@ const DEV_VAPID_CONTACT = "mailto:shearim@example.com";
 
 const DEFAULT_TS_SOCKET = "/var/run/tailscale/tailscaled.sock";
 
-function identityFromEnv(): { identity: IdentityPort; routes?: Hono; describe: string } {
+function identityFromEnv(): { identity: IdentityPort; routes?: Hono; describe: string; nodeKey: NodeKeyPort } {
   const mode = process.env.SHEARIM_IDENTITY;
   if (mode === "dev") {
     const dev = createDevIdentity({ defaultUser: { id: "dev-1", name: "Pessoa Dev" } });
-    return { ...dev, describe: "identidade de desenvolvimento" };
+    return { ...dev, describe: "identidade de desenvolvimento", nodeKey: noNodeKey };
   }
   if (mode === "tailnet") {
     const socketPath = process.env.TS_SOCKET || DEFAULT_TS_SOCKET;
@@ -65,6 +71,7 @@ function identityFromEnv(): { identity: IdentityPort; routes?: Hono; describe: s
     return {
       identity: createWhoisIdentity({ socketPath, clock: systemClock }),
       describe: `whois da tailnet em ${socketPath}`,
+      nodeKey: localApiNodeKey({ socketPath }),
     };
   }
   fail(`SHEARIM_IDENTITY=${mode || "(vazio)"} não é suportado. Use "tailnet" (a Instalação) ou "dev".`);
@@ -209,6 +216,8 @@ async function main(command: string | undefined) {
     anthropicBaseUrl: process.env.SHEARIM_ANTHROPIC_BASE_URL || undefined,
     devRoutes: who.routes,
     push: { contact: vapidContact },
+    // A seção Instalação: a versão (a tag da imagem), o backup e a chave do nó, com os avisos.
+    installation: { version: process.env.SHEARIM_VERSION || "dev", watch: true, nodeKey: who.nodeKey },
   });
   // O par VAPID nasce na primeira subida (e daí em diante é sempre o mesmo, guardado no banco).
   await push.ensureKeys();

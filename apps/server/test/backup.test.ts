@@ -132,3 +132,72 @@ describe("seção Instalação", () => {
     expect(await res.json()).toEqual({ error: "not_admin" });
   });
 });
+
+describe("avisos ao Admin sobre o backup", () => {
+  const CHECK = 15 * 60 * 1000;
+
+  test("backup que falha: push a cada Admin, uma vez só, e a faixa enquanto o próximo não der certo", async () => {
+    const t = await testApp({ installation: { watch: true } });
+    const brunoMembro = await t.addMember(bruno, { by: juliana });
+    const celularDaJuliana = await t.pushDevice(juliana);
+    const celularDoBruno = await t.pushDevice(bruno);
+    const aba = await t.socket(juliana);
+    const { job, dumper } = nightly(t, backupsDir());
+    dumper.failWith("pg_dump: error: connection to server failed");
+
+    await job.runNow();
+    t.clock.advance(CHECK);
+
+    const push = await celularDaJuliana.next({ timeoutMs: 5_000 });
+    expect(push.payload.notification).toMatchObject({
+      title: "O backup do Shearim falhou",
+      body: "pg_dump: error: connection to server failed",
+      navigate: expect.stringMatching(/\/instalacao$/),
+      tag: "instalacao-backup",
+    });
+    expect(push.urgency).toBe("high");
+    const { installation: changed } = await aba.next("installation.updated", { timeoutMs: 5_000 });
+    expect(changed.alerts).toEqual([
+      { kind: "backup_failed", at: "2026-11-24T12:00:00.000Z", error: "pg_dump: error: connection to server failed" },
+    ]);
+    expect((await installation(t)).alerts).toEqual(changed.alerts);
+
+    // A verificação seguinte não repete o push; o próximo que chega é o das 36 h sem backup bom.
+    t.clock.advance(CHECK);
+    t.clock.advance(36 * 60 * 60 * 1000);
+    const next = await celularDaJuliana.next({ timeoutMs: 5_000 });
+    expect(next.payload.notification.title).toBe("Faz 36 h sem um backup bom");
+    expect(next.payload.notification.body).toContain("Ainda não houve nenhum backup bom");
+
+    // Bruno não é Admin: nada para ele (o próximo push dele é o da DM que Juliana manda).
+    const dm = await (await t.as(juliana).post("/api/dms", { memberIds: [brunoMembro.id] })).json();
+    await t.as(juliana).post(`/api/conversations/${dm.id}/messages`, { body: "oi, Bruno" });
+    expect((await celularDoBruno.next({ timeoutMs: 5_000 })).payload.notification.body).toBe("oi, Bruno");
+
+    // Um backup bom apaga a faixa.
+    dumper.failWith(null);
+    await job.runNow();
+    t.clock.advance(CHECK);
+    // Antes dele, chegou a faixa das 36 h; o que vale é o último estado.
+    let cleared = await aba.next("installation.updated", { timeoutMs: 5_000 });
+    while (cleared.installation.alerts.length > 0)
+      cleared = await aba.next("installation.updated", { timeoutMs: 5_000 });
+    expect(cleared.installation.backup.last).toMatchObject({ ok: true });
+  });
+
+  test("36 h sem backup bom depois de um que deu certo: push com quando foi o último, e a faixa", async () => {
+    const t = await testApp({ installation: { watch: true } });
+    const celular = await t.pushDevice(juliana);
+    const { job } = nightly(t, backupsDir());
+    await job.runNow();
+
+    t.clock.advance(35 * 60 * 60 * 1000);
+    expect((await installation(t)).alerts).toEqual([]);
+    t.clock.advance(60 * 60 * 1000 + CHECK);
+
+    const push = await celular.next({ timeoutMs: 5_000 });
+    expect(push.payload.notification.title).toBe("Faz 36 h sem um backup bom");
+    expect(push.payload.notification.body).toContain("O último backup bom foi em 24/11");
+    expect((await installation(t)).alerts).toEqual([{ kind: "backup_stale", lastGoodAt: "2026-11-24T12:00:00.000Z" }]);
+  });
+});

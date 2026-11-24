@@ -541,6 +541,8 @@ export interface DeviceDto {
 
 /** Caminho do PWA que abre uma conversa (é o `navigate` da notificação). */
 export const conversationPath = (conversationId: string) => `/c/${conversationId}`;
+/** A seção Instalação no PWA: é para onde levam os pushes do Admin sobre o backup e a chave do nó. */
+export const INSTALLATION_PATH = "/instalacao";
 
 // ---------- eventos do WebSocket ----------
 

@@ -1,0 +1,31 @@
+{
+  "Version": "1.104.7-t0123456789-g0123456789",
+  "TUN": false,
+  "BackendState": "Running",
+  "HaveNodeKey": true,
+  "AuthURL": "",
+  "TailscaleIPs": ["100.64.10.20", "fd7a:115c:a1e0::1234:abcd"],
+  "Self": {
+    "ID": "nShearimCNTRL",
+    "PublicKey": "nodekey:0000000000000000000000000000000000000000000000000000000000000010",
+    "HostName": "shearim",
+    "DNSName": "shearim.tailnet-exemplo.ts.net.",
+    "OS": "linux",
+    "UserID": 9100000000000005,
+    "TailscaleIPs": ["100.64.10.20", "fd7a:115c:a1e0::1234:abcd"],
+    "Tags": ["tag:shearim"],
+    "Online": true,
+    "Created": "2026-09-01T09:00:00Z",
+    "CapMap": {}
+  },
+  "Health": [],
+  "MagicDNSSuffix": "tailnet-exemplo.ts.net",
+  "CurrentTailnet": {
+    "Name": "exemplo.com",
+    "MagicDNSSuffix": "tailnet-exemplo.ts.net",
+    "MagicDNSEnabled": true
+  },
+  "CertDomains": ["shearim.tailnet-exemplo.ts.net"],
+  "Peer": {},
+  "User": {}
+}
