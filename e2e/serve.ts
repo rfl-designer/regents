@@ -19,7 +19,9 @@ const delayMs = Number(process.env.FAKE_MESSAGES_API_DELAY_MS ?? 400);
 const failures = new Map<string, number>();
 const anthropic = await startFakeMessagesApi({
   defaultReply: (req) => {
-    const text = lastUserText(req.body);
+    // O contexto leva as mensagens recentes num só `user`, uma por parágrafo, e fecha com
+    // "Responda à última mensagem…": a de origem é o penúltimo parágrafo.
+    const text = lastUserText(req.body).split("\n\n").at(-2) ?? "";
     const times = Number(text.match(/\[falhe (\d+)x\]/)?.[1] ?? 0);
     const failed = failures.get(text) ?? 0;
     if (failed < times) {

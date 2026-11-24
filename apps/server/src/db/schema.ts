@@ -159,6 +159,24 @@ export const messages = pgTable(
 );
 
 /**
+ * Leitura (Spec, módulo 10): quais mensagens cada Membro já viu. É um conjunto, não um cursor:
+ * a resposta ancorada entra acima de mensagens mais novas, e um cursor de tempo não daria conta.
+ */
+export const messageReads = pgTable(
+  "message_reads",
+  {
+    memberId: uuid()
+      .notNull()
+      .references(() => members.id),
+    messageId: uuid()
+      .notNull()
+      .references(() => messages.id),
+    readAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.memberId, t.messageId] })],
+);
+
+/**
  * Configuração do Workspace: uma linha só (`id = 1`). A Chave do Workspace fica cifrada com a
  * chave mestra (AES-256-GCM). O Contexto do Workspace (#21) também mora aqui.
  */

@@ -1,4 +1,4 @@
-import { type ChannelDto, type DmDto, type MeDto, NO_IDENTITY_TEXT } from "@shearim/contracts";
+import { type ChannelDto, type DmDto, type MeDto, NO_IDENTITY_TEXT, type UnreadDto } from "@shearim/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { AgentsSettings, WorkspaceKeySettings } from "./AgentsAdmin";
 import { Avatar } from "./Avatar";
@@ -53,6 +53,8 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<"channel" | "account" | "profile" | AdminView>("channel");
   const account = useAccount(state.kind === "ready");
+  /** As não-lidas do Membro. O `total` é o badge do ícone (o `setAppBadge` é do #32). */
+  const [unread, setUnread] = useState<UnreadDto | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -78,6 +80,7 @@ export function App() {
   useServerEvents((event) => {
     // A cada (re)conexão, a lista do servidor manda: pode ter mudado enquanto a conexão caiu.
     if (event.type === "ready") {
+      api.unread().then(setUnread, () => {});
       setMe(() => event.me);
       api.channels().then(
         (list) => setChannels(() => list),
@@ -90,6 +93,7 @@ export function App() {
     }
     if (event.type === "channel.updated") setChannels((list) => upsert(list, event.channel));
     if (event.type === "dm.updated") setDms((list) => upsert(list, event.dm));
+    if (event.type === "unread.updated") setUnread(event.unread);
     // O perfil editado em outra aba: o "Você está como" acompanha.
     if (event.type === "member.updated") {
       setMe((me) => (me.id === event.member.id ? { ...me, ...event.member } : me));
@@ -150,6 +154,7 @@ export function App() {
           me={state.me}
           channels={state.channels}
           dms={state.dms}
+          unread={unread}
           selectedId={view === "channel" ? (dm?.id ?? channel?.id ?? null) : null}
           isAdmin={state.me.role === "admin"}
           adminView={view === "channel" || view === "account" || view === "profile" ? null : view}

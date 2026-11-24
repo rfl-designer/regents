@@ -66,6 +66,7 @@ describe("DM com Agente", () => {
     await screen.getByRole("button", "Enviar").tap();
 
     const origem = mensagens.getByRole("listitem").filter({ hasText: pergunta });
-    await expect(origem.getByRole("article", `Mensagem de ${nome}`)).toContainText(RESPOSTA, { timeout: 20_000 });
+    // A fila de execuções é uma só e serial (#42 traz o paralelismo): no e2e, a resposta espera as dos outros testes.
+    await expect(origem.getByRole("article", `Mensagem de ${nome}`)).toContainText(RESPOSTA, { timeout: 60_000 });
   });
 });

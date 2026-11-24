@@ -8,6 +8,7 @@ import type { EventHub } from "./events";
 import { findMessage } from "./messages";
 import type { ModelEvent, ModelPort, TerminalModelEvent } from "./model/port";
 import { audienceOf } from "./participation";
+import type { Reading } from "./reading";
 import type { SecretBox } from "./secrets";
 import { readWorkspaceKey } from "./workspace-key";
 
@@ -102,8 +103,10 @@ export function createExecutions(deps: {
   model: ModelPort;
   secrets: SecretBox;
   hooks?: ExecutionHooks;
+  /** A resposta conta como não-lida para quem participa da conversa. */
+  reading: Pick<Reading, "messageCreated">;
 }): Executions {
-  const { db, clock, events, model, secrets, hooks } = deps;
+  const { db, clock, events, model, secrets, hooks, reading } = deps;
 
   async function publish(id: string) {
     const [dto] = await selectDtos(db, eq(executions.id, id));
@@ -298,10 +301,9 @@ export function createExecutions(deps: {
     });
     if (!delivered) return;
     const [channel] = await db.select().from(channels).where(eq(channels.id, job.channelId));
-    events.publish(await audienceOf(db, channel!), {
-      type: "message.created",
-      message: (await findMessage(db, reply.id))!,
-    });
+    const replyDto = (await findMessage(db, reply.id))!;
+    events.publish(await audienceOf(db, channel!), { type: "message.created", message: replyDto });
+    await reading.messageCreated(replyDto);
     await publish(job.id);
   }
 

@@ -17,6 +17,8 @@ import type {
   MyJoinRequestDto,
   SendMessageInput,
   SubmitAccountCodeInput,
+  UnreadDto,
+  UnreadMessagesDto,
   UpdateChannelSettingsInput,
   UpdateProfileInput,
   WorkspaceContextDto,
@@ -85,6 +87,14 @@ export const api = {
   messages: (conversationId: string) => call<MessageDto[]>(`/api/conversations/${conversationId}/messages`),
   send: (conversationId: string, input: SendMessageInput) =>
     call<MessageDto>(`/api/conversations/${conversationId}/messages`, json("POST", input)),
+  /** As não-lidas de quem pede, em todas as conversas dele. */
+  unread: () => call<UnreadDto>("/api/unread"),
+  /** As não-lidas numa conversa, na ordem de exibição (a primeira é onde ela abre). */
+  conversationUnread: (conversationId: string) =>
+    call<UnreadMessagesDto>(`/api/conversations/${conversationId}/unread`),
+  /** Marca o que apareceu na tela. */
+  markRead: (conversationId: string, messageIds: string[]) =>
+    call<UnreadDto>(`/api/conversations/${conversationId}/reads`, json("POST", { messageIds })),
   account: {
     get: () => call<AccountDto>("/api/account"),
     notNow: () => call<AccountDto>("/api/account/not-now", post),

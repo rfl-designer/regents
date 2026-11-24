@@ -19,6 +19,7 @@ import type { Member } from "./members";
 import { recordMentions } from "./mentions";
 import { listMessages as listConversationMessages } from "./messages";
 import { addAgent, addParticipants, audienceOf, canSee, participantsOf } from "./participation";
+import type { Reading } from "./reading";
 
 type Env = { Variables: { member: Member } };
 /** Uma linha de `channels`: um Canal ou uma DM. */
@@ -39,8 +40,15 @@ const NAME_MAX = 80;
  * Uma mensagem de pessoa é gravada antes de qualquer outra coisa (inclusive das execuções
  * que as Menções dela disparam).
  */
-export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHub; executions: Executions }) {
-  const { db, clock, events, executions } = deps;
+export function conversationRoutes(deps: {
+  db: Db;
+  clock: Clock;
+  events: EventHub;
+  executions: Executions;
+  /** As não-lidas de quem participa mudam a cada mensagem nova. */
+  reading: Pick<Reading, "messageCreated">;
+}) {
+  const { db, clock, events, executions, reading } = deps;
   const routes = new Hono<Env>();
 
   /** Avisa quem vê o Canal de como ele está agora. */
@@ -203,6 +211,7 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
     };
     events.publish(await audienceOf(db, conversation), { type: "message.created", message: dto });
     if (joined && isChannel(conversation)) await publishChannel(conversation);
+    await reading.messageCreated(dto);
     // Só depois de gravada e anunciada, a mensagem dispara os Agentes.
     await executions.enqueue(
       dto,
@@ -360,7 +369,7 @@ async function findChannel(db: Db, id: string) {
 }
 
 /** A conversa, se o Membro a vê. Uma fechada de que ele não participa é como uma que não existe. */
-async function findVisibleConversation(db: Db, member: Member, id: string) {
+export async function findVisibleConversation(db: Db, member: Member, id: string) {
   const row = await findConversation(db, id);
   return row && (await canSee(db, member.id, row)) ? row : undefined;
 }
