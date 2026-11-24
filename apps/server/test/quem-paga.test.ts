@@ -14,7 +14,7 @@
  * dele (`yourAccount`) e a hora em que ela volta.
  */
 import { describe, expect, test } from "bun:test";
-import type { AccountDto, AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import type { AccountDto, AgentDto, ChannelDto, ExecutionDto, MessageDto, YourAccountDto } from "@shearim/contracts";
 import type { FakeClaudeCall, FakeRun } from "./fake-claude";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
 
@@ -137,6 +137,43 @@ describe("Não ligada", () => {
       expect(paraEle.yourAccount).toBeNull();
       expect((await respostaA(t, geral.id, origem, bruno)).payer).toBe("key");
       expect((await respostaA(t, geral.id, origem, juliana)).payer).toBe("key");
+    },
+    LONGO,
+  );
+});
+
+describe("depois da resposta pela Chave", () => {
+  test(
+    "a autora continua vendo o porquê ligado à Conta dela, só ela, mesmo depois que a Conta volta",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t);
+      await t.linkAccount(juliana);
+      const daJuliana = await t.socket(juliana, "aba da Juliana");
+      const doBruno = await t.socket(bruno, "aba do Bruno");
+      t.claude.script({ run: limiteAte(QUINZE_E_QUARENTA_E_CINCO) });
+      t.anthropic.reply({ text: "Pela Chave, inteira." });
+
+      const origem = await enviar(t, geral.id, "@Faro qual o prazo?");
+
+      const respostaDe = async (aba: EventSocket) => {
+        for (;;) {
+          const { message } = await aba.next("message.created", ESPERA);
+          if (message.originMessageId === origem.id) return message;
+        }
+      };
+      const motivo: YourAccountDto = { state: "limited", until: QUINZE_E_QUARENTA_E_CINCO };
+      expect(await respostaDe(daJuliana)).toMatchObject({ payer: "key", yourAccount: motivo });
+      const paraEle = await respostaDe(doBruno);
+      expect(paraEle.payer).toBe("key");
+      expect(paraEle).not.toHaveProperty("yourAccount");
+
+      expect((await respostaA(t, geral.id, origem, juliana)).yourAccount).toEqual(motivo);
+      expect(await respostaA(t, geral.id, origem, bruno)).not.toHaveProperty("yourAccount");
+
+      // A Conta volta às 15:45: o porquê daquela resposta continua o mesmo.
+      t.clock.set("2026-11-24T16:00:00.000Z");
+      expect((await respostaA(t, geral.id, origem, juliana)).yourAccount).toEqual(motivo);
     },
     LONGO,
   );

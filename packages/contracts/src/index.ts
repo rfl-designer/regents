@@ -283,6 +283,12 @@ export interface MessageDto {
    * que todos veem). Ausente pela Conta do autor e nas mensagens de pessoa.
    */
   payer?: "key";
+  /**
+   * Só na cópia do autor da mensagem de origem, na resposta paga pela Chave: o porquê ligado à
+   * Conta dele ao lado de "⚠ pela Chave do Workspace" (o estado dela quando a Chave passou a
+   * pagar, que fica com a resposta). Ausente para os outros e quando a Conta não explica nada.
+   */
+  yourAccount?: YourAccountDto;
 }
 
 /** Corpo de `POST /api/conversations/:id/messages` (e de `/api/channels/:id/messages`). */

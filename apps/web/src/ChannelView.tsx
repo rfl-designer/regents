@@ -405,10 +405,14 @@ function MessageGroups({
     const mine = m.author.kind === "member" && m.author.id === me.id;
     const cancellable = mine && running.some((e) => OPEN.includes(e.state));
     const cancel = () => api.cancelMessage(conversationId, m.id).then((list) => list.forEach(showExecution));
-    // "⚠ pela Chave do Workspace" fica sob a mensagem; o autor vê também o porquê.
+    // "⚠ pela Chave do Workspace" fica sob a mensagem; o autor vê também o porquê, enquanto a
+    // resposta sai (no Andamento) e depois dela (na própria resposta).
     const byKey = running.find((e) => e.payer === "key");
+    const paidAnswer = answers.find((r) => r.payer === "key");
     const paid =
-      byKey || answers.some((r) => r.payer === "key") ? { note: accountNote(byKey?.yourAccount ?? null) } : undefined;
+      byKey || paidAnswer
+        ? { note: accountNote(byKey?.yourAccount ?? answers.find((r) => r.yourAccount)?.yourAccount ?? null) }
+        : undefined;
     const threadLink = (id: string, always: boolean) =>
       thread && (always || (thread.size.get(id) ?? 0) > 0) ? (
         <ThreadLink size={thread.size.get(id) ?? 0} onOpen={() => thread.open(id)} />

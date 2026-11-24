@@ -167,7 +167,7 @@ export function conversationRoutes(deps: {
 
   async function listMessages(c: Context<Env>, conversation: ConversationRow | undefined) {
     if (!conversation) return c.json({ error: "not_found" }, 404);
-    return c.json(await listConversationMessages(db, conversation.id));
+    return c.json(await listConversationMessages(db, conversation.id, c.get("member").id));
   }
 
   /** O Andamento do que ainda não virou resposta (na fila, escrevendo, falhou, não agem). */

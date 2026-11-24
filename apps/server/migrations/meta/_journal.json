@@ -141,6 +141,13 @@
       "when": 1795530010170,
       "tag": "0019_validade-e-religacao-da-conta",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795533108273,
+      "tag": "0020_porque-da-chave-na-resposta",
+      "breakpoints": true
     }
   ]
 }

@@ -7,7 +7,7 @@ import { ROUTING_MODEL } from "./articuladora";
 import type { Clock } from "./clock";
 import { buildContext, type Call } from "./context";
 import { type Db, schema } from "./db/client";
-import { type EventHub, without } from "./events";
+import { type EventHub, reaches, without } from "./events";
 import { type KeyLedger, monthOf } from "./key-budget";
 import { recordMentions } from "./mentions";
 import { findMessage } from "./messages";
@@ -352,6 +352,16 @@ export function createExecutions(deps: {
     return { kind: "none", reason: key.reason };
   }
 
+  /** O estado da Conta do autor da mensagem de origem agora, quando ele explica algo (`yourAccount`). */
+  async function authorAccount(job: Row) {
+    const [author] = await db
+      .select({ account: accounts })
+      .from(messages)
+      .leftJoin(accounts, eq(accounts.memberId, messages.authorMemberId))
+      .where(eq(messages.id, job.originMessageId));
+    return yourAccount(accountStanding(author?.account, clock.now()));
+  }
+
   /**
    * Sem quem pague agora: volta para a fila, fora da vez, até `until` (ou até a Conta ou a Chave
    * mudar), sem gastar a tentativa e mantendo a hora de chegada. O texto parcial já foi descartado.
@@ -430,9 +440,11 @@ export function createExecutions(deps: {
     let result: Awaited<ReturnType<typeof complete>>;
     const spent: Spent = { startedAt: clock.now() };
     try {
+      // Pela Chave, o porquê ligado à Conta do autor fica gravado: a resposta o leva (só para ele).
+      const payerAccount = payer.kind === "key" ? await authorAccount(job) : null;
       await db
         .update(executions)
-        .set({ payer: payer.kind, apiRetryAttempt: null, apiRetryMax: null })
+        .set({ payer: payer.kind, payerAccount, apiRetryAttempt: null, apiRetryMax: null })
         .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
       await publish(job.id);
       const request = await build(payer);
@@ -594,8 +606,20 @@ export function createExecutions(deps: {
       return (await close(job, "done", { replyMessageId: reply.id }, tx)) ? { followed } : undefined;
     });
     if (!delivered) return;
+    // Todos recebem a resposta; o autor da origem, a cópia com o porquê ligado à Conta dele.
     const replyDto = (await findMessage(db, reply.id))!;
-    events.publish(await audienceOf(db, channel!), { type: "message.created", message: replyDto });
+    const audience = await audienceOf(db, channel!);
+    const [{ authorId } = { authorId: null }] = await db
+      .select({ authorId: messages.authorMemberId })
+      .from(messages)
+      .where(eq(messages.id, job.originMessageId));
+    if (authorId && reaches(audience, authorId)) {
+      events.publish(without(audience, authorId), { type: "message.created", message: replyDto });
+      const forAuthor = (await findMessage(db, reply.id, authorId))!;
+      events.publish({ members: [authorId] }, { type: "message.created", message: forAuthor });
+    } else {
+      events.publish(audience, { type: "message.created", message: replyDto });
+    }
     for (const { memberId, thread } of delivered.followed) {
       events.publish({ members: [memberId] }, { type: "thread.followed", thread });
     }

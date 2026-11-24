@@ -51,8 +51,10 @@ describe("Menção a um Agente pela Chave", () => {
       threadRootId: null,
       mentions: [],
       createdAt: expect.any(String),
-      // "⚠ pela Chave do Workspace" (#27): quem paga a resposta, à vista de todos.
+      // "⚠ pela Chave do Workspace" (#27): quem paga a resposta, à vista de todos; a autora vê
+      // também o porquê ligado à Conta dela (ela não ligou uma).
       payer: "key",
+      yourAccount: { state: "not_linked" },
     });
     const mensagens: MessageDto[] = await (await t.as(juliana).get(`/api/channels/${geral.id}/messages`)).json();
     expect(mensagens).toEqual([origem, resposta]);

@@ -1,3 +1,4 @@
+import type { YourAccountDto } from "@shearim/contracts";
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
@@ -277,6 +278,11 @@ export const executions = pgTable(
     retriedByAuthor: boolean().notNull().default(false),
     /** Quem paga a tentativa atual: `account` (a Conta do autor) ou `key` (a Chave do Workspace). */
     payer: text(),
+    /**
+     * Pela Chave: o estado da Conta do autor quando a Chave passou a pagar (o porquê ao lado de
+     * "⚠ pela Chave do Workspace", só para ele), que fica com a resposta. Nulo pela Conta.
+     */
+    payerAccount: jsonb().$type<YourAccountDto>(),
     /** O motivo da última falha (fica durante a nova tentativa, para dizer "nas duas tentativas"). */
     reason: text(),
     /**
