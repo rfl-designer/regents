@@ -62,14 +62,14 @@ describe("Migração do identificador de Menção (0006)", () => {
       memberId: ids.juliana,
       agentId: null,
     });
-    // Os 3 de antes, mais o da Articuladora, que chega na 0011.
+    // Os 3 de antes, mais o da Articuladora, que chega na 0012.
     expect(handles.filter((h) => h.handle !== "sophya")).toHaveLength(3);
   });
 });
 
-describe("Migração da Articuladora (0011)", () => {
+describe("Migração da Articuladora (0012)", () => {
   test("um Workspace de antes ganha a Sophya, em todo Canal (não nas DMs), com sufixo se @sophya já é de alguém", async () => {
-    const { db, client } = await migratedUntil("0010_vigia-falha-e-cancelamento");
+    const { db, client } = await migratedUntil("0011_push-e-presenca");
     const ids = { sophya: crypto.randomUUID(), vendas: crypto.randomUUID(), dm: crypto.randomUUID() };
     const ontem = "2026-11-23T12:00:00Z";
     await client.query(

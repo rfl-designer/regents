@@ -499,6 +499,53 @@ export interface SubmitAccountCodeInput {
   code: string;
 }
 
+// ---------- Presença e push ----------
+
+/**
+ * `PUT /api/presence`: qual conversa esta conexão (aba ou PWA) tem aberta e visível agora
+ * (aba em foco, ou PWA em primeiro plano), ou `null` quando nenhuma. Enquanto alguma conexão
+ * do Membro tem a conversa à vista, o push dela cala. Some quando a conexão cai.
+ */
+export interface SetPresenceInput {
+  connectionId: string;
+  conversationId: string | null;
+}
+
+/** `GET /api/push/key`: a chave pública VAPID, o `applicationServerKey` do `pushManager.subscribe`. */
+export interface PushKeyDto {
+  publicKey: string;
+}
+
+/**
+ * `PUT /api/push/subscriptions/:aparelho`: a inscrição deste aparelho, como o navegador a dá
+ * (`PushSubscription.toJSON()`). O aparelho é o id que o PWA gerou para si. Reenviar a mesma
+ * inscrição não muda nada; uma nova troca a anterior do aparelho.
+ */
+export interface PushSubscriptionInput {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+
+/**
+ * `GET /api/devices`: os aparelhos do Membro em que ele já ligou o push. A lista na tela de
+ * Notificações e as faixas de push parado são do #33.
+ */
+export interface DeviceDto {
+  /** O id que o PWA gerou para o aparelho. */
+  id: string;
+  /** O nome do aparelho na tailnet, quando ela informa. */
+  label: string | null;
+  /** Tem inscrição de push viva. */
+  pushing: boolean;
+  /** Quando o push service disse que a inscrição morreu ("parou em DD/MM"). ISO 8601, UTC. */
+  pushStoppedAt: string | null;
+  /** O último push entregue a ele. ISO 8601, UTC. */
+  lastPushAt: string | null;
+}
+
+/** Caminho do PWA que abre uma conversa (é o `navigate` da notificação). */
+export const conversationPath = (conversationId: string) => `/c/${conversationId}`;
+
 // ---------- eventos do WebSocket ----------
 
 /** Onde o PWA abre o WebSocket de eventos. A identidade é a da requisição de upgrade. */
@@ -512,8 +559,11 @@ export const EVENTS_PATH = "/api/events";
  * como mais membros desta união, com `type` no formato `assunto.fato`.
  */
 export type ServerEvent =
-  /** Primeiro evento de toda conexão: daqui em diante, nada publicado se perde. */
-  | { type: "ready"; me: MeDto }
+  /**
+   * Primeiro evento de toda conexão: daqui em diante, nada publicado se perde. `connectionId`
+   * é o desta conexão: a Presença (`PUT /api/presence`) diz qual conversa ela tem à vista.
+   */
+  | { type: "ready"; me: MeDto; connectionId: string }
   /** Mensagem nova numa conversa que o Membro vê. Também chega a quem a enviou. */
   | { type: "message.created"; message: MessageDto }
   /** A Conta do Membro (ou o fluxo de ligação) mudou. Vai só para as conexões do próprio Membro. */

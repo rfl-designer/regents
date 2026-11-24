@@ -16,7 +16,10 @@ import type {
   MessageDto,
   MyJoinRequestDto,
   OutcomeDto,
+  PushKeyDto,
+  PushSubscriptionInput,
   SendMessageInput,
+  SetPresenceInput,
   SubmitAccountCodeInput,
   UnreadDto,
   UnreadMessagesDto,
@@ -51,6 +54,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     const body = (await res.json().catch(() => null)) as ApiError | null;
     throw new ApiFailure(res.status, body);
   }
+  if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
@@ -63,6 +67,10 @@ const json = (method: string, body?: unknown): RequestInit => ({
 const post = { method: "POST" } as const;
 
 export const api = {
+  pushKey: () => call<PushKeyDto>("/api/push/key"),
+  putPushSubscription: (deviceId: string, input: PushSubscriptionInput) =>
+    call<void>(`/api/push/subscriptions/${deviceId}`, json("PUT", input)),
+  setPresence: (input: SetPresenceInput) => call<void>("/api/presence", json("PUT", input)),
   me: () => call<MeDto>("/api/me"),
   updateProfile: (input: UpdateProfileInput) => call<MeDto>("/api/me", json("PATCH", input)),
   members: () => call<MemberSummaryDto[]>("/api/members"),

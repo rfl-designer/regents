@@ -1,5 +1,5 @@
 {
-  "id": "f8827667-16fd-4d56-8c09-64f49342c058",
+  "id": "7ee62bb1-1db3-4de7-a1aa-8f1e3a4c6385",
   "prevId": "13e9ca62-da20-4c75-8a10-be61c17800cf",
   "version": "7",
   "dialect": "postgresql",
@@ -145,13 +145,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
-        },
-        "builtin": {
-          "name": "builtin",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         }
       },
       "indexes": {
@@ -166,22 +159,6 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "agents_one_builtin": {
-          "name": "agents_one_builtin",
-          "columns": [
-            {
-              "expression": "builtin",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"agents\".\"builtin\"",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -405,6 +382,77 @@
           "value": "(\"channels\".\"kind\" in ('public', 'private')) = (\"channels\".\"name\" is not null)"
         }
       },
+      "isRLSEnabled": false
+    },
+    "public.devices": {
+      "name": "devices",
+      "schema": "",
+      "columns": {
+        "member_id": {
+          "name": "member_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_push_at": {
+          "name": "last_push_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "push_stopped_at": {
+          "name": "push_stopped_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "devices_member_id_members_id_fk": {
+          "name": "devices_member_id_members_id_fk",
+          "tableFrom": "devices",
+          "tableTo": "members",
+          "columnsFrom": [
+            "member_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "devices_member_id_id_pk": {
+          "name": "devices_member_id_id_pk",
+          "columns": [
+            "member_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.executions": {
@@ -1273,73 +1321,37 @@
       },
       "isRLSEnabled": false
     },
-    "public.outcomes": {
-      "name": "outcomes",
+    "public.push_streaks": {
+      "name": "push_streaks",
       "schema": "",
       "columns": {
-        "message_id": {
-          "name": "message_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "channel_id": {
-          "name": "channel_id",
+        "member_id": {
+          "name": "member_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
-        "decision": {
-          "name": "decision",
-          "type": "outcome_decision",
-          "typeSchema": "public",
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
-        "reason": {
-          "name": "reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "delegates": {
-          "name": "delegates",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "decided_at": {
-          "name": "decided_at",
-          "type": "timestamp with time zone",
+        "count": {
+          "name": "count",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true
         }
       },
-      "indexes": {
-        "outcomes_channel_id_index": {
-          "name": "outcomes_channel_id_index",
-          "columns": [
-            {
-              "expression": "channel_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
-        "outcomes_message_id_messages_id_fk": {
-          "name": "outcomes_message_id_messages_id_fk",
-          "tableFrom": "outcomes",
-          "tableTo": "messages",
+        "push_streaks_member_id_members_id_fk": {
+          "name": "push_streaks_member_id_members_id_fk",
+          "tableFrom": "push_streaks",
+          "tableTo": "members",
           "columnsFrom": [
-            "message_id"
+            "member_id"
           ],
           "columnsTo": [
             "id"
@@ -1347,14 +1359,93 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "outcomes_channel_id_channels_id_fk": {
-          "name": "outcomes_channel_id_channels_id_fk",
-          "tableFrom": "outcomes",
+        "push_streaks_conversation_id_channels_id_fk": {
+          "name": "push_streaks_conversation_id_channels_id_fk",
+          "tableFrom": "push_streaks",
           "tableTo": "channels",
           "columnsFrom": [
-            "channel_id"
+            "conversation_id"
           ],
           "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "push_streaks_member_id_conversation_id_pk": {
+          "name": "push_streaks_member_id_conversation_id_pk",
+          "columns": [
+            "member_id",
+            "conversation_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.push_subscriptions": {
+      "name": "push_subscriptions",
+      "schema": "",
+      "columns": {
+        "endpoint": {
+          "name": "endpoint",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "member_id": {
+          "name": "member_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "device_id": {
+          "name": "device_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "p256dh": {
+          "name": "p256dh",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "auth": {
+          "name": "auth",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "origin": {
+          "name": "origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "push_subscriptions_member_id_device_id_devices_member_id_id_fk": {
+          "name": "push_subscriptions_member_id_device_id_devices_member_id_id_fk",
+          "tableFrom": "push_subscriptions",
+          "tableTo": "devices",
+          "columnsFrom": [
+            "member_id",
+            "device_id"
+          ],
+          "columnsTo": [
+            "member_id",
             "id"
           ],
           "onDelete": "no action",
@@ -1362,9 +1453,61 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "push_subscriptions_memberId_deviceId_unique": {
+          "name": "push_subscriptions_memberId_deviceId_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "member_id",
+            "device_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.vapid_keys": {
+      "name": "vapid_keys",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "default": 1
+        },
+        "public_key": {
+          "name": "public_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "private_key": {
+          "name": "private_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "vapid_keys_uma_linha": {
+          "name": "vapid_keys_uma_linha",
+          "value": "\"vapid_keys\".\"id\" = 1"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.workspace_settings": {
@@ -1442,10 +1585,7 @@
       "schema": "public",
       "values": [
         "mention",
-        "dm",
-        "route",
-        "reply",
-        "delegated"
+        "dm"
       ]
     },
     "public.execution_state": {
@@ -1476,15 +1616,6 @@
       "values": [
         "admin",
         "member"
-      ]
-    },
-    "public.outcome_decision": {
-      "name": "outcome_decision",
-      "schema": "public",
-      "values": [
-        "reply",
-        "delegate",
-        "none"
       ]
     }
   },
