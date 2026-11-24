@@ -337,6 +337,28 @@ describe("Os Agentes e quem saiu", () => {
   });
 });
 
+describe("As Threads que quem voltou segue", () => {
+  test("ficam só as das conversas que ele ainda vê", async () => {
+    const t = await testApp();
+    const ids = await workspace(t);
+    const { privado, geral, noGeral } = await brunoEmTudo(t, ids);
+    const raizPrivada: MessageDto = await (
+      await t.as(carla).post(`/api/conversations/${privado.id}/messages`, { body: "pauta da diretoria" })
+    ).json();
+    await t.as(bruno).post(`/api/conversations/${privado.id}/messages`, {
+      body: "eu levo os números",
+      threadRootId: raizPrivada.id,
+    });
+    await t.as(carla).post(`/api/conversations/${geral.id}/messages`, { body: "bom dia!", threadRootId: noGeral.id });
+    await t.as(juliana).delete(`/api/members/${ids.bruno.id}`);
+
+    await t.addMember(bruno, { by: juliana });
+
+    const seguidas = await (await t.as(bruno).get("/api/threads/followed")).json();
+    expect(seguidas.map((s: { rootMessageId: string }) => s.rootMessageId)).toEqual([noGeral.id]);
+  });
+});
+
 describe("O push de quem foi removido", () => {
   test("para: nem a DM a dois que continua nem uma Menção chegam aos aparelhos dele", async () => {
     const t = await testApp();

@@ -15,7 +15,7 @@ import type { Push } from "./push";
 type Env = { Variables: { member: Member } };
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
-const { members, channels, channelParticipants } = schema;
+const { members, channels, channelParticipants, threadFollows } = schema;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ROLES: readonly MemberRole[] = ["admin", "member"];
@@ -120,7 +120,8 @@ export function memberAdminRoutes(deps: {
 }
 
 /**
- * Tira o Membro dos Canais privados e das DMs em grupo: quem volta não herda esses acessos.
+ * Tira o Membro dos Canais privados e das DMs em grupo, e das Threads seguidas neles: quem volta
+ * não herda esses acessos.
  * Continua nos Canais públicos e nas DMs a dois (`dm`), que são o histórico dele.
  * Devolve as conversas de que ele saiu.
  */
@@ -131,15 +132,14 @@ async function leaveClosedConversations(tx: Tx, memberId: string) {
     .innerJoin(channels, eq(channels.id, channelParticipants.channelId))
     .where(and(eq(channelParticipants.memberId, memberId), inArray(channels.kind, ["private", "group"])));
   if (closed.length === 0) return [];
-  await tx.delete(channelParticipants).where(
-    and(
-      eq(channelParticipants.memberId, memberId),
-      inArray(
-        channelParticipants.channelId,
-        closed.map((r) => r.conversation.id),
-      ),
-    ),
-  );
+  const ids = closed.map((r) => r.conversation.id);
+  await tx
+    .delete(channelParticipants)
+    .where(and(eq(channelParticipants.memberId, memberId), inArray(channelParticipants.channelId, ids)));
+  // As Threads que ele seguia ali também ficam para trás (quem volta não é avisado delas).
+  await tx
+    .delete(threadFollows)
+    .where(and(eq(threadFollows.memberId, memberId), inArray(threadFollows.conversationId, ids)));
   return closed.map((r) => r.conversation);
 }
 
