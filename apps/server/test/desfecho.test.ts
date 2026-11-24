@@ -98,6 +98,22 @@ describe("o Desfecho nenhum", () => {
     ]);
   });
 
+  test('"decidindo" também tem a vigia: 2 minutos sem dar o Desfecho viram falha, tentada de novo', async () => {
+    const t = await testApp();
+    const { geral } = await canalComFaro(t);
+    t.anthropic.reply({ hang: true });
+    await enviar(t, juliana, geral.id, "Alguém aí?");
+    await t.anthropic.waitForRequests(1);
+
+    t.clock.advance(2 * 60_000);
+
+    const [tentando] = await eventually("a vigia vencer", async () => {
+      const lista: ExecutionDto[] = await (await t.as(juliana).get(`/api/channels/${geral.id}/executions`)).json();
+      return lista[0]?.state === "retrying" ? lista : undefined;
+    });
+    expect(tentando).toMatchObject({ kind: "route", reason: "ficou 2 minutos sem dar o Desfecho" });
+  });
+
   test("o roteamento usa o modelo barato fixo, pede o contrato em JSON e recebe a mensagem, poucas anteriores, as Instruções do Canal e os Agentes do Canal", async () => {
     const t = await testApp();
     const { geral } = await canalComFaro(t);
@@ -239,31 +255,33 @@ describe("o Desfecho delegar", () => {
     expect(outcome.delegates.map((d) => d.agent.id)).toEqual([faro.id, prisma.id]);
   });
 
-  test("um Desfecho que não dá para entender vira falha visível da Articuladora", async () => {
+  test("um Desfecho que não dá para entender é tentado de novo e então vira falha visível da Articuladora", async () => {
     const t = await testApp();
     const { sophya, geral } = await canalComFaroEPrisma(t);
+    // A primeira delega só a quem está fora do Canal; a segunda nem é JSON.
     t.anthropic.reply(desfecho("delegar", "Para o Lince.", [["lince", "Pesquisa."]]), { text: "isto não é JSON" });
 
-    const primeira = await enviar(t, juliana, geral.id, "Pesquisa de mercado?");
-    const segunda = await enviar(t, juliana, geral.id, "E agora?");
+    const origem = await enviar(t, juliana, geral.id, "Pesquisa de mercado?");
 
-    const falhas = await eventually("as duas falharem", async () => {
-      const abertas: ExecutionDto[] = await (await t.as(juliana).get(`/api/channels/${geral.id}/executions`)).json();
-      return abertas.filter((e) => e.state === "failed").length === 2 ? abertas : undefined;
+    const abertas = async () =>
+      (await (await t.as(juliana).get(`/api/channels/${geral.id}/executions`)).json()) as ExecutionDto[];
+    await eventually(
+      "a primeira tentativa falhar",
+      async () => (await abertas())[0]?.state === "retrying" || undefined,
+    );
+    t.clock.advance(10_000);
+    const [falha] = await eventually("a falha aparecer", async () => {
+      const lista = await abertas();
+      return lista[0]?.state === "failed" ? lista : undefined;
     });
-    expect(falhas).toMatchObject([
-      {
-        originMessageId: primeira.id,
-        agent: { id: sophya.id },
-        reason: "a Articuladora não devolveu um Desfecho válido",
-      },
-      {
-        originMessageId: segunda.id,
-        agent: { id: sophya.id },
-        reason: "a Articuladora não devolveu um Desfecho válido",
-      },
-    ]);
+    expect(falha).toMatchObject({
+      originMessageId: origem.id,
+      kind: "route",
+      agent: { id: sophya.id },
+      reason: "a Articuladora não devolveu um Desfecho válido, nas duas tentativas",
+    });
     expect(await (await t.as(juliana).get(`/api/conversations/${geral.id}/outcomes`)).json()).toEqual([]);
+    expect(t.anthropic.requests).toHaveLength(2);
   });
 });
 

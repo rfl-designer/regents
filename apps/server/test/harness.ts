@@ -340,7 +340,9 @@ export async function fakeMessagesApi() {
  * `anonymous`, `socket` e `addMember` não servem, e a requisição leva os headers que o
  * Serve poria (`request`/`socketWith`/`upgradeWith`).
  */
-export async function testApp(opts: { clock?: FakeClock; identity?: IdentityPort; hooks?: AppDeps["hooks"] } = {}) {
+export async function testApp(
+  opts: { clock?: FakeClock; identity?: IdentityPort; hooks?: AppDeps["hooks"]; keyBrain?: AppDeps["keyBrain"] } = {},
+) {
   const { db } = await testDb();
   const clock = opts.clock ?? fakeClock();
   const { claude, config } = throwawayAccounts();
@@ -357,6 +359,7 @@ export async function testApp(opts: { clock?: FakeClock; identity?: IdentityPort
       accounts: config,
       secrets,
       anthropicBaseUrl: anthropic.url,
+      keyBrain: opts.keyBrain,
     });
     built.executions.start();
     return built;
@@ -424,6 +427,11 @@ export async function testApp(opts: { clock?: FakeClock; identity?: IdentityPort
       }
       current = boot();
     },
+    /**
+     * O dreno do `SIGTERM`: a fila para de pegar trabalho e espera o que está rodando até `ms`
+     * (20 s do relógio injetável por padrão). O app continua respondendo; `restart()` sobe outro.
+     */
+    drain: (ms?: number) => current.executions.drain(ms),
     /** Cliente HTTP como uma pessoa da tailnet. */
     as: (who: Person) => client(identityHeaders(who)),
     /** Cliente HTTP sem identidade (nó com tag, Funnel). */

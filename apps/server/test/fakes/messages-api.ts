@@ -23,6 +23,8 @@ export interface FakeReply {
   delayMs?: number;
   /** Depois do `message_start`, não manda mais nada até o cliente fechar a conexão. */
   hang?: boolean;
+  /** Pendurada, manda um `ping` a cada tantos ms (de verdade): sinal de conexão, não de progresso. */
+  pingEveryMs?: number;
   /** Erro HTTP antes do stream, com o corpo de erro da API (`{ type: "error", error }`). */
   status?: number;
   errorType?: string;
@@ -61,6 +63,8 @@ export interface FakeMessagesApi {
   requests: RecordedRequest[];
   /** Espera até `n` chamadas terem chegado (o stream pode ainda estar aberto). */
   waitForRequests(n: number, timeoutMs?: number): Promise<RecordedRequest[]>;
+  /** Espera até `n` `ping` terem sido mandados, somando todas as chamadas. */
+  waitForPings(n: number, timeoutMs?: number): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -110,6 +114,7 @@ export async function startFakeMessagesApi(
   const requests: RecordedRequest[] = [];
   const accepted = new Set<string>();
   const arrivals: (() => void)[] = [];
+  let pings = 0;
   const defaultReply = opts.defaultReply ?? defaultFakeReply;
 
   function stream(reply: FakeReply, model: string, signal: AbortSignal) {
@@ -139,7 +144,15 @@ export async function startFakeMessagesApi(
             },
           });
           if (reply.hang) {
+            const pinger = reply.pingEveryMs
+              ? setInterval(() => {
+                  if (signal.aborted) return;
+                  controller.enqueue(sse("ping", { type: "ping" }));
+                  pings++;
+                }, reply.pingEveryMs)
+              : undefined;
             await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+            clearInterval(pinger);
             return;
           }
           let index = 0;
@@ -250,6 +263,13 @@ export async function startFakeMessagesApi(
         await Promise.race([new Promise<void>((r) => arrivals.push(r)), sleep(left)]);
       }
       return requests.slice(0, n);
+    },
+    async waitForPings(n, timeoutMs = 2_000) {
+      const deadline = Date.now() + timeoutMs;
+      while (pings < n) {
+        if (Date.now() > deadline) throw new Error(`Messages API falsa: esperava ${n} ping(s), foram ${pings}`);
+        await sleep(5);
+      }
     },
     stop: async () => {
       await server.stop(true);

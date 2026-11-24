@@ -5,7 +5,7 @@ import { addAgent } from "./participation";
 
 /**
  * A Articuladora (ADR 0004): o Agente embutido do Shearim, Sophya por padrão, em todo Canal.
- * A linha dela em `agents` tem a marca `builtin` e nasce na migração `0010`. O Admin muda o
+ * A linha dela em `agents` tem a marca `builtin` e nasce na migração `0011`. O Admin muda o
  * nome, a foto e o modelo; a descrição, as instruções e o contrato de roteamento são daqui, do
  * código, e mudam só com uma versão nova do Shearim.
  */
@@ -30,7 +30,7 @@ type Executor = Pick<Db, "select" | "insert">;
 /** A linha da Articuladora. Toda Instalação migrada tem uma (e só uma). */
 export async function articuladoraOf(db: Executor): Promise<Agent> {
   const [row] = await db.select().from(schema.agents).where(eq(schema.agents.builtin, true));
-  if (!row) throw new Error("A Articuladora não existe: o banco não passou pela migração 0010?");
+  if (!row) throw new Error("A Articuladora não existe: o banco não passou pela migração 0011?");
   return row;
 }
 

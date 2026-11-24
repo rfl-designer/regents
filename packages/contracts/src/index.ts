@@ -380,11 +380,12 @@ export interface WorkspaceContextDto {
 
 /**
  * Em que pé está uma execução (cada chamada a modelo por causa de uma mensagem):
- * `queued` esperando a vez, `running` com o passo em `step`, `done` com a resposta em
- * `replyMessageId`, `failed` com o motivo, `not_acting` ("Agentes não agem", com o motivo;
- * não é falha).
+ * `queued` esperando a vez, `running` com o passo em `step`, `retrying` (falhou uma vez, com o
+ * motivo, e volta sozinha em `retryAt`), `done` com a resposta em `replyMessageId`, `failed` com
+ * o motivo (depois da nova tentativa; o autor pode "Tentar de novo"), `not_acting` ("Agentes não
+ * agem", com o motivo; não é falha) e `cancelled` ("cancelada por quem escreveu").
  */
-export type ExecutionState = "queued" | "running" | "done" | "failed" | "not_acting";
+export type ExecutionState = "queued" | "running" | "retrying" | "done" | "failed" | "not_acting" | "cancelled";
 
 /**
  * O passo de uma execução em andamento. `writing` é a bolha "escrevendo"; `deciding` é o
@@ -415,11 +416,18 @@ export interface ExecutionDto {
   step: ExecutionStep | null;
   /** Desde quando está no estado ou passo atual (ISO 8601): o cronômetro conta daqui. */
   since: string;
-  /** 1 na primeira tentativa, 2 na segunda... (0 enquanto não começou). */
+  /** 1 na primeira tentativa, 2 na nova tentativa automática (0 enquanto não começou). */
   attempt: number;
+  /** Em `retrying`: quando a nova tentativa automática sai (ISO 8601). Nulo nos outros estados. */
+  retryAt: string | null;
+  /** A API está sendo tentada de novo agora: "tentando de novo (n/m)". Some quando o texto volta. */
+  apiRetry: { attempt: number; max: number } | null;
   /** Quem paga a execução em andamento. Só a Chave por enquanto (a Conta é do #26). */
   payer: "key" | null;
-  /** Motivo da falha ou de "Agentes não agem", em pt-BR, para completar a frase. */
+  /**
+   * Motivo da falha (em `retrying` e `failed`) ou de "Agentes não agem", em pt-BR, para completar
+   * a frase "Faro não respondeu: …". Nulo nos outros estados.
+   */
   reason: string | null;
   replyMessageId: string | null;
 }

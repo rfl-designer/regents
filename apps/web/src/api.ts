@@ -106,6 +106,12 @@ export const api = {
   },
   /** O Andamento do que ainda não virou resposta numa conversa. */
   executions: (conversationId: string) => call<ExecutionDto[]>(`/api/conversations/${conversationId}/executions`),
+  /** "Tentar de novo" de uma falha (só quem escreveu a mensagem). */
+  retryExecution: (conversationId: string, executionId: string) =>
+    call<ExecutionDto>(`/api/conversations/${conversationId}/executions/${executionId}/retry`, post),
+  /** Cancela o que a mensagem ainda tem em andamento (só quem escreveu). */
+  cancelMessage: (conversationId: string, messageId: string) =>
+    call<ExecutionDto[]>(`/api/conversations/${conversationId}/messages/${messageId}/cancel`, post),
   agents: () => call<AgentDto[]>("/api/agents"),
   createAgent: (input: CreateAgentInput) => call<AgentDto>("/api/agents", json("POST", input)),
   addAgent: (channelId: string, agentId: string) =>

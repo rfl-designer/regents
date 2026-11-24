@@ -1,5 +1,5 @@
 {
-  "id": "af02e340-3955-4b84-989f-61b3980783aa",
+  "id": "13e9ca62-da20-4c75-8a10-be61c17800cf",
   "prevId": "1fd16766-d1c8-443d-99df-21729ccaf43c",
   "version": "7",
   "dialect": "postgresql",
@@ -145,13 +145,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
-        },
-        "builtin": {
-          "name": "builtin",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         }
       },
       "indexes": {
@@ -166,22 +159,6 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "agents_one_builtin": {
-          "name": "agents_one_builtin",
-          "columns": [
-            {
-              "expression": "builtin",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"agents\".\"builtin\"",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -484,6 +461,31 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
+        },
+        "retry_at": {
+          "name": "retry_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "api_retry_attempt": {
+          "name": "api_retry_attempt",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "api_retry_max": {
+          "name": "api_retry_max",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "retried_by_author": {
+          "name": "retried_by_author",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "payer": {
           "name": "payer",
@@ -1248,100 +1250,6 @@
       },
       "isRLSEnabled": false
     },
-    "public.outcomes": {
-      "name": "outcomes",
-      "schema": "",
-      "columns": {
-        "message_id": {
-          "name": "message_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "channel_id": {
-          "name": "channel_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "decision": {
-          "name": "decision",
-          "type": "outcome_decision",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "reason": {
-          "name": "reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "delegates": {
-          "name": "delegates",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "decided_at": {
-          "name": "decided_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "outcomes_channel_id_index": {
-          "name": "outcomes_channel_id_index",
-          "columns": [
-            {
-              "expression": "channel_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "outcomes_message_id_messages_id_fk": {
-          "name": "outcomes_message_id_messages_id_fk",
-          "tableFrom": "outcomes",
-          "tableTo": "messages",
-          "columnsFrom": [
-            "message_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "outcomes_channel_id_channels_id_fk": {
-          "name": "outcomes_channel_id_channels_id_fk",
-          "tableFrom": "outcomes",
-          "tableTo": "channels",
-          "columnsFrom": [
-            "channel_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.workspace_settings": {
       "name": "workspace_settings",
       "schema": "",
@@ -1417,10 +1325,7 @@
       "schema": "public",
       "values": [
         "mention",
-        "dm",
-        "route",
-        "reply",
-        "delegated"
+        "dm"
       ]
     },
     "public.execution_state": {
@@ -1429,9 +1334,11 @@
       "values": [
         "queued",
         "running",
+        "retrying",
         "done",
         "failed",
-        "not_acting"
+        "not_acting",
+        "cancelled"
       ]
     },
     "public.join_request_status": {
@@ -1449,15 +1356,6 @@
       "values": [
         "admin",
         "member"
-      ]
-    },
-    "public.outcome_decision": {
-      "name": "outcome_decision",
-      "schema": "public",
-      "values": [
-        "reply",
-        "delegate",
-        "none"
       ]
     }
   },
