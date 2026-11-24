@@ -21,9 +21,10 @@ interface Props {
   onOpenAdmin(view: AdminView): void;
 }
 
-export type AdminView = "context" | "settings" | "agents" | "key";
+export type AdminView = "members" | "context" | "settings" | "agents" | "key";
 
 const ADMIN_LINKS: [AdminView, string][] = [
+  ["members", "Membros"],
   ["context", "Contexto do Workspace"],
   ["settings", "Instruções dos Canais"],
   ["agents", "Agentes"],

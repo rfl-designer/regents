@@ -9,6 +9,7 @@ import { DmView } from "./DmView";
 import { EntryView } from "./EntryView";
 import { JoinRequestsPanel } from "./JoinRequestsPanel";
 import { useServerEvents } from "./live";
+import { MembersSettings } from "./MembersAdmin";
 import { AccountOffer, MyAccount, useAccount } from "./MyAccount";
 import { ProfileView } from "./ProfileView";
 import { type AdminView, Sidebar } from "./Sidebar";
@@ -98,6 +99,8 @@ export function App() {
     if (event.type === "member.updated") {
       setMe((me) => (me.id === event.member.id ? { ...me, ...event.member } : me));
     }
+    // Um Admin me removeu: o Workspace some e fica a tela do Pedido de entrada.
+    if (event.type === "member.removed" && state.kind === "ready" && event.memberId === state.me.id) void load();
   });
 
   useEffect(() => {
@@ -173,6 +176,8 @@ export function App() {
           <ProfileView key={state.me.id} me={state.me} onSaved={(me) => setMe(() => me)} />
         ) : view === "account" ? (
           <MyAccount state={account} />
+        ) : view === "members" ? (
+          <MembersSettings me={state.me} />
         ) : view === "context" ? (
           <WorkspaceContextSettings />
         ) : view === "settings" ? (
