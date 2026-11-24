@@ -69,6 +69,17 @@ async function dm(t: TestApp, de: Person, para: Person, body: string) {
   await t.as(de).post(`/api/conversations/${conversa.id}/messages`, { body });
 }
 
+/**
+ * A aba do Bruno, com o #geral aberto e visível: a resposta do Faro e a falha (#32) calam, e os
+ * pushes do teste são só os do Admin e da Conta (e as DMs sentinela).
+ */
+async function comOGeralAVista(t: TestApp, geral: ChannelDto) {
+  const aba = await t.socket(bruno);
+  const res = await t.as(bruno).put("/api/presence", { connectionId: aba.connectionId, conversationId: geral.id });
+  expect(res.status).toBe(204);
+  return aba;
+}
+
 /** Nenhum push chegou a este aparelho (os pushes saem em fila: chame depois de ler um posterior). */
 function nadaPara(t: TestApp, aparelho: { subscription: { endpoint: string } }) {
   expect(t.push.deliveries.filter((d) => d.endpoint === aparelho.subscription.endpoint)).toEqual([]);
@@ -143,7 +154,7 @@ describe("pushes do Admin", () => {
       const { geral } = await workspace(t);
       const daJuliana = await t.pushDevice(juliana);
       const doBruno = await t.pushDevice(bruno);
-      const aba = await t.socket(bruno);
+      const aba = await comOGeralAVista(t, geral);
       t.anthropic.reply(
         // A Chave recusada não tem nova tentativa: uma chamada por mensagem.
         { status: 401, errorType: "authentication_error", errorMessage: "invalid x-api-key" },
@@ -188,7 +199,7 @@ describe("pushes do Admin", () => {
       const { faro, geral } = await workspace(t, { orcamento: 3 });
       const daJuliana = await t.pushDevice(juliana);
       const doBruno = await t.pushDevice(bruno);
-      const aba = await t.socket(bruno);
+      const aba = await comOGeralAVista(t, geral);
       t.anthropic.reply({ text: "Um.", usage: DOIS_DOLARES }, { text: "Dois.", usage: DOIS_DOLARES });
 
       expect((await fim(aba, await enviar(t, geral.id, "@Faro um"))).state).toBe("done");
@@ -244,7 +255,7 @@ describe("pushes da Conta", () => {
       await t.linkAccount(bruno);
       const daJuliana = await t.pushDevice(juliana);
       const doBruno = await t.pushDevice(bruno);
-      const aba = await t.socket(bruno);
+      const aba = await comOGeralAVista(t, geral);
       t.claude.script({ runs: [limiteAte(QUINZE_E_QUARENTA_E_CINCO)] });
       t.anthropic.reply({ text: "Pela Chave." }, { text: "De novo pela Chave." });
 
@@ -278,7 +289,7 @@ describe("pushes da Conta", () => {
       const { geral } = await workspace(t, { chave: false });
       await t.linkAccount(bruno);
       const doBruno = await t.pushDevice(bruno);
-      const aba = await t.socket(bruno);
+      const aba = await comOGeralAVista(t, geral);
       t.claude.script({ runs: [loginCaiu] });
 
       await enviar(t, geral.id, "@Faro um");

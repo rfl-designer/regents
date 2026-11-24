@@ -1,4 +1,4 @@
-import type { ExecutionDto, ExecutionState, ExecutionStep, YourAccountDto } from "@shearim/contracts";
+import type { ExecutionDto, ExecutionState, ExecutionStep, MessageDto, YourAccountDto } from "@shearim/contracts";
 import { and, asc, eq, inArray, isNotNull, lte, min, ne, or, type SQL, sql } from "drizzle-orm";
 import { type AccountStanding, accountStanding } from "./accounts";
 import type { Agent } from "./agents";
@@ -11,7 +11,7 @@ import type { KeyLedger } from "./key-budget";
 import { findMessage } from "./messages";
 import type { ModelEvent, ModelPort, ModelRequest, Payer, TerminalModelEvent } from "./model/port";
 import { outcomeOf, recordOutcome } from "./outcomes";
-import { audienceOf } from "./participation";
+import { audienceOf, type Conversation } from "./participation";
 import type { Reading } from "./reading";
 import { buildRouting, parseDecision, ROUTING_SCHEMA } from "./routing";
 import type { SecretBox } from "./secrets";
@@ -63,6 +63,8 @@ export interface ExecutionHooks {
    * não vale nova tentativa). Roda depois de gravar e anunciar: é onde o push ao autor (#32) se pendura.
    */
   executionFailed?(execution: ExecutionDto): void;
+  /** A resposta de um Agente foi gravada e anunciada: é onde o push dela (#32) se pendura. */
+  replyCreated?(message: MessageDto, conversation: Conversation): void;
 }
 
 /**
@@ -462,6 +464,7 @@ export function createExecutions(deps: {
     const replyDto = (await findMessage(db, reply.id))!;
     events.publish(await audienceOf(db, channel!), { type: "message.created", message: replyDto });
     await reading.messageCreated(replyDto);
+    hooks?.replyCreated?.(replyDto, channel!);
     await publish(job.id);
   }
 

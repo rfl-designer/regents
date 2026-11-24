@@ -2,24 +2,39 @@ import type https from "node:https";
 import {
   conversationPath,
   type DeviceDto,
+  type ExecutionDto,
   type MessageDto,
+  messagePath,
   type PushKeyDto,
   type PushSubscriptionInput,
 } from "@shearim/contracts";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
 import type { TailnetUser } from "./join-requests";
-import type { Member } from "./members";
+import { isActive, type Member } from "./members";
 import { type Conversation, participantsOf } from "./participation";
 import type { Presence } from "./presence";
 import { generateVapidKeys, type OutgoingPush, type VapidKeys, webPushSender } from "./push-sender";
+import { followersOf } from "./threads";
 
 type Env = { Variables: { who: TailnetUser; member: Member } };
 
-const { vapidKeys, devices, pushSubscriptions, pushStreaks, channels } = schema;
+const { vapidKeys, devices, pushSubscriptions, pushStreaks, channels, messages, members } = schema;
+
+type Urgency = "high" | "normal";
+
+/** Um push que leva a uma tela do PWA (ou a uma mensagem), com `tag` própria. */
+interface Notice {
+  title: string;
+  body: string;
+  path: string;
+  tag: string;
+  urgency: Urgency;
+  icon?: string;
+}
 
 /** TTL de todo push: 24 h (Spec, módulo 12). O padrão do `web-push` seria 4 semanas. */
 export const PUSH_TTL_SECONDS = 24 * 60 * 60;
@@ -34,14 +49,16 @@ export interface PushConfig {
 }
 
 /**
- * Push (Spec, módulo 12): o par VAPID, as inscrições por aparelho, os pushes de Menção e de DM
- * (#31) e os aparelhos do Membro, com "parou em", remoção e `devices.updated` (#33). Fica para
- * depois, com o seam indicado:
- * - resposta de Agente, falha e Thread seguida (#32): chamam `notify` com outra `urgency`. Na
- *   Thread seguida, quem avisar é `followersOf(db, message.threadRootId)` (`threads.ts`); quem
- *   passa a seguir por esta mensagem já está gravado quando `messageCreated` roda;
- * - o aviso de vencimento da Conta (#35): `notify`, como os do Admin e da Conta (#34, em
- *   `admin-pushes.ts` e `account-pushes.ts`) e os da Instalação (#38).
+ * Push (Spec, módulo 12): o par VAPID, as inscrições por aparelho, os pushes de conversa (Menção
+ * e DM, #31; resposta de Agente, Thread seguida e falha, #32) e os aparelhos do Membro, com
+ * "parou em", remoção e `devices.updated` (#33).
+ *
+ * `Urgency: high` para Menção, DM e falha; `normal` para Thread e resposta de Agente. Os de
+ * mensagem têm `tag`/`Topic` da conversa ("3 novas em #vendas"); o da falha, os da execução,
+ * para não ser engolido pela conversa.
+ *
+ * Fica para depois: o aviso de vencimento da Conta (#35): `notify`, como os do Admin e da Conta
+ * (#34, em `admin-pushes.ts` e `account-pushes.ts`) e os da Instalação (#38).
  */
 export function createPush(deps: {
   db: Db;
@@ -136,9 +153,12 @@ export function createPush(deps: {
   }
 
   /**
-   * Os pushes de uma mensagem nova: a quem ela menciona e, numa DM, a todo participante. Nunca a
-   * quem escreveu, e nunca a quem está com a conversa aberta e visível em algum aparelho.
-   * Chame depois de gravar e anunciar.
+   * Os pushes de uma mensagem nova (de pessoa ou a resposta de um Agente), cada um com a sua
+   * `Urgency`: `high` a quem ela menciona e, numa DM, a todo participante; `normal` a quem
+   * escreveu a mensagem que um Agente respondeu num Canal e a quem segue a Thread dela. Quem tem
+   * mais de um motivo recebe um push só, com a urgência maior. Nunca a quem escreveu, e nunca a
+   * quem está com a conversa aberta e visível em algum aparelho. Chame depois de gravar e anunciar
+   * (na Thread, quem passa a seguir por esta mensagem já está gravado).
    */
   function messageCreated(message: MessageDto, conversation: Conversation) {
     // Quem está vendo a conversa no instante em que a mensagem chega (o envio sai depois, na fila).
@@ -148,14 +168,32 @@ export function createPush(deps: {
       const participants = (await participantsOf(db, [conversation.id])).get(conversation.id) ?? [];
       const people = participants.filter((p) => p.kind === "member");
       const isDm = conversation.kind === "dm" || conversation.kind === "group";
-      const recipients = new Set(message.mentions.filter((m) => m.kind === "member").map((m) => m.id));
-      if (isDm) for (const p of people) recipients.add(p.id);
+      const recipients = new Map<string, Urgency>();
+      const add = (ids: Iterable<string>, urgency: Urgency) => {
+        for (const id of ids) if (recipients.get(id) !== "high") recipients.set(id, urgency);
+      };
+      if (message.threadRootId) add(await followersOf(db, message.threadRootId), "normal");
+      if (message.originMessageId && !isDm) add(await authorsOf([message.originMessageId]), "normal");
+      add(
+        message.mentions.filter((m) => m.kind === "member").map((m) => m.id),
+        "high",
+      );
+      if (isDm)
+        add(
+          people.map((p) => p.id),
+          "high",
+        );
       if (authorId) recipients.delete(authorId);
+      // Só quem ainda vê a conversa (numa fechada, quem participa) e não saiu do Workspace.
+      if (conversation.kind !== "public") {
+        for (const id of recipients.keys()) if (!people.some((p) => p.id === id)) recipients.delete(id);
+      }
+      for (const id of await departed([...recipients.keys()])) recipients.delete(id);
       if (recipients.size === 0) return;
 
       const [row] = await db.select({ name: channels.name }).from(channels).where(eq(channels.id, conversation.id));
       const author = message.author.displayName;
-      for (const recipientId of recipients) {
+      for (const [recipientId, urgency] of recipients) {
         // Quem já está vendo a conversa, em qualquer aparelho, não precisa ser avisado.
         if (watching.has(recipientId)) continue;
         // Quantas desta conversa ele recebeu desde a última vez que a abriu, esta inclusive.
@@ -195,16 +233,36 @@ export function createPush(deps: {
                       : `${n} novas em #${row?.name}`,
                 body: `${author}: ${text}`,
               };
-        await deliverToConversation(recipientId, conversation.id, notification);
+        await deliverToConversation(recipientId, conversation.id, notification, urgency);
       }
     });
   }
 
-  /** O push de uma conversa, com `tag` e `Topic` dela (substitui o anterior) e `Urgency: high`. */
+  /** Quem, entre esses Membros, saiu do Workspace. */
+  async function departed(memberIds: string[]) {
+    if (memberIds.length === 0) return [];
+    const active = await db
+      .select({ id: members.id })
+      .from(members)
+      .where(and(inArray(members.id, memberIds), isActive));
+    return memberIds.filter((id) => !active.some((a) => a.id === id));
+  }
+
+  /** Quem escreveu essas mensagens (as de pessoa; as de Agente não têm a quem avisar). */
+  async function authorsOf(messageIds: string[]) {
+    const rows = await db
+      .select({ memberId: messages.authorMemberId })
+      .from(messages)
+      .where(inArray(messages.id, messageIds));
+    return rows.flatMap((r) => (r.memberId ? [r.memberId] : []));
+  }
+
+  /** O push de uma conversa, com `tag` e `Topic` dela (substitui o anterior). */
   async function deliverToConversation(
     memberId: string,
     conversationId: string,
     notification: { title: string; body: string },
+    urgency: Urgency,
   ) {
     const subscriptions = await db
       .select({ origin: pushSubscriptions.origin })
@@ -222,7 +280,7 @@ export function createPush(deps: {
         app_badge: badge,
       },
       ttl: PUSH_TTL_SECONDS,
-      urgency: "high",
+      urgency,
       topic: conversationId.replaceAll("-", ""),
     });
   }
@@ -232,33 +290,61 @@ export function createPush(deps: {
    * `Topic` próprios (o novo substitui o anterior do mesmo assunto). `icon` troca o ícone do app
    * pela foto de alguém (o Pedido de entrada).
    */
-  function notify(
-    memberId: string,
-    n: { title: string; body: string; path: string; tag: string; urgency: "high" | "normal"; icon?: string },
-  ) {
-    enqueue(async () => {
-      const [subscription] = await db
-        .select({ origin: pushSubscriptions.origin })
-        .from(pushSubscriptions)
-        .where(eq(pushSubscriptions.memberId, memberId))
-        .limit(1);
-      if (!subscription) return;
-      await deliver(memberId, {
-        payload: {
-          web_push: 8030,
-          notification: {
-            title: n.title,
-            body: n.body,
-            navigate: new URL(n.path, subscription.origin).href,
-            tag: n.tag,
-            lang: "pt-BR",
-            ...(n.icon ? { icon: n.icon } : {}),
-          },
-          app_badge: await badgeOf(memberId),
+  function notify(memberId: string, n: Notice) {
+    enqueue(() => deliverNotice(memberId, n));
+  }
+
+  async function deliverNotice(memberId: string, n: Notice & { topic?: string }) {
+    const [subscription] = await db
+      .select({ origin: pushSubscriptions.origin })
+      .from(pushSubscriptions)
+      .where(eq(pushSubscriptions.memberId, memberId))
+      .limit(1);
+    if (!subscription) return;
+    await deliver(memberId, {
+      payload: {
+        web_push: 8030,
+        notification: {
+          title: n.title,
+          body: n.body,
+          navigate: new URL(n.path, subscription.origin).href,
+          tag: n.tag,
+          lang: "pt-BR",
+          ...(n.icon ? { icon: n.icon } : {}),
         },
-        ttl: PUSH_TTL_SECONDS,
-        urgency: n.urgency,
-        topic: n.tag.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32),
+        app_badge: await badgeOf(memberId),
+      },
+      ttl: PUSH_TTL_SECONDS,
+      urgency: n.urgency,
+      topic: n.topic ?? n.tag.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32),
+    });
+  }
+
+  /**
+   * Uma execução falhou de vez: o autor da mensagem recebe um push (`Urgency: high`) que abre a
+   * mensagem, onde está o "Tentar de novo". Tem `tag` própria, por execução: a falha não é
+   * engolida pelo "3 novas" da conversa. Cala se ele está com a conversa à vista.
+   */
+  function executionFailed(execution: ExecutionDto) {
+    const watching = presence.watchersOf(execution.channelId);
+    enqueue(async () => {
+      const [authorId] = await authorsOf([execution.originMessageId]);
+      if (!authorId || watching.has(authorId) || (await departed([authorId])).length > 0) return;
+      const [conversation] = await db
+        .select({ kind: channels.kind, name: channels.name })
+        .from(channels)
+        .where(eq(channels.id, execution.channelId));
+      if (!conversation) return;
+      const who = `${execution.agent.displayName} não respondeu`;
+      const reason = execution.reason ?? "algo deu errado";
+      await deliverNotice(authorId, {
+        title:
+          conversation.kind === "public" || conversation.kind === "private" ? `#${conversation.name} · ${who}` : who,
+        body: `${reason.charAt(0).toUpperCase()}${reason.slice(1)}.`,
+        path: messagePath(execution.channelId, execution.originMessageId),
+        tag: `falha-${execution.id}`,
+        topic: execution.id.replaceAll("-", ""),
+        urgency: "high",
       });
     });
   }
@@ -342,6 +428,7 @@ export function createPush(deps: {
     messageCreated,
     conversationOpened,
     notify,
+    executionFailed,
     /**
      * O Membro foi removido do Workspace: os aparelhos dele deixam de receber push na hora (as
      * inscrições, os aparelhos e as contagens somem; quem volta liga as notificações de novo).

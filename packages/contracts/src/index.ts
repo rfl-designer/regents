@@ -704,6 +704,12 @@ export interface DeviceDto {
 
 /** Caminho do PWA que abre uma conversa (é o `navigate` da notificação). */
 export const conversationPath = (conversationId: string) => `/c/${conversationId}`;
+/**
+ * Caminho do PWA que abre uma conversa já numa mensagem (ela vem para o meio da tela e pisca): é
+ * para onde leva o push da falha, que fica sob a mensagem com o "Tentar de novo".
+ */
+export const messagePath = (conversationId: string, messageId: string) =>
+  `${conversationPath(conversationId)}?m=${messageId}`;
 /** A seção Instalação no PWA: é para onde levam os pushes do Admin sobre o backup e a chave do nó. */
 export const INSTALLATION_PATH = "/instalacao";
 /** A seção Membros (o Admin decide os Pedidos de entrada): para onde leva o push de cada pedido. */

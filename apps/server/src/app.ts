@@ -51,7 +51,7 @@ export interface AppDeps {
   devRoutes?: Hono;
   /**
    * Ganchos de domínio de fora (os testes). Os do próprio app rodam antes: os pushes do Admin e
-   * da Conta (#34); o push da falha ao autor fica para o #32 (`executionFailed`).
+   * da Conta (#34), e os da resposta de Agente e da falha (#32).
    */
   hooks?: AppHooks;
   /** O `sub` do VAPID e, nos testes, o agente HTTPS do coletor de push. */
@@ -90,7 +90,16 @@ export function createApp(deps: AppDeps) {
   const { hub: events, route: eventsRoute, closeForRestart } = createEventHub();
   // Os pushes do Admin e da Conta (#34); o `push` só é chamado quando um gancho roda, depois da subida.
   const notify: Push["notify"] = (memberId, n) => push.notify(memberId, n);
-  const hooks = chain({ ...adminPushes({ db, notify }), ...accountPushes({ db, notify }) }, deps.hooks);
+  const hooks = chain(
+    {
+      ...adminPushes({ db, notify }),
+      ...accountPushes({ db, notify }),
+      // A resposta de Agente e a falha de vez avisam quem escreveu (#32).
+      replyCreated: (message, conversation) => push.messageCreated(message, conversation),
+      executionFailed: (execution) => push.executionFailed(execution),
+    },
+    deps.hooks,
+  );
   // A volta da Conta (ou a troca da Chave) solta quem espera por ela na fila.
   const accounts = createAccounts({
     db,
