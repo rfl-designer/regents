@@ -20,29 +20,34 @@ describe("badge do ícone", () => {
     screen,
     browser,
   }) => {
-    const eu = await ensureAdmin(app.baseUrl);
-    // Nome único: o banco é da execução inteira, e outros testes também têm uma "Fulana".
-    const fulana = newPerson(`Rosa${Date.now() % 1_000_000}`);
-    await addMember(app.baseUrl, fulana);
+    await ensureAdmin(app.baseUrl);
+    // Quem olha é uma pessoa nova, que não participa de nenhuma conversa: as não-lidas dela só
+    // mudam por este teste (os outros testes da execução escrevem em paralelo nas conversas da
+    // Pessoa Dev, e o badge dela anda sozinho). Nomes únicos: o banco é da execução inteira.
+    const lia = newPerson(`Lia${Date.now() % 1_000_000}`);
+    const rosa = newPerson(`Rosa${Date.now() % 1_000_000}`);
+    const eu = await addMember(app.baseUrl, lia);
+    await addMember(app.baseUrl, rosa);
     await browser.addInitScript(badgeDoSistema);
     const html = browser.locator("html");
 
-    await app.open("/");
+    await app.open(`/dev/como/${lia.id}?nome=${lia.name}`);
     await expect(screen.getByRole("list", "Mensagens de #geral")).toHaveAttribute("aria-busy", "false");
-    const { total }: UnreadDto = await as(app.baseUrl)("/api/unread");
-    await expect(html).toHaveAttribute("data-badge", String(total));
+    const { total }: UnreadDto = await as(app.baseUrl, lia)("/api/unread");
+    if (total !== 0) throw new Error(`a Lia deveria começar sem não-lidas, tem ${total}`);
+    await expect(html).toHaveAttribute("data-badge", "0");
 
     // Duas mensagens numa DM que não está aberta: o badge sobe junto.
-    const dm: DmDto = await as(app.baseUrl, fulana)("/api/dms", jsonBody("POST", { memberIds: [eu.id] }));
+    const dm: DmDto = await as(app.baseUrl, rosa)("/api/dms", jsonBody("POST", { memberIds: [eu.id] }));
     for (const body of ["oi", "tem um minuto?"]) {
-      await as(app.baseUrl, fulana)(`/api/conversations/${dm.id}/messages`, jsonBody("POST", { body }));
+      await as(app.baseUrl, rosa)(`/api/conversations/${dm.id}/messages`, jsonBody("POST", { body }));
     }
-    await expect(html).toHaveAttribute("data-badge", String(total + 2));
+    await expect(html).toHaveAttribute("data-badge", "2");
 
     // Abrir a DM lê as duas: o badge volta.
-    await screen.getByRole("list", "DMs").getByRole("button", fulana.name).tap();
+    await screen.getByRole("list", "DMs").getByRole("button", rosa.name).tap();
     await expect(screen.getByText("tem um minuto?")).toBeVisible();
-    await expect(html).toHaveAttribute("data-badge", String(total));
+    await expect(html).toHaveAttribute("data-badge", "0");
   });
 });
 
