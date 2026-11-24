@@ -503,12 +503,16 @@ function Composer({ label, onSend }: { label: string; onSend(body: string): Prom
   async function send(e?: FormEvent) {
     e?.preventDefault();
     if (!draft.trim() || sending) return;
+    const body = draft;
     setSending(true);
     setSendError(false);
+    // O campo esvazia na hora (a mensagem pode chegar pelo WebSocket antes da resposta do envio);
+    // se o envio falhar, o texto volta.
+    setDraft("");
     try {
-      await onSend(draft);
-      setDraft("");
+      await onSend(body);
     } catch {
+      setDraft((now) => now || body);
       setSendError(true);
     } finally {
       setSending(false);
