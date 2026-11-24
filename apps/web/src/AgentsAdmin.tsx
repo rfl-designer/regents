@@ -94,7 +94,7 @@ export function AgentsSettings() {
       <h1 className="channel-name">Agentes</h1>
       <p className="hint">
         Todo Membro vê o nome, a foto e a descrição de um Agente. As instruções dizem como ele age e só o Admin as vê.
-        Para chamar um Agente num Canal, escreva @nome dele.
+        Para chamar um Agente num Canal, escreva @ e o identificador dele (o mesmo espaço de nomes das pessoas).
       </p>
       {loadError && <p className="notice">Não foi possível carregar os Agentes. Recarregue a página.</p>}
       <ul className="agent-list" aria-label="Agentes do Workspace">
@@ -104,6 +104,7 @@ export function AgentsSettings() {
             <div>
               <div className="meta">
                 <strong>{a.name}</strong>
+                <span className="handle">@{a.handle}</span>
                 <span className="hint">{MODEL_LABEL[a.model] ?? a.model}</span>
               </div>
               <p className="body">{a.description || "Sem descrição."}</p>

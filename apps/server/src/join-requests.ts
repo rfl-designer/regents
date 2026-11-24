@@ -5,7 +5,7 @@ import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { Audience, EventHub } from "./events";
 import type { Identity } from "./identity/port";
-import { type Member, toMeDto } from "./members";
+import { createMember, type Member, toMeDto } from "./members";
 
 export type TailnetUser = Extract<Identity, { kind: "user" }>;
 type JoinRequest = typeof schema.joinRequests.$inferSelect;
@@ -113,23 +113,24 @@ export function joinRequestAdminRoutes(deps: JoinRequestDeps) {
       const request = await pendingForUpdate(tx, c.req.param("id"));
       if (request.kind !== "pending") return request;
       const now = clock.now();
-      const [member] = await tx
-        .insert(members)
-        .values({
-          id: crypto.randomUUID(),
+      // A primeira entrada de quem foi aprovado: nome e foto como a tailnet disse no pedido.
+      const member = await createMember(
+        tx,
+        {
           tailnetUserId: request.row.tailnetUserId,
           login: request.row.login,
           displayName: request.row.displayName,
-          role: "member",
-          createdAt: now,
-        })
-        .returning();
+          profilePicUrl: request.row.profilePicUrl,
+        },
+        "member",
+        now,
+      );
       const [decided] = await tx
         .update(joinRequests)
         .set({ status: "approved", decidedAt: now, decidedByMemberId: admin.id })
         .where(eq(joinRequests.id, request.row.id))
         .returning();
-      return { kind: "decided" as const, row: decided!, member: member! };
+      return { kind: "decided" as const, row: decided!, member };
     });
     if (result.kind !== "decided") return refusal(c, result);
     const [dto] = await toAdminDtos(db, [result.row]);

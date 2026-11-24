@@ -1,14 +1,59 @@
 import type { MeDto, MemberSummaryDto } from "@shearim/contracts";
-import { asc, eq, sql } from "drizzle-orm";
+import { asc, eq, getTableColumns, type SQL, sql } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { Identity } from "./identity/port";
+import { claimHandle, handleBase } from "./mention-handles";
 import { addParticipants } from "./participation";
 
-export type Member = typeof schema.members.$inferSelect;
+/** O Membro com o identificador de Menção dele (que mora no espaço de nomes compartilhado). */
+export type Member = typeof schema.members.$inferSelect & { handle: string };
+
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+type Executor = Db | Tx;
+
+const { members, mentionHandles } = schema;
 
 /** Nome do Canal público que nasce com o Workspace (escolha do ticket #15). */
 export const INITIAL_CHANNEL_NAME = "geral";
+
+/** Os Membros que atendem a `where`, já com o identificador. */
+export function selectMembers(db: Executor, where?: SQL) {
+  return db
+    .select({ ...getTableColumns(members), handle: mentionHandles.handle })
+    .from(members)
+    .innerJoin(mentionHandles, eq(mentionHandles.memberId, members.id))
+    .where(where);
+}
+
+/** Um Membro pelo id. */
+export async function memberById(db: Executor, id: string): Promise<Member | undefined> {
+  const [found] = await selectMembers(db, eq(members.id, id));
+  return found;
+}
+
+/**
+ * Cria o Membro com o que a tailnet disse na primeira entrada: nome e foto, e o
+ * identificador de Menção gerado a partir do nome (com sufixo se colidir).
+ * Depois disso, nada da tailnet é regravado: o nome é do Membro.
+ */
+export async function createMember(
+  tx: Tx,
+  from: { tailnetUserId: string; login: string; displayName: string; profilePicUrl: string | null },
+  role: Member["role"],
+  at: Date,
+): Promise<Member> {
+  const [row] = await tx
+    .insert(members)
+    .values({ id: crypto.randomUUID(), ...from, role, createdAt: at })
+    .returning();
+  const handle = await claimHandle(
+    tx,
+    { kind: "member", id: row!.id },
+    handleBase(from.displayName, from.login.split("@")[0] ?? ""),
+  );
+  return { ...row!, handle };
+}
 
 /**
  * Acha o Membro de uma identidade da tailnet, pelo `UserProfile.ID`.
@@ -20,47 +65,57 @@ export async function memberFor(
   clock: Clock,
   who: Extract<Identity, { kind: "user" }>,
 ): Promise<Member | undefined> {
-  const [found] = await db.select().from(schema.members).where(eq(schema.members.tailnetUserId, who.userId));
+  const [found] = await selectMembers(db, eq(members.tailnetUserId, who.userId));
   if (found) return found;
 
   return db.transaction(async (tx) => {
     // Serializa a entrada: só um primeiro Admin, mesmo com chegadas simultâneas.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('shearim:entrada'))`);
-    const [again] = await tx.select().from(schema.members).where(eq(schema.members.tailnetUserId, who.userId));
+    const [again] = await selectMembers(tx, eq(members.tailnetUserId, who.userId));
     if (again) return again;
-    const [anyone] = await tx.select({ id: schema.members.id }).from(schema.members).limit(1);
+    const [anyone] = await tx.select({ id: members.id }).from(members).limit(1);
     if (anyone) return undefined;
 
     const now = clock.now();
-    const [admin] = await tx
-      .insert(schema.members)
-      .values({
-        id: crypto.randomUUID(),
+    const admin = await createMember(
+      tx,
+      {
         tailnetUserId: who.userId,
         login: who.login,
         displayName: who.displayName,
-        role: "admin",
-        createdAt: now,
-      })
-      .returning();
+        profilePicUrl: who.profilePicUrl ?? null,
+      },
+      "admin",
+      now,
+    );
     const [initial] = await tx
       .insert(schema.channels)
       .values({ id: crypto.randomUUID(), name: INITIAL_CHANNEL_NAME, kind: "public", createdAt: now })
       .onConflictDoNothing()
       .returning({ id: schema.channels.id });
-    if (initial) await addParticipants(tx, initial.id, [admin!.id], now);
+    if (initial) await addParticipants(tx, initial.id, [admin.id], now);
     return admin;
   });
 }
 
 export function toMeDto(m: Member): MeDto {
-  return { id: m.id, login: m.login, displayName: m.displayName, role: m.role };
+  return {
+    id: m.id,
+    login: m.login,
+    displayName: m.displayName,
+    handle: m.handle,
+    profilePicUrl: m.profilePicUrl,
+    about: m.about,
+    role: m.role,
+  };
 }
 
-/** Os Membros do Workspace, por nome: quem se pode adicionar a uma conversa. */
+export function toMemberDto(m: Member): MemberSummaryDto {
+  return { id: m.id, displayName: m.displayName, handle: m.handle, profilePicUrl: m.profilePicUrl, about: m.about };
+}
+
+/** Os Membros do Workspace, por nome: quem se pode adicionar a uma conversa e quem é quem. */
 export async function listMembers(db: Db): Promise<MemberSummaryDto[]> {
-  return db
-    .select({ id: schema.members.id, displayName: schema.members.displayName })
-    .from(schema.members)
-    .orderBy(asc(schema.members.displayName), asc(schema.members.id));
+  const rows = await selectMembers(db).orderBy(asc(members.displayName), asc(members.id));
+  return rows.map(toMemberDto);
 }

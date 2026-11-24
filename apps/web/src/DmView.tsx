@@ -7,6 +7,12 @@ export function dmTitle(dm: DmDto, me: MeDto) {
   return others.map((p) => p.displayName).join(", ") || me.displayName;
 }
 
+function dmHint(dm: DmDto) {
+  if (dm.kind === "group") return `DM em grupo · ${dm.participants.length} pessoas`;
+  // Numa DM com Agente, ele responde a cada mensagem; numa entre pessoas, só por Menção.
+  return dm.participants.some((p) => p.kind === "agent") ? "DM com Agente · responde a cada mensagem" : "DM";
+}
+
 export function DmView({ dm, me }: { dm: DmDto; me: MeDto }) {
   const title = dmTitle(dm, me);
   return (
@@ -14,7 +20,7 @@ export function DmView({ dm, me }: { dm: DmDto; me: MeDto }) {
       <header className="channel-header">
         <div className="row">
           <h1 className="channel-name">{title}</h1>
-          <span className="hint">{dm.kind === "group" ? `DM em grupo · ${dm.participants.length} pessoas` : "DM"}</span>
+          <span className="hint">{dmHint(dm)}</span>
         </div>
       </header>
       <Conversation conversationId={dm.id} label={title} me={me} />

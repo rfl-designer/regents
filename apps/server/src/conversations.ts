@@ -10,12 +10,13 @@ import type {
 } from "@shearim/contracts";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
+import type { Agent } from "./agents";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
-import type { Executions } from "./executions";
+import type { ExecutionKind, Executions } from "./executions";
 import type { Member } from "./members";
-import { mentionedAgents } from "./mentions";
+import { recordMentions } from "./mentions";
 import { listMessages as listConversationMessages } from "./messages";
 import { addAgent, addParticipants, audienceOf, canSee, participantsOf } from "./participation";
 
@@ -27,7 +28,7 @@ type Channel = ConversationRow & { kind: ChannelKind; name: string };
 const CHANNEL_KINDS: readonly ChannelKind[] = ["public", "private"];
 const isChannel = (row: ConversationRow): row is Channel => (CHANNEL_KINDS as readonly string[]).includes(row.kind);
 
-const { channels, messages, members, agents } = schema;
+const { channels, channelAgents, messages, members, agents } = schema;
 
 const NAME_MAX = 80;
 
@@ -183,7 +184,11 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
       body: input.body,
       createdAt: clock.now(),
     };
-    await db.insert(messages).values(values);
+    // A mensagem e as Menções dela são gravadas juntas, antes de qualquer outra coisa.
+    const mentions = await db.transaction(async (tx) => {
+      await tx.insert(messages).values(values);
+      return recordMentions(tx, values.id, conversation, values.body);
+    });
     // Escrever num Canal público é entrar nele (numa conversa fechada, quem escreve já participa).
     const joined =
       conversation.kind === "public" && (await addParticipants(db, conversation.id, [author.id], values.createdAt));
@@ -191,15 +196,22 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
       id: values.id,
       channelId: values.channelId,
       body: values.body,
-      author: { kind: "member", id: author.id, displayName: author.displayName },
+      author: { kind: "member", id: author.id, displayName: author.displayName, profilePicUrl: author.profilePicUrl },
       originMessageId: null,
+      mentions,
       createdAt: values.createdAt.toISOString(),
     };
     events.publish(await audienceOf(db, conversation), { type: "message.created", message: dto });
     if (joined && isChannel(conversation)) await publishChannel(conversation);
-    // Só depois de gravada e anunciada, a mensagem dispara os Agentes mencionados.
-    // Em DM, a Menção a Agentes é do #23: por enquanto, só nos Canais.
-    if (isChannel(conversation)) await executions.enqueueMentions(dto, await mentionedAgents(db, dto.body));
+    // Só depois de gravada e anunciada, a mensagem dispara os Agentes.
+    await executions.enqueue(
+      dto,
+      await whoActs(
+        db,
+        conversation,
+        mentions.filter((m) => m.kind === "agent"),
+      ),
+    );
     return c.json(dto, 201);
   }
 
@@ -275,6 +287,33 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
   });
 
   return routes;
+}
+
+/**
+ * Quem age com uma mensagem de pessoa (Spec, módulo 3). Só a mensagem de pessoa passa por aqui:
+ * a resposta de um Agente é gravada pela execução, então uma Menção escrita por Agente não dispara nada.
+ * - Uma Menção chama o Agente mencionado, em Canal ou DM.
+ * - Numa DM com Agente, ele responde a cada mensagem, mencionado ou não.
+ * - Numa DM entre pessoas ou em grupo, nenhum Agente entra a não ser por Menção.
+ * DMs não têm Desfecho. Num Canal, o Desfecho da Articuladora (#22) entra aqui, para as
+ * mensagens sem Menção.
+ */
+async function whoActs(
+  db: Db,
+  conversation: ConversationRow,
+  mentioned: readonly Pick<Agent, "id">[],
+): Promise<{ agent: Pick<Agent, "id">; kind: ExecutionKind }[]> {
+  const own =
+    conversation.kind === "dm"
+      ? await db
+          .select({ id: channelAgents.agentId })
+          .from(channelAgents)
+          .where(eq(channelAgents.channelId, conversation.id))
+      : [];
+  return [
+    ...own.map((agent) => ({ agent, kind: "dm" as const })),
+    ...mentioned.filter((a) => !own.some((o) => o.id === a.id)).map((agent) => ({ agent, kind: "mention" as const })),
+  ];
 }
 
 function settingsDto(channel: Channel): ChannelSettingsDto {

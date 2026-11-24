@@ -1,6 +1,7 @@
 import { type ChannelDto, type DmDto, type MeDto, NO_IDENTITY_TEXT } from "@shearim/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { AgentsSettings, WorkspaceKeySettings } from "./AgentsAdmin";
+import { Avatar } from "./Avatar";
 import { ApiFailure, api, Offline } from "./api";
 import { ChannelSettings } from "./ChannelSettings";
 import { ChannelView } from "./ChannelView";
@@ -9,7 +10,9 @@ import { EntryView } from "./EntryView";
 import { JoinRequestsPanel } from "./JoinRequestsPanel";
 import { useServerEvents } from "./live";
 import { AccountOffer, MyAccount, useAccount } from "./MyAccount";
+import { ProfileView } from "./ProfileView";
 import { type AdminView, Sidebar } from "./Sidebar";
+import { WorkspaceContextSettings } from "./WorkspaceContext";
 
 type State =
   | { kind: "loading" }
@@ -48,7 +51,7 @@ function upsert<T extends { id: string }>(list: T[], item: T) {
 export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<"channel" | "account" | AdminView>("channel");
+  const [view, setView] = useState<"channel" | "account" | "profile" | AdminView>("channel");
   const account = useAccount(state.kind === "ready");
 
   const load = useCallback(async () => {
@@ -68,9 +71,14 @@ export function App() {
     setState((s) => (s.kind === "ready" ? { ...s, dms: change(s.dms) } : s));
   }, []);
 
+  const setMe = useCallback((change: (me: MeDto) => MeDto) => {
+    setState((s) => (s.kind === "ready" ? { ...s, me: change(s.me) } : s));
+  }, []);
+
   useServerEvents((event) => {
     // A cada (re)conexão, a lista do servidor manda: pode ter mudado enquanto a conexão caiu.
     if (event.type === "ready") {
+      setMe(() => event.me);
       api.channels().then(
         (list) => setChannels(() => list),
         () => {},
@@ -82,6 +90,10 @@ export function App() {
     }
     if (event.type === "channel.updated") setChannels((list) => upsert(list, event.channel));
     if (event.type === "dm.updated") setDms((list) => upsert(list, event.dm));
+    // O perfil editado em outra aba: o "Você está como" acompanha.
+    if (event.type === "member.updated") {
+      setMe((me) => (me.id === event.member.id ? { ...me, ...event.member } : me));
+    }
   });
 
   useEffect(() => {
@@ -109,15 +121,27 @@ export function App() {
     <div className="shell">
       <header className="topbar">
         <strong>Shearim</strong>
-        <span className="whoami">Você está como {state.me.displayName}</span>
-        <button
-          type="button"
-          className="link"
-          aria-pressed={view === "account"}
-          onClick={() => setView(view === "account" ? "channel" : "account")}
-        >
-          {view === "account" ? "Voltar à conversa" : "Minha Conta"}
-        </button>
+        <div className="row">
+          <button
+            type="button"
+            className="whoami"
+            aria-current={view === "profile" ? "page" : undefined}
+            title="Meu perfil"
+            onClick={() => setView("profile")}
+          >
+            <Avatar name={state.me.displayName} photo={state.me.profilePicUrl} />
+            <span>Você está como {state.me.displayName}</span>
+            <span className="handle">@{state.me.handle}</span>
+          </button>
+          <button
+            type="button"
+            className="link"
+            aria-pressed={view === "account"}
+            onClick={() => setView(view === "account" ? "channel" : "account")}
+          >
+            {view === "account" ? "Voltar à conversa" : "Minha Conta"}
+          </button>
+        </div>
       </header>
       {state.me.role === "admin" && <JoinRequestsPanel />}
       {view !== "account" && <AccountOffer state={account} onOpen={() => setView("account")} />}
@@ -128,7 +152,7 @@ export function App() {
           dms={state.dms}
           selectedId={view === "channel" ? (dm?.id ?? channel?.id ?? null) : null}
           isAdmin={state.me.role === "admin"}
-          adminView={view === "channel" || view === "account" ? null : view}
+          adminView={view === "channel" || view === "account" || view === "profile" ? null : view}
           onOpen={open}
           onCreated={(created) => {
             setChannels((list) => upsert(list, created));
@@ -140,8 +164,12 @@ export function App() {
           }}
           onOpenAdmin={setView}
         />
-        {view === "account" ? (
+        {view === "profile" ? (
+          <ProfileView key={state.me.id} me={state.me} onSaved={(me) => setMe(() => me)} />
+        ) : view === "account" ? (
           <MyAccount state={account} />
+        ) : view === "context" ? (
+          <WorkspaceContextSettings />
         ) : view === "settings" ? (
           <ChannelSettings />
         ) : view === "agents" ? (

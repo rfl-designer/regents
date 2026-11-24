@@ -13,6 +13,8 @@ import { readWorkspaceKey } from "./workspace-key";
 
 const { executions, agents, channels, messages } = schema;
 type Row = typeof executions.$inferSelect;
+/** O tipo de uma execução: `mention` (Agente mencionado) ou `dm` (o Agente de uma DM com Agente). */
+export type ExecutionKind = Row["kind"];
 
 /** Vigia (ADR 0003): quanto um passo pode ficar sem progresso antes de virar falha. */
 export const STALL_MS = 2 * 60_000;
@@ -60,8 +62,14 @@ export interface ExecutionHooks {
  * - push da falha ao autor (#32): `hooks.executionFailed`.
  */
 export interface Executions {
-  /** Põe na fila uma execução por Agente mencionado. Chame depois de gravar a mensagem. */
-  enqueueMentions(origin: { id: string; channelId: string }, mentioned: Agent[]): Promise<void>;
+  /**
+   * Põe na fila uma execução por chamada (Agente mencionado, Agente da DM), na ordem dada.
+   * Chame depois de gravar a mensagem.
+   */
+  enqueue(
+    origin: { id: string; channelId: string },
+    calls: readonly { agent: Pick<Agent, "id">; kind: ExecutionKind }[],
+  ): Promise<void>;
   /** O Andamento das execuções de uma conversa que ainda não viraram resposta. */
   openIn(channelId: string): Promise<ExecutionDto[]>;
   /**
@@ -233,7 +241,7 @@ export function createExecutions(deps: {
     await publish(job.id);
 
     const [agent] = await db.select().from(agents).where(eq(agents.id, job.agentId));
-    const context = await buildContext(db, agent!, job.originMessageId);
+    const context = await buildContext(db, agent!, job.originMessageId, { kind: job.kind });
     const step = (job.step as ExecutionStep | null) ?? "writing";
     const watchdog = stallWatch(clock, STALL_MS, () => controller.abort("stalled" satisfies Interruption));
     let text = "";
@@ -375,12 +383,12 @@ export function createExecutions(deps: {
   }
 
   return {
-    async enqueueMentions(origin, mentioned) {
-      if (mentioned.length === 0) return;
+    async enqueue(origin, calls) {
+      if (calls.length === 0) return;
       const now = clock.now();
-      const rows = mentioned.map((agent) => ({
+      const rows = calls.map(({ agent, kind }) => ({
         id: crypto.randomUUID(),
-        kind: "mention" as const,
+        kind,
         channelId: origin.channelId,
         originMessageId: origin.id,
         agentId: agent.id,

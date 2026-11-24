@@ -295,6 +295,7 @@ export interface Client {
   delete(path: string, init?: RequestInit): Promise<Response>;
   post(path: string, body?: unknown, init?: RequestInit): Promise<Response>;
   put(path: string, body?: unknown, init?: RequestInit): Promise<Response>;
+  patch(path: string, body?: unknown, init?: RequestInit): Promise<Response>;
   request(path: string, init?: RequestInit): Promise<Response>;
 }
 
@@ -400,6 +401,7 @@ export async function testApp(
       delete: (path, init) => request(path, { ...init, method: "DELETE" }),
       post: send("POST"),
       put: send("PUT"),
+      patch: send("PATCH"),
     };
   }
 

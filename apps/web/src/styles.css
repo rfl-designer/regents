@@ -10,6 +10,9 @@
   --warn: #b45309;
   --warn-bg: #fff7ed;
   --agent: #4f46e5;
+  --mention-bg: #fef9c3;
+  --mention-line: #ca8a04;
+  --mention-mark: #fde68a;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 15px;
 }
@@ -25,6 +28,9 @@
     --warn: #fbbf24;
     --warn-bg: #2a2012;
     --agent: #8b85ff;
+    --mention-bg: #3b3415;
+    --mention-line: #facc15;
+    --mention-mark: #713f12;
   }
 }
 * {
@@ -69,8 +75,53 @@ body {
   border-bottom: 1px solid var(--line);
 }
 .whoami {
-  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
   font-size: 0.85rem;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  padding: 2px 8px 2px 2px;
+  cursor: pointer;
+}
+.whoami[aria-current="page"] {
+  background: var(--line);
+}
+.handle {
+  color: var(--muted);
+}
+.message.mentions-me {
+  background: var(--mention-bg);
+  box-shadow: inset 3px 0 0 var(--mention-line);
+  margin: 0 -16px;
+  padding: 6px 16px;
+}
+.message mark {
+  background: var(--mention-mark);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+.mention-tag {
+  font-size: 0.75rem;
+  color: var(--mention-line);
+}
+.profile label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+.handle-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.handle-input input {
+  flex: 1;
 }
 .channel {
   display: flex;
@@ -325,6 +376,14 @@ button.link[aria-current="page"] {
   padding: 4px 8px;
   font-size: 0.85rem;
 }
+.dm-agents {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
 .new-channel input[type="text"],
 .new-channel input:not([type]),
 .settings-row textarea,
@@ -454,9 +513,6 @@ button.primary {
 .join-request + .join-request {
   border-top: 1px solid var(--line);
 }
-img.avatar {
-  object-fit: cover;
-}
 .join-request-who {
   flex: 1;
   min-width: 12rem;
@@ -578,6 +634,11 @@ img.avatar {
 }
 .account a {
   color: inherit;
+}
+.whoami .avatar {
+  width: 24px;
+  height: 24px;
+  font-size: 0.75rem;
 }
 
 /* Cartão de falha, "Tentar de novo" e cancelamento (#24). */

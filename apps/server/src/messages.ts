@@ -1,6 +1,7 @@
 import type { MessageDto } from "@shearim/contracts";
 import { asc, eq } from "drizzle-orm";
 import { type Db, schema } from "./db/client";
+import { mentionsOf } from "./mentions";
 
 const { messages, members, agents } = schema;
 
@@ -15,6 +16,7 @@ function selectMessages(db: Db) {
       createdAt: messages.createdAt,
       memberId: members.id,
       memberName: members.displayName,
+      memberPic: members.profilePicUrl,
       agentId: agents.id,
       agentName: agents.name,
       agentPhoto: agents.photo,
@@ -26,15 +28,16 @@ function selectMessages(db: Db) {
 
 type Row = Awaited<ReturnType<ReturnType<typeof selectMessages>["where"]>>[number];
 
-function toDto(r: Row): MessageDto {
+function toDto(r: Row, mentions: Map<string, MessageDto["mentions"]>): MessageDto {
   return {
     id: r.id,
     channelId: r.channelId,
     body: r.body,
     author: r.agentId
       ? { kind: "agent", id: r.agentId, displayName: r.agentName!, photo: r.agentPhoto }
-      : { kind: "member", id: r.memberId!, displayName: r.memberName! },
+      : { kind: "member", id: r.memberId!, displayName: r.memberName!, profilePicUrl: r.memberPic },
     originMessageId: r.originMessageId,
+    mentions: mentions.get(r.id) ?? [],
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -42,10 +45,14 @@ function toDto(r: Row): MessageDto {
 /** As mensagens de uma conversa, em ordem de gravação (as respostas ancoradas inclusive). */
 export async function listMessages(db: Db, channelId: string): Promise<MessageDto[]> {
   const rows = await selectMessages(db).where(eq(messages.channelId, channelId)).orderBy(asc(messages.seq));
-  return rows.map(toDto);
+  const mentions = await mentionsOf(
+    db,
+    rows.map((r) => r.id),
+  );
+  return rows.map((r) => toDto(r, mentions));
 }
 
 export async function findMessage(db: Db, id: string): Promise<MessageDto | undefined> {
   const [row] = await selectMessages(db).where(eq(messages.id, id));
-  return row && toDto(row);
+  return row && toDto(row, await mentionsOf(db, [row.id]));
 }
