@@ -1,8 +1,15 @@
 import type { ChannelDto, MessageDto } from "@shearim/contracts";
-import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { useServerEvents } from "./live";
 
 const time = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
+
+/** Junta o que se tem com o que chegou, sem repetir: a mensagem enviada chega pelo 201 e pelo WebSocket. */
+function append(prev: MessageDto[] | null, arrived: MessageDto[]) {
+  const have = new Set(prev?.map((m) => m.id));
+  return [...(prev ?? []), ...arrived.filter((m) => !have.has(m.id))];
+}
 
 export function ChannelView({ channel }: { channel: ChannelDto }) {
   const [messages, setMessages] = useState<MessageDto[] | null>(null);
@@ -12,9 +19,26 @@ export function ChannelView({ channel }: { channel: ChannelDto }) {
   const [sendError, setSendError] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    api.messages(channel.id).then(setMessages, () => setLoadError(true));
+  // A lista do servidor manda; o que chegou pelo WebSocket depois dela fica no fim.
+  const load = useCallback(() => {
+    api.messages(channel.id).then(
+      (list) => {
+        setLoadError(false);
+        setMessages((prev) => append(list, prev ?? []));
+      },
+      () => setLoadError(true),
+    );
   }, [channel.id]);
+
+  useEffect(load, [load]);
+
+  useServerEvents((event) => {
+    // Cada (re)conexão começa com `ready`: recarrega o que pode ter passado enquanto ela não estava aberta.
+    if (event.type === "ready") load();
+    if (event.type === "message.created" && event.message.channelId === channel.id) {
+      setMessages((prev) => append(prev, [event.message]));
+    }
+  });
 
   // Rola até o fim depois de carregar ou enviar (o fim acompanha quando já se está nele).
   const count = messages?.length ?? 0;
@@ -29,7 +53,7 @@ export function ChannelView({ channel }: { channel: ChannelDto }) {
     setSendError(false);
     try {
       const msg = await api.send(channel.id, { body: draft });
-      setMessages((prev) => [...(prev ?? []), msg]);
+      setMessages((prev) => append(prev, [msg]));
       setDraft("");
     } catch {
       setSendError(true);
@@ -48,7 +72,7 @@ export function ChannelView({ channel }: { channel: ChannelDto }) {
   return (
     <main className="channel">
       <h1 className="channel-name"># {channel.name}</h1>
-      <ol className="messages" aria-label={`Mensagens de #${channel.name}`}>
+      <ol className="messages" aria-label={`Mensagens de #${channel.name}`} aria-busy={messages === null && !loadError}>
         {loadError && <li className="notice">Não foi possível carregar as mensagens. Recarregue a página.</li>}
         {messages?.length === 0 && <li className="notice">Nenhuma mensagem ainda. Diga oi!</li>}
         {messages?.map((m) => (
