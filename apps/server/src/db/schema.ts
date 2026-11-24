@@ -11,6 +11,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -25,10 +26,35 @@ export const members = pgTable("members", {
   /** `UserProfile.ID` da tailnet, como texto. É a chave do Membro (ADR 0007). */
   tailnetUserId: text().notNull().unique(),
   login: text().notNull(),
+  /** Vem da tailnet na primeira entrada; depois é do Membro (a tailnet não sobrescreve). */
   displayName: text().notNull(),
+  /** Foto da tailnet na primeira entrada (`UserProfile.ProfilePicURL`); pode não ter. */
+  profilePicUrl: text(),
+  /** "Sobre mim", opcional: entra no "quem é quem" do contexto dos Agentes. */
+  about: text().notNull().default(""),
   role: memberRole().notNull(),
   createdAt: timestamp({ withTimezone: true }).notNull(),
 });
+
+/**
+ * O espaço de nomes dos identificadores de Menção, um só para Membros e Agentes (módulo 2).
+ * O identificador é a chave: dois participantes nunca têm o mesmo, sejam de que espécie forem.
+ * Cada linha tem um dono só: um Membro ou um Agente. Quem mexe aqui é `mention-handles.ts`.
+ */
+export const mentionHandles = pgTable(
+  "mention_handles",
+  {
+    /** Minúsculo, sem acento, só `[a-z0-9_]`, sem o `@`. */
+    handle: text().primaryKey(),
+    memberId: uuid()
+      .unique()
+      .references(() => members.id),
+    agentId: uuid()
+      .unique()
+      .references((): AnyPgColumn => agents.id),
+  },
+  (t) => [check("mention_handles_one_owner", sql`num_nonnulls(${t.memberId}, ${t.agentId}) = 1`)],
+);
 
 /** `public`/`private`: Canais. `dm`/`group`: DMs (#18). Ver `ConversationKind` nos contratos. */
 export const channelKind = pgEnum("channel_kind", ["public", "private", "dm", "group"]);
@@ -76,8 +102,8 @@ export const channelParticipants = pgTable(
 
 /**
  * Agentes do Workspace. Só o Admin cria. A descrição é pública; as instruções dizem como ele age.
- * O nome não se repete (sem diferença de maiúsculas); a Menção casa com ele até o #19 trazer
- * o identificador de Menção único entre Membros e Agentes.
+ * O nome não se repete (sem diferença de maiúsculas). A Menção casa com o identificador dele,
+ * em `mention_handles` (gerado do nome na criação, no mesmo espaço de nomes dos Membros).
  */
 export const agents = pgTable(
   "agents",
@@ -186,6 +212,32 @@ export const executions = pgTable(
     finishedAt: timestamp({ withTimezone: true }),
   },
   (t) => [index().on(t.state, t.arrivedAt, t.seq), index().on(t.channelId, t.state)],
+);
+
+/**
+ * As Menções de cada mensagem, na ordem em que aparecem no texto: a pessoa (`@nome` que
+ * resolveu para um Membro que vê a conversa) ou o Agente citado. A Menção é do participante,
+ * não do texto: se ele troca o identificador depois, a Menção continua dele.
+ * Cada linha tem um dono só, como em `mention_handles`.
+ */
+export const messageMentions = pgTable(
+  "message_mentions",
+  {
+    messageId: uuid()
+      .notNull()
+      .references(() => messages.id),
+    /** Posição da primeira aparição no texto (0, 1, …). */
+    ordinal: integer().notNull(),
+    memberId: uuid().references(() => members.id),
+    agentId: uuid().references(() => agents.id),
+  },
+  (t) => [
+    primaryKey({ columns: [t.messageId, t.ordinal] }),
+    unique().on(t.messageId, t.memberId),
+    unique().on(t.messageId, t.agentId),
+    index().on(t.memberId),
+    check("message_mentions_one_owner", sql`num_nonnulls(${t.memberId}, ${t.agentId}) = 1`),
+  ],
 );
 
 export const joinRequestStatus = pgEnum("join_request_status", ["pending", "approved", "refused"]);

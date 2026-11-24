@@ -18,6 +18,7 @@ import type {
   SendMessageInput,
   SubmitAccountCodeInput,
   UpdateChannelSettingsInput,
+  UpdateProfileInput,
   WorkspaceKeyDto,
 } from "@shearim/contracts";
 
@@ -58,6 +59,7 @@ const post = { method: "POST" } as const;
 
 export const api = {
   me: () => call<MeDto>("/api/me"),
+  updateProfile: (input: UpdateProfileInput) => call<MeDto>("/api/me", json("PATCH", input)),
   members: () => call<MemberSummaryDto[]>("/api/members"),
   myJoinRequest: () => call<MyJoinRequestDto>("/api/join-request"),
   requestToJoin: () => call<JoinRequestDto>("/api/join-request", post),

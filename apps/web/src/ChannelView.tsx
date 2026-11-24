@@ -1,5 +1,14 @@
-import type { AgentDto, ChannelDto, ExecutionDto, MeDto, MemberSummaryDto, MessageDto } from "@shearim/contracts";
-import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type AgentDto,
+  type ChannelDto,
+  type ExecutionDto,
+  type MeDto,
+  type MemberSummaryDto,
+  type MessageDto,
+  mentionPattern,
+  normalizeHandle,
+} from "@shearim/contracts";
+import { type FormEvent, type KeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Avatar } from "./Avatar";
 import { api } from "./api";
 import { useServerEvents } from "./live";
@@ -41,6 +50,19 @@ function useNow(ticking: boolean) {
   return now;
 }
 
+/** O texto com o `@` de quem está vendo em destaque (o mesmo `@nome` que o servidor reconhece). */
+function highlightMe(body: string, handle: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  let last = 0;
+  for (const match of body.matchAll(mentionPattern())) {
+    if (normalizeHandle(match[1]!) !== handle) continue;
+    parts.push(body.slice(last, match.index), <mark key={match.index}>{match[0]}</mark>);
+    last = match.index + match[0].length;
+  }
+  parts.push(body.slice(last));
+  return parts;
+}
+
 interface Props {
   channel: ChannelDto;
   me: MeDto;
@@ -56,6 +78,7 @@ export function ChannelView({ channel, me, onChanged }: Props) {
       <Conversation
         conversationId={channel.id}
         label={`#${channel.name}`}
+        me={me}
         // Escrever num Canal público é entrar nele; o `channel.updated` também chega, mas a tela não espera.
         onSent={() => {
           if (!joined) api.channel(channel.id).then(onChanged, () => {});
@@ -72,10 +95,13 @@ export function ChannelView({ channel, me, onChanged }: Props) {
 export function Conversation({
   conversationId,
   label,
+  me,
   onSent,
 }: {
   conversationId: string;
   label: string;
+  /** Quem está vendo: a mensagem que o menciona aparece destacada. */
+  me: MeDto;
   onSent?(): void;
 }) {
   const [messages, setMessages] = useState<MessageDto[] | null>(null);
@@ -109,6 +135,18 @@ export function Conversation({
     }
     if (event.type === "execution.updated" && event.execution.channelId === conversationId) {
       setExecutions((prev) => upsertExecution(prev, event.execution));
+    }
+    // Quem escreveu trocou o nome ou a foto: as mensagens dele já mostram o novo.
+    if (event.type === "member.updated") {
+      const { id, displayName, profilePicUrl } = event.member;
+      setMessages(
+        (prev) =>
+          prev?.map((m) =>
+            m.author.kind === "member" && m.author.id === id
+              ? { ...m, author: { ...m.author, displayName, profilePicUrl } }
+              : m,
+          ) ?? null,
+      );
     }
   });
 
@@ -176,12 +214,12 @@ export function Conversation({
           const running = pending.get(m.id) ?? [];
           return (
             <li key={m.id} className="message-group">
-              <MessageRow message={m} />
+              <MessageRow message={m} me={me} />
               {(answers.length > 0 || running.length > 0) && (
                 <ul className="anchored" aria-label={`Respostas a ${m.author.displayName}`}>
                   {answers.map((r) => (
                     <li key={r.id}>
-                      <MessageRow message={r} />
+                      <MessageRow message={r} me={me} />
                     </li>
                   ))}
                   {running.map((e) => (
@@ -217,17 +255,24 @@ export function Conversation({
   );
 }
 
-function MessageRow({ message: m }: { message: MessageDto }) {
+function MessageRow({ message: m, me }: { message: MessageDto; me: MeDto }) {
   const agent = m.author.kind === "agent";
+  const mentionsMe = m.mentions.some((x) => x.kind === "member" && x.id === me.id);
+  const className = ["message", agent && "agent", mentionsMe && "mentions-me"].filter(Boolean).join(" ");
   return (
-    <article className={agent ? "message agent" : "message"} aria-label={`Mensagem de ${m.author.displayName}`}>
-      <Avatar name={m.author.displayName} agent={agent} photo={m.author.kind === "agent" ? m.author.photo : null} />
+    <article className={className} aria-label={`Mensagem de ${m.author.displayName}`}>
+      <Avatar
+        name={m.author.displayName}
+        agent={agent}
+        photo={m.author.kind === "agent" ? m.author.photo : m.author.profilePicUrl}
+      />
       <div>
         <div className="meta">
           <strong>{m.author.displayName}</strong>
           <time dateTime={m.createdAt}>{time.format(new Date(m.createdAt))}</time>
+          {mentionsMe && <span className="mention-tag">menciona você</span>}
         </div>
-        <p className="body">{m.body}</p>
+        <p className="body">{mentionsMe ? highlightMe(m.body, me.handle) : m.body}</p>
       </div>
     </article>
   );

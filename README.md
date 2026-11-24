@@ -52,13 +52,17 @@ apps/server/        Bun + Hono + Drizzle
   src/dms.ts        rotas de DMs (abrir, listar)
   src/participation.ts  quem participa, quem vê (canSee) e quem recebe eventos (audienceOf)
   src/agents.ts     rotas de Agentes; src/workspace-key.ts a Chave do Workspace (cifrada por src/secrets.ts)
-  src/mentions.ts   extração de `@nome` (seam do #19); src/context.ts montagem de contexto (seam do #21)
+  src/context.ts    montagem de contexto (seam do #21)
   src/executions.ts fila de execuções no Postgres e o trabalhador que a esvazia
   src/model/        porta de modelo (port.ts: eventos normalizados) e o cérebro da Chave (key.ts)
   src/main.ts       entrypoint: serve | migrate
   src/db/           schema.ts (Drizzle), client.ts, connect.ts (Postgres ou PGlite)
   src/identity/     porta de identidade: whois.ts (tailnet) e dev.ts
   src/join-requests.ts  Pedido de entrada (pedir, aprovar, recusar)
+  src/members.ts    Membro (com o identificador), primeira entrada, lista de Membros
+  src/profile.ts    perfil do próprio Membro (`/api/me`)
+  src/mention-handles.ts  espaço de nomes dos identificadores de Menção (Membros e Agentes)
+  src/mentions.ts   `@nome` no texto: extração, quem foi mencionado, registro
   src/no-identity-page.ts  página estática de quem chega sem identidade
   migrations/       SQL gerado pelo drizzle-kit (commitado)
   test/harness.ts   arnês: testApp(), testDb(), fakeClock(), fakeIdentity, t.addMember(), throwawayAccounts(), eventually()
@@ -81,6 +85,7 @@ Os testes falam com o app pela borda HTTP, como um cliente faria, com a identida
 const t = await testApp();                                  // banco novo e migrado, relógio em 2026-11-24T12:00Z
 const juliana = t.as({ id: "1001", name: "Juliana" });     // id = UserProfile.ID da tailnet
 await juliana.post(`/api/channels/${id}/messages`, { body: "oi" });
+await juliana.patch("/api/me", { displayName: "Ju" });       // get, post, put, patch, delete e request
 t.clock.advance(90_000);
 await t.anonymous("funnel").get("/api/me");                  // sem identidade
 ```
@@ -128,6 +133,15 @@ aba.received();                                             // tudo o que chegou
 t.events.publish({ members: [id] }, evento);                 // publicar direto no hub
 ```
 
+### Perfil e identificador de Menção (#19)
+
+- O nome e a foto vêm da tailnet na **primeira entrada** (o primeiro Admin pelo `whois`, quem foi aprovado pelo que o Pedido de entrada guardou). Depois, nada do `whois` é regravado: o nome é do Membro e a tailnet não o sobrescreve.
+- `GET /api/me` e `PATCH /api/me` (`UpdateProfileInput`: `displayName?`, `handle?`, `about?`; campo ausente fica). Nome de 1 a 80; "sobre mim" até 500, vazio apaga; identificador inválido: `400 invalid_input`; já de outro participante: `409 handle_taken`. Toda edição sai como `member.updated` (o `MemberSummaryDto`) para todo Membro, inclusive as outras abas de quem editou.
+- `MeDto` e `MemberSummaryDto` trazem `handle` (sem `@`), `profilePicUrl` e `about`.
+- **Identificador de Menção:** um espaço de nomes só para Membros e Agentes, na tabela `mention_handles` (chave = identificador; cada linha tem um dono, `member_id` ou `agent_id`). A unicidade vem do banco. Gerado da primeira palavra do nome (sem acento, minúsculo, `[a-z0-9_]`, senão o login), com sufixo quando colide (`rafael`, `rafael2`…). Quem mexe nele é só `mention-handles.ts`: `claimHandle(tx, dono, handleBase(nome))` ao criar o participante, `changeHandle` ao editar, `resolveHandles` para achar o dono.
+- **Menção:** `mentionPattern()` e `normalizeHandle()` ficam em `packages/contracts` (o servidor extrai, o PWA destaca com a mesma regra). `mentionedIn(db, body)` devolve os donos citados pelo identificador, Membro ou Agente, na ordem do texto. Ao gravar uma mensagem, `recordMentions` registra em `message_mentions` (uma linha por dono: `member_id` ou `agent_id`) as Menções a Membros que veem a conversa (num privado, citar quem está de fora não conta) e a todo Agente citado. `MessageDto.mentions` (`MentionDto[]`: `{ kind: "member" | "agent", id }`, na ordem do texto) chega na resposta, na lista e no `message.created`; a Menção é do participante, então sobrevive à troca de identificador. O PWA destaca a mensagem ("menciona você") para quem foi mencionado.
+- **Agentes:** `POST /api/agents` cria o Agente e, na mesma transação, o identificador dele com `claimHandle(tx, { kind: "agent", id }, agentHandleBase(nome))`: o nome inteiro sem espaço nem acento (`Sophya Jurídico` → `sophyajuridico`), com sufixo se já for de alguém (`faro2`). `AgentDto.handle` traz o identificador. Os Agentes de antes da migração `0006` ganham o do nome pelo mesmo critério, em SQL. A Menção a Agente (o que o faz responder) é a `kind: "agent"` de `MessageDto.mentions`.
+
 ### Canais e visibilidade
 
 Um Canal público é visto por todo Membro; um privado só por quem participa. Para quem não participa de um privado (o Admin inclusive), ele não está em `GET /api/channels`, responde 404 em toda rota dele e não manda evento. A regra mora em `participation.ts`: `canSee` (HTTP) e `audienceOf` (WebSocket) são a mesma decisão vista dos dois lados; toda rota que publica evento de uma conversa passa por `audienceOf`. Quem cria um Canal participa dele; escrever num público é entrar nele.
@@ -139,7 +153,7 @@ Um Canal público é visto por todo Membro; um privado só por quem participa. P
 | `GET /api/channels/:id` | quem vê | o Canal |
 | `POST /api/channels/:id/join` | Membro | entra num público (privado: 404) |
 | `POST /api/channels/:id/participants` | quem vê | `{ memberId }`; adiciona uma pessoa |
-| `GET /api/members` | Membro | `{ id, displayName }[]`, para escolher quem adicionar |
+| `GET /api/members` | Membro | `MemberSummaryDto[]` (`id`, `displayName`, `handle`, `profilePicUrl`, `about`), para escolher quem adicionar |
 | `GET /api/channel-settings` | Admin | Instruções e N de todo Canal, sem mensagens nem participantes |
 | `PATCH /api/channel-settings/:id` | Admin | `{ instructions?, recentMessages? }` (N inteiro ≥ 0, padrão 30) |
 
@@ -181,12 +195,12 @@ t.claude.callsOf("auth login")[0]!.env.CLAUDE_CONFIG_DIR;     // o que cada star
 |---|---|---|
 | `GET /api/workspace-key` | Admin | `{ configured, updatedAt }`. A Chave nunca volta |
 | `PUT /api/workspace-key` | Admin | `{ apiKey }`: grava (cifrada com a chave mestra) |
-| `GET /api/agents` | Membro | `AgentDto[]`; `instructions` só para o Admin |
+| `GET /api/agents` | Membro | `AgentDto[]` (com `handle`); `instructions` só para o Admin |
 | `POST /api/agents` | Admin | `{ name, photo?, description?, instructions?, model }`; 409 `name_taken` |
 | `POST /api/channels/:id/agents` | quem vê | `{ agentId }`: o Agente vira participante `kind: "agent"` |
 | `GET /api/conversations/:id/executions` | quem vê | o Andamento do que ainda não virou resposta (também em `/api/channels/:id/executions`) |
 
-Uma mensagem de pessoa num Canal com `@Nome` de um Agente (qualquer Agente do Workspace, sem diferença de maiúsculas nem acentos; em DM é do #23) é gravada e anunciada; depois, uma execução por Agente mencionado entra na fila (tabela `executions`). O trabalhador (`executions.start()`, um por processo, uma execução por vez) paga pela Chave, chama a porta de modelo e grava a resposta com `originMessageId` (a resposta ancorada). O Andamento sai como `execution.updated` (`queued` → `running`/`writing` → `done`, `failed` com `reason`, ou `not_acting` sem Chave); a resposta sai antes como `message.created`. Ao subir, o que estava `running` volta para a fila.
+Uma mensagem de pessoa num Canal com `@identificador` de um Agente (qualquer Agente do Workspace, sem diferença de maiúsculas nem acentos; em DM é do #23) é gravada e anunciada; depois, uma execução por Agente mencionado entra na fila (tabela `executions`). O trabalhador (`executions.start()`, um por processo, uma execução por vez) paga pela Chave, chama a porta de modelo e grava a resposta com `originMessageId` (a resposta ancorada). O Andamento sai como `execution.updated` (`queued` → `running`/`writing` → `done`, `failed` com `reason`, ou `not_acting` sem Chave); a resposta sai antes como `message.created`. Ao subir, o que estava `running` volta para a fila.
 
 Nos testes, `testApp()` já traz a Messages API falsa em `t.anthropic` (o app usa ela pela Chave) e a fila rodando:
 

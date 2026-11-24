@@ -27,7 +27,7 @@ type Row = typeof executions.$inferSelect;
  */
 export interface Executions {
   /** Põe na fila uma execução por Agente mencionado. Chame depois de gravar a mensagem. */
-  enqueueMentions(origin: { id: string; channelId: string }, mentioned: Agent[]): Promise<void>;
+  enqueueMentions(origin: { id: string; channelId: string }, mentioned: readonly Pick<Agent, "id">[]): Promise<void>;
   /** O Andamento das execuções de um Canal que ainda não viraram resposta. */
   openIn(channelId: string): Promise<ExecutionDto[]>;
   /** Começa a pegar trabalho. Ao subir, o que estava em andamento volta para a fila. */

@@ -407,8 +407,9 @@ describe("privacidade da Conta", () => {
         id: crypto.randomUUID(),
         channelId: crypto.randomUUID(),
         body: "marca",
-        author: { kind: "member", id: crypto.randomUUID(), displayName: "x" },
+        author: { kind: "member", id: crypto.randomUUID(), displayName: "x", profilePicUrl: null },
         originMessageId: null,
+        mentions: [],
         createdAt: "2026-11-24T12:00:00.000Z",
       },
     });

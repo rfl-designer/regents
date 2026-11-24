@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, ExecutionDto, MentionDto, MessageDto } from "@shearim/contracts";
 import { eventually, type TestApp, testApp } from "./harness";
 
-const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
+const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana", profilePicUrl: "https://pic/j.png" };
+const bruno = { id: "2002", name: "Bruno" };
+const carla = { id: "3003", name: "Carla" };
 const CHAVE = "sk-ant-api03-chave-do-workspace";
 
 /** Juliana vira Admin, grava a Chave, cria o Faro e o põe no #geral. */
@@ -46,6 +48,7 @@ describe("Menção a um Agente pela Chave", () => {
       body: "O prazo é sexta.",
       author: { kind: "agent", id: faro.id, displayName: "Faro", photo: null },
       originMessageId: origem.id,
+      mentions: [],
       createdAt: expect.any(String),
     });
     const mensagens: MessageDto[] = await (await t.as(juliana).get(`/api/channels/${geral.id}/messages`)).json();
@@ -183,5 +186,132 @@ describe("Menção a um Agente pela Chave", () => {
     const aviso = (await aba.next("execution.updated")).execution;
     expect(aviso).toMatchObject({ state: "not_acting", reason: "o Workspace não tem Chave" });
     expect(t.anthropic.requests).toHaveLength(0);
+  });
+});
+
+describe("Menção a um Agente pelo identificador de Menção", () => {
+  test("a Menção ao Agente fica registrada na mensagem, ao lado das pessoas, na ordem do texto", async () => {
+    const t = await testApp();
+    const { faro, geral } = await workspaceComFaro(t);
+    const doBruno = await t.addMember(bruno, { by: juliana });
+    const aba = await t.socket(bruno, "aba do Bruno");
+
+    const enviada = await enviar(t, geral.id, "@bruno e @Faro, vejam isso");
+    const { message: chegou } = await aba.next("message.created");
+    const lidas: MessageDto[] = await (await t.as(bruno).get(`/api/channels/${geral.id}/messages`)).json();
+
+    const esperado: MentionDto[] = [
+      { kind: "member", id: doBruno.id },
+      { kind: "agent", id: faro.id },
+    ];
+    for (const m of [enviada, chegou, lidas[0]!]) expect(m.mentions).toEqual(esperado);
+  });
+
+  test("o Agente responde pelo identificador dele, que pode ter sufixo; o nome sozinho não basta", async () => {
+    const t = await testApp();
+    await t.as(juliana).get("/api/me");
+    const doFaroPessoa = await t.addMember({ id: "4004", name: "Faro Silva" }, { by: juliana });
+    const { faro, geral } = await workspaceComFaro(t);
+    const aba = await t.socket(juliana);
+
+    const paraPessoa = await enviar(t, geral.id, "@faro, é com você");
+    const paraAgente = await enviar(t, geral.id, `@${faro.handle} agora é com o Agente`);
+
+    expect(faro.handle).toBe("faro2");
+    expect(paraPessoa.mentions).toEqual([{ kind: "member", id: doFaroPessoa.id }]);
+    expect(paraAgente.mentions).toEqual([{ kind: "agent", id: faro.id }]);
+    // Só a segunda mensagem gera execução.
+    expect((await aba.next("execution.updated")).execution.originMessageId).toBe(paraAgente.id);
+    await t.anthropic.waitForRequests(1);
+    expect(t.anthropic.requests).toHaveLength(1);
+  });
+});
+
+async function canalGeral(t: TestApp) {
+  const channels: ChannelDto[] = await (await t.as(juliana).get("/api/channels")).json();
+  return channels.find((c) => c.name === "geral")!;
+}
+
+async function send(t: TestApp, who: typeof juliana | typeof bruno, channelId: string, body: string) {
+  const res = await t.as(who).post(`/api/channels/${channelId}/messages`, { body });
+  expect(res.status).toBe(201);
+  return (await res.json()) as MessageDto;
+}
+
+describe("Menção a pessoa", () => {
+  test("uma mensagem com @nome registra a Menção, na resposta, na lista e no WebSocket", async () => {
+    const t = await testApp();
+    const doBruno = await t.addMember(bruno, { by: juliana });
+    const canal = await canalGeral(t);
+    const abaDoBruno = await t.socket(bruno, "aba do Bruno");
+
+    const enviada = await send(t, juliana, canal.id, "@bruno olha isso");
+    const { message: chegou } = await abaDoBruno.next("message.created");
+    const [lida] = await (await t.as(bruno).get(`/api/channels/${canal.id}/messages`)).json();
+
+    for (const m of [enviada, chegou, lida]) expect(m.mentions).toEqual([{ kind: "member", id: doBruno.id }]);
+    expect(lida.author).toMatchObject({ displayName: "Juliana", profilePicUrl: "https://pic/j.png" });
+  });
+
+  test("a Menção ignora maiúsculas, acento e pontuação em volta, e vale uma vez por pessoa", async () => {
+    const t = await testApp();
+    const doBruno = await t.addMember(bruno, { by: juliana });
+    const daCarla = await t.addMember({ id: "3003", name: "Cárla" }, { by: juliana });
+    const canal = await canalGeral(t);
+
+    const m = await send(t, juliana, canal.id, "Oi @Bruno, e você (@CÁRLA)? @bruno.");
+
+    expect(m.mentions).toEqual([
+      { kind: "member", id: doBruno.id },
+      { kind: "member", id: daCarla.id },
+    ]);
+  });
+
+  test("e-mail, identificador de ninguém e @ solto não são Menção", async () => {
+    const t = await testApp();
+    await t.addMember(bruno, { by: juliana });
+    const canal = await canalGeral(t);
+
+    const m = await send(t, juliana, canal.id, "manda para bruno@exemplo.com, @ninguem e @ sozinho");
+
+    expect(m.mentions).toEqual([]);
+  });
+
+  test("num Canal privado, só conta a Menção a quem participa dele", async () => {
+    const t = await testApp();
+    const doBruno = await t.addMember(bruno, { by: juliana });
+    await t.addMember(carla, { by: juliana });
+    const privado: ChannelDto = await (
+      await t.as(juliana).post("/api/channels", { name: "diretoria", kind: "private" })
+    ).json();
+    await t.as(juliana).post(`/api/channels/${privado.id}/participants`, { memberId: doBruno.id });
+
+    const m = await send(t, juliana, privado.id, "@bruno e @carla, vejam");
+
+    expect(m.mentions).toEqual([{ kind: "member", id: doBruno.id }]);
+  });
+
+  test("numa DM, a Menção vale para quem está nela, e não para quem está de fora", async () => {
+    const t = await testApp();
+    const doBruno = await t.addMember(bruno, { by: juliana });
+    await t.addMember(carla, { by: juliana });
+    const dm = await (await t.as(juliana).post("/api/dms", { memberIds: [doBruno.id] })).json();
+
+    const res = await t.as(juliana).post(`/api/conversations/${dm.id}/messages`, { body: "@bruno, chama a @carla?" });
+
+    expect(res.status).toBe(201);
+    expect((await res.json()).mentions).toEqual([{ kind: "member", id: doBruno.id }]);
+  });
+
+  test("a Menção continua da pessoa depois que ela troca o identificador", async () => {
+    const t = await testApp();
+    const doBruno = await t.addMember(bruno, { by: juliana });
+    const canal = await canalGeral(t);
+    await send(t, juliana, canal.id, "@bruno pode ver?");
+
+    await t.as(bruno).patch("/api/me", { handle: "bl" });
+    const [lida] = await (await t.as(juliana).get(`/api/channels/${canal.id}/messages`)).json();
+
+    expect(lida.mentions).toEqual([{ kind: "member", id: doBruno.id }]);
   });
 });
