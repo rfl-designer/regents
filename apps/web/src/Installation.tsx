@@ -45,10 +45,11 @@ export function useInstallation(enabled: boolean) {
     );
   }, [enabled]);
   useEffect(load, [load]);
+  // Só o Admin escuta: quem ainda não é Membro não abre o WebSocket de eventos.
   useServerEvents((event) => {
     if (event.type === "ready") load();
     if (event.type === "installation.updated") setInstallation(event.installation);
-  });
+  }, enabled);
   return { installation, failed };
 }
 
