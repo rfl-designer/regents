@@ -12,12 +12,14 @@ import { createExecutions } from "./executions";
 import type { Identity, IdentityPort } from "./identity/port";
 import { IdentityUnavailableError } from "./identity/whois";
 import { type JoinRequestHooks, joinRequestAdminRoutes, myJoinRequestRoutes, type TailnetUser } from "./join-requests";
-import { listMembers, type Member, memberFor, toMeDto } from "./members";
+import { listMembers, type Member, memberFor } from "./members";
 import { keyBrain } from "./model/key";
 import { createModelPort } from "./model/port";
 import { noIdentityPage } from "./no-identity-page";
+import { profileRoutes } from "./profile";
 import { createReading } from "./reading";
 import type { SecretBox } from "./secrets";
+import { workspaceContextRoutes } from "./workspace-context";
 import { workspaceKeyRoutes } from "./workspace-key";
 
 export interface AppDeps {
@@ -98,7 +100,7 @@ export function createApp(deps: AppDeps) {
     await next();
   });
 
-  app.get("/api/me", (c) => c.json(toMeDto(c.get("member"))));
+  app.route("/api/me", profileRoutes({ db, clock, events }));
   app.get("/api/members", async (c) => c.json(await listMembers(db)));
   app.get(EVENTS_PATH, eventsRoute);
   app.route("/api/join-requests", joinRequestAdminRoutes({ db, clock, events, hooks }));
@@ -108,6 +110,7 @@ export function createApp(deps: AppDeps) {
   app.route("/api", accounts.routes);
   app.route("/api", agentRoutes({ db, clock }));
   app.route("/api", workspaceKeyRoutes({ db, clock, secrets }));
+  app.route("/api", workspaceContextRoutes({ db }));
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
 

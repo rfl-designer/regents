@@ -47,8 +47,22 @@
     {
       "idx": 6,
       "version": "7",
-      "when": 1795516847860,
-      "tag": "0006_leitura-mensagens-vistas",
+      "when": 1795516862458,
+      "tag": "0006_perfil-e-mencao",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795517231098,
+      "tag": "0007_contexto-do-workspace",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795517594106,
+      "tag": "0008_leitura-mensagens-vistas",
       "breakpoints": true
     }
   ]

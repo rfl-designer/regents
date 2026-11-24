@@ -34,7 +34,30 @@ export interface MeDto {
   id: string;
   login: string;
   displayName: string;
+  /** Identificador de Menção, sem o `@`: único entre Membros e Agentes, editável. */
+  handle: string;
+  /** Foto da tailnet na primeira entrada; `null` se a tailnet não tinha. */
+  profilePicUrl: string | null;
+  /** "Sobre mim", opcional (vazio quando não escreveu). */
+  about: string;
   role: MemberRole;
+}
+
+// ---------- Menção ----------
+
+/**
+ * `@nome` num texto: o `@` não pode vir colado a letra, número, `_`, `.` ou outro `@`
+ * (assim `bruno@exemplo.com` não é Menção), e o nome vai até o primeiro caractere que não é
+ * letra, número ou `_` (assim `@bruno,` e `(@bruno)` citam `bruno`). O grupo 1 é o nome.
+ * Uma função, porque uma RegExp global guarda estado entre usos.
+ */
+export function mentionPattern() {
+  return /(?<![\p{L}\p{N}_.@])@([\p{L}\p{N}_]+)/gu;
+}
+
+/** O identificador de Menção como é guardado: sem `@` na frente, sem acento, em minúsculas. */
+export function normalizeHandle(text: string) {
+  return text.trim().replace(/^@+/, "").normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 }
 
 // ---------- Pedido de entrada ----------
@@ -81,10 +104,30 @@ export interface ApproveJoinRequestDto {
 
 // ---------- Conversas ----------
 
-/** Item de `GET /api/members`: quem se pode adicionar a um Canal. */
+/**
+ * Item de `GET /api/members` (quem se pode adicionar a uma conversa, quem é quem) e
+ * do evento `member.updated`.
+ */
 export interface MemberSummaryDto {
   id: string;
   displayName: string;
+  /** Identificador de Menção, sem o `@`. */
+  handle: string;
+  profilePicUrl: string | null;
+  about: string;
+}
+
+/** Corpo de `PATCH /api/me`: o Membro edita o próprio perfil. Campo ausente fica como está. */
+export interface UpdateProfileInput {
+  /** Até 80 caracteres, não vazio. */
+  displayName?: string;
+  /**
+   * Identificador de Menção (com ou sem `@`): minúsculas, acentos e maiúsculas são normalizados;
+   * fica com `[a-z0-9_]`, até 32. Já de outro participante: 409 `handle_taken`.
+   */
+  handle?: string;
+  /** "Sobre mim", até 500 caracteres; vazio apaga. */
+  about?: string;
 }
 
 export type ChannelKind = "public" | "private";
@@ -172,10 +215,19 @@ export interface OpenDmInput {
   memberIds: string[];
 }
 
-/** Quem escreveu: uma pessoa, ou um Agente (então com a foto dele). */
+/**
+ * Quem escreveu: uma pessoa (com a foto da tailnet, ou `null`), ou um Agente (com a foto dele,
+ * um `data:` URL, ou `null`).
+ */
 export type MessageAuthorDto =
-  | { kind: "member"; id: string; displayName: string }
+  | { kind: "member"; id: string; displayName: string; profilePicUrl: string | null }
   | { kind: "agent"; id: string; displayName: string; photo: string | null };
+
+/**
+ * Quem uma mensagem menciona: o `@identificador` de um Membro que vê a conversa, ou de um
+ * Agente (a Menção a um Agente é o que o faz responder ali).
+ */
+export type MentionDto = { kind: "member"; id: string } | { kind: "agent"; id: string };
 
 /**
  * Item de `GET /api/conversations/:id/messages` (e de `/api/channels/:id/messages`, só para Canais)
@@ -192,6 +244,11 @@ export interface MessageDto {
    * O cliente mostra a resposta logo abaixo da origem, e não no fim da conversa.
    */
   originMessageId: string | null;
+  /**
+   * Na ordem em que aparecem no texto, uma vez por participante (pessoa ou Agente).
+   * Destaca a mensagem para quem foi mencionado.
+   */
+  mentions: MentionDto[];
   /** ISO 8601, UTC. */
   createdAt: string;
 }
@@ -259,6 +316,11 @@ export type AgentModel = (typeof AGENT_MODELS)[number];
 export interface AgentDto {
   id: string;
   name: string;
+  /**
+   * Identificador de Menção, sem o `@`: do mesmo espaço de nomes dos Membros. Gerado do nome
+   * na criação (`Faro` → `faro`; `faro2` se um Membro já tinha `faro`).
+   */
+  handle: string;
   /** `data:` URL de imagem (png, jpeg, webp ou gif), ou `null`. */
   photo: string | null;
   description: string;
@@ -285,6 +347,17 @@ export interface WorkspaceKeyDto {
 /** Corpo de `PUT /api/workspace-key`: a chave da Messages API. */
 export interface SetWorkspaceKeyInput {
   apiKey: string;
+}
+
+/** Tamanho máximo do Contexto do Workspace, em caracteres: ele é curto e entra em toda execução. */
+export const WORKSPACE_CONTEXT_MAX = 4000;
+
+/**
+ * `GET`/`PUT /api/workspace-context` (só Admin): o Contexto do Workspace, um texto curto sobre
+ * quem é o Workspace e como ele fala. Entra no contexto de todo Agente, em todo Canal e DM.
+ */
+export interface WorkspaceContextDto {
+  context: string;
 }
 
 // ---------- Execuções e Andamento ----------
@@ -391,6 +464,11 @@ export type ServerEvent =
    * O cliente trata como "insere ou troca pelo `id`".
    */
   | { type: "channel.updated"; channel: ChannelDto }
+  /**
+   * O perfil de um Membro mudou (nome, identificador de Menção, "sobre mim"). Para todo Membro,
+   * inclusive as outras abas de quem editou: é assim que o "Você está como Fulano" acompanha.
+   */
+  | { type: "member.updated"; member: MemberSummaryDto }
   /** Uma DM apareceu para os participantes dela (quem abriu também recebe). Insere ou troca pelo `id`. */
   | { type: "dm.updated"; dm: DmDto }
   /** Pedido de entrada novo. Só para Admins. */
@@ -424,4 +502,6 @@ export type ApiError =
   | { error: "not_found" }
   | { error: "conflict"; message: string }
   | { error: "name_taken"; message: string }
+  /** O identificador de Menção pedido já é de outra pessoa ou Agente. */
+  | { error: "handle_taken"; message: string }
   | { error: "invalid_input"; message: string };

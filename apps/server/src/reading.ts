@@ -7,11 +7,10 @@ import { findVisibleConversation, isUuid } from "./conversations";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
 import type { Member } from "./members";
-import { handleOf, mentionHandles } from "./mentions";
 
 type Env = { Variables: { member: Member } };
 
-const { messages, messageReads, channelParticipants, channels, members } = schema;
+const { messages, messageReads, messageMentions, channelParticipants, channels } = schema;
 const origins = alias(messages, "origins");
 
 /** Quantas mensagens uma marcação aceita de uma vez (uma tela cheia cabe com folga). */
@@ -30,11 +29,11 @@ export function createReading(deps: { db: Db; clock: Clock; events: EventHub }) 
   const { db, clock, events } = deps;
   const routes = new Hono<Env>();
 
-  async function publishTo(member: Member) {
-    events.publish({ members: [member.id] }, { type: "unread.updated", unread: await unreadOf(db, member) });
+  async function publishTo(memberId: string) {
+    events.publish({ members: [memberId] }, { type: "unread.updated", unread: await unreadOf(db, memberId) });
   }
 
-  routes.get("/unread", async (c) => c.json(await unreadOf(db, c.get("member"))));
+  routes.get("/unread", async (c) => c.json(await unreadOf(db, c.get("member").id)));
 
   const visible = (c: Context<Env>) => findVisibleConversation(db, c.get("member"), c.req.param("id")!);
 
@@ -77,7 +76,7 @@ export function createReading(deps: { db: Db; clock: Clock; events: EventHub }) 
         marked = added.length;
       }
     }
-    const unread = await unreadOf(db, me);
+    const unread = await unreadOf(db, me.id);
     // As outras abas e aparelhos do Membro acompanham.
     if (marked > 0) events.publish({ members: [me.id] }, { type: "unread.updated", unread });
     return c.json(unread);
@@ -92,24 +91,15 @@ export function createReading(deps: { db: Db; clock: Clock; events: EventHub }) 
     async messageCreated(message: Pick<MessageDto, "channelId" | "author">) {
       const author = message.author.kind === "member" ? message.author.id : undefined;
       const people = await db
-        .select({ member: members })
+        .select({ id: channelParticipants.memberId })
         .from(channelParticipants)
-        .innerJoin(members, eq(members.id, channelParticipants.memberId))
         .where(eq(channelParticipants.channelId, message.channelId));
-      for (const { member } of people) if (member.id !== author) await publishTo(member);
+      for (const { id } of people) if (id !== author) await publishTo(id);
     },
   };
 }
 
 export type Reading = ReturnType<typeof createReading>;
-
-/**
- * SEAM do #19: se a mensagem menciona o Membro. Hoje, `@nome` casa com o nome dele, como os
- * Agentes em `mentions.ts`; com o identificador de Menção do #19, compare com ele.
- */
-function mentions(body: string, member: Member) {
-  return mentionHandles(body).has(handleOf(member.displayName));
-}
 
 /**
  * As não-lidas do Membro (numa conversa, ou em todas), na ordem de exibição: cada mensagem de
@@ -121,7 +111,8 @@ async function unreadRows(db: Db, memberId: string, conversationId?: string) {
       id: messages.id,
       conversationId: messages.channelId,
       kind: channels.kind,
-      body: messages.body,
+      /** A mensagem menciona o Membro (as Menções que o #19 registra ao gravar). */
+      mentioned: sql<boolean>`${messageMentions.messageId} is not null`,
       seq: messages.seq,
       originSeq: origins.seq,
     })
@@ -133,6 +124,7 @@ async function unreadRows(db: Db, memberId: string, conversationId?: string) {
     .innerJoin(channels, eq(channels.id, messages.channelId))
     .leftJoin(origins, eq(origins.id, messages.originMessageId))
     .leftJoin(messageReads, and(eq(messageReads.messageId, messages.id), eq(messageReads.memberId, memberId)))
+    .leftJoin(messageMentions, and(eq(messageMentions.messageId, messages.id), eq(messageMentions.memberId, memberId)))
     .where(
       and(
         conversationId ? eq(messages.channelId, conversationId) : undefined,
@@ -149,8 +141,8 @@ async function unreadRows(db: Db, memberId: string, conversationId?: string) {
   });
 }
 
-export async function unreadOf(db: Db, member: Member): Promise<UnreadDto> {
-  const rows = await unreadRows(db, member.id);
+export async function unreadOf(db: Db, memberId: string): Promise<UnreadDto> {
+  const rows = await unreadRows(db, memberId);
   const byConversation = new Map<string, UnreadDto["conversations"][number]>();
   const unread: UnreadDto = { conversations: [], total: 0, mentions: 0, dms: 0 };
   for (const r of rows) {
@@ -160,10 +152,9 @@ export async function unreadOf(db: Db, member: Member): Promise<UnreadDto> {
       byConversation.set(r.conversationId, c);
       unread.conversations.push(c);
     }
-    const mentioned = mentions(r.body, member);
     c.count++;
     unread.total++;
-    if (mentioned) {
+    if (r.mentioned) {
       c.mentions++;
       unread.mentions++;
     }

@@ -15,7 +15,7 @@ import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
 import type { Executions } from "./executions";
 import type { Member } from "./members";
-import { mentionedAgents } from "./mentions";
+import { recordMentions } from "./mentions";
 import { listMessages as listConversationMessages } from "./messages";
 import { addAgent, addParticipants, audienceOf, canSee, participantsOf } from "./participation";
 import type { Reading } from "./reading";
@@ -176,7 +176,11 @@ export function conversationRoutes(deps: {
       body: input.body,
       createdAt: clock.now(),
     };
-    await db.insert(messages).values(values);
+    // A mensagem e as Menções dela são gravadas juntas, antes de qualquer outra coisa.
+    const mentions = await db.transaction(async (tx) => {
+      await tx.insert(messages).values(values);
+      return recordMentions(tx, values.id, conversation, values.body);
+    });
     // Escrever num Canal público é entrar nele (numa conversa fechada, quem escreve já participa).
     const joined =
       conversation.kind === "public" && (await addParticipants(db, conversation.id, [author.id], values.createdAt));
@@ -184,8 +188,9 @@ export function conversationRoutes(deps: {
       id: values.id,
       channelId: values.channelId,
       body: values.body,
-      author: { kind: "member", id: author.id, displayName: author.displayName },
+      author: { kind: "member", id: author.id, displayName: author.displayName, profilePicUrl: author.profilePicUrl },
       originMessageId: null,
+      mentions,
       createdAt: values.createdAt.toISOString(),
     };
     events.publish(await audienceOf(db, conversation), { type: "message.created", message: dto });
@@ -193,7 +198,8 @@ export function conversationRoutes(deps: {
     await reading.messageCreated(dto);
     // Só depois de gravada e anunciada, a mensagem dispara os Agentes mencionados.
     // Em DM, a Menção a Agentes é do #23: por enquanto, só nos Canais.
-    if (isChannel(conversation)) await executions.enqueueMentions(dto, await mentionedAgents(db, dto.body));
+    const agents = mentions.filter((m) => m.kind === "agent");
+    if (isChannel(conversation)) await executions.enqueueMentions(dto, agents);
     return c.json(dto, 201);
   }
 

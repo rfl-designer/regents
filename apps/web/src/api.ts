@@ -20,6 +20,8 @@ import type {
   UnreadDto,
   UnreadMessagesDto,
   UpdateChannelSettingsInput,
+  UpdateProfileInput,
+  WorkspaceContextDto,
   WorkspaceKeyDto,
 } from "@shearim/contracts";
 
@@ -60,6 +62,7 @@ const post = { method: "POST" } as const;
 
 export const api = {
   me: () => call<MeDto>("/api/me"),
+  updateProfile: (input: UpdateProfileInput) => call<MeDto>("/api/me", json("PATCH", input)),
   members: () => call<MemberSummaryDto[]>("/api/members"),
   myJoinRequest: () => call<MyJoinRequestDto>("/api/join-request"),
   requestToJoin: () => call<JoinRequestDto>("/api/join-request", post),
@@ -105,6 +108,9 @@ export const api = {
   createAgent: (input: CreateAgentInput) => call<AgentDto>("/api/agents", json("POST", input)),
   addAgent: (channelId: string, agentId: string) =>
     call<ChannelDto>(`/api/channels/${channelId}/agents`, json("POST", { agentId })),
+  workspaceContext: () => call<WorkspaceContextDto>("/api/workspace-context"),
+  setWorkspaceContext: (context: string) =>
+    call<WorkspaceContextDto>("/api/workspace-context", json("PUT", { context })),
   workspaceKey: () => call<WorkspaceKeyDto>("/api/workspace-key"),
   setWorkspaceKey: (apiKey: string) => call<WorkspaceKeyDto>("/api/workspace-key", json("PUT", { apiKey })),
 };
