@@ -393,6 +393,8 @@ export interface AgentDto {
    * contrato de roteamento dela são do Shearim.
    */
   builtin: boolean;
+  /** As Ferramentas concedidas a ele, na ordem do catálogo, para todo Membro (Spec #44). */
+  tools: AgentToolSummaryDto[];
   instructions?: string;
   /**
    * Só para o Admin: o orçamento mensal na Chave, em dólares (nulo: sem teto). Conta só o que a
@@ -435,6 +437,18 @@ export type UpdateAgentInput = Partial<CreateAgentInput>;
 export type ToolOrigin = "workspace" | "web";
 /** `read` só lê; `write` escreve, e toda escrita passa por um Pedido de aprovação. */
 export type ToolAccess = "read" | "write";
+
+/**
+ * Uma Ferramenta concedida a um Agente, como todo Membro a vê na lista de Agentes
+ * (`AgentDto.tools`): o nome e a origem. As concessões só o Admin edita.
+ */
+export interface AgentToolSummaryDto {
+  /** O id estável da Ferramenta (ex. `listar_agentes`). */
+  id: string;
+  /** O nome em pt-BR ("listar Agentes"). */
+  title: string;
+  origin: ToolOrigin;
+}
 
 /**
  * Uma Ferramenta do Workspace na tela do Agente (só Admin): `GET /api/agents/:id/tools`, e a

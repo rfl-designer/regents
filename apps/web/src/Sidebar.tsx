@@ -1,5 +1,6 @@
 import type { AgentDto, ChannelDto, DmDto, MeDto, MemberSummaryDto, UnreadDto } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
+import { agentToolsText } from "./agent-tools";
 import { ApiFailure, api } from "./api";
 import { dmTitle } from "./DmView";
 
@@ -253,6 +254,10 @@ function NewDm({ me, onCancel, onOpened }: { me: MeDto; onCancel(): void; onOpen
               <button type="button" className="link" disabled={busy} onClick={() => open(() => api.openAgentDm(a.id))}>
                 {a.name}
               </button>
+              <small className="hint">
+                {a.description ? `${a.description} · ` : ""}
+                {agentToolsText(a)}
+              </small>
             </li>
           ))}
         </ul>

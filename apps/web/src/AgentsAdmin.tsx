@@ -8,6 +8,7 @@ import {
 } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
+import { agentToolsText } from "./agent-tools";
 import { ApiFailure, api } from "./api";
 import { dateTimeShort } from "./format";
 import { INCIDENT_TEXT, usd } from "./KeyBanners";
@@ -166,6 +167,7 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
           </button>
         </div>
         <p className="body">{a.description || "Sem descrição."}</p>
+        <p className="hint">{agentToolsText(a)}</p>
         <p className={a.overBudget ? "error" : "hint"}>
           Gasto na Chave este mês: {usd.format(a.keySpendUsd ?? 0)}
           {a.monthlyBudgetUsd === null || a.monthlyBudgetUsd === undefined
@@ -181,7 +183,15 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
                 setEditing(false);
               }}
             />
-            <AgentTools agent={a} />
+            <AgentTools
+              agent={a}
+              onChanged={(tools) =>
+                onChanged({
+                  ...a,
+                  tools: tools.filter((t) => t.granted).map(({ id, title, origin }) => ({ id, title, origin })),
+                })
+              }
+            />
           </>
         )}
       </div>
@@ -273,7 +283,7 @@ const ORIGIN_LABEL: Record<ToolOrigin, string> = { workspace: "Do Workspace", we
  * As Ferramentas do Agente, agrupadas por origem, cada uma marcada como leitura ou escrita (toda
  * escrita passa por um Pedido de aprovação). Conceder ou retirar vale na hora, sem "Salvar".
  */
-function AgentTools({ agent }: { agent: AgentDto }) {
+function AgentTools({ agent, onChanged }: { agent: AgentDto; onChanged(tools: AgentToolDto[]): void }) {
   const [tools, setTools] = useState<AgentToolDto[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -286,7 +296,9 @@ function AgentTools({ agent }: { agent: AgentDto }) {
     setBusy(tool.id);
     setError(null);
     try {
-      setTools(await api.setAgentTool(agent.id, tool.id, !tool.granted));
+      const next = await api.setAgentTool(agent.id, tool.id, !tool.granted);
+      setTools(next);
+      onChanged(next);
     } catch (err) {
       setError(
         messageOf(err, `A Ferramenta ${tool.title} não foi ${tool.granted ? "retirada" : "concedida"}. Tente de novo.`),

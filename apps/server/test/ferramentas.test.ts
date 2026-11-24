@@ -148,6 +148,36 @@ describe("concessão de Ferramentas", () => {
   );
 });
 
+describe("as Ferramentas na lista de Agentes", () => {
+  test(
+    "todo Membro vê as Ferramentas de cada Agente (nome e origem); as concessões só o Admin edita",
+    async () => {
+      const t = await testApp();
+      const { faro } = await workspace(t);
+      expect(faro.tools).toEqual([]);
+
+      await t.as(juliana).put(`/api/agents/${faro.id}/tools/listar_agentes`);
+
+      const lista: AgentDto[] = await (await t.as(bruno).get("/api/agents")).json();
+      expect(lista.find((a) => a.id === faro.id)?.tools).toEqual([
+        { id: "listar_agentes", title: "listar Agentes", origin: "workspace" },
+      ]);
+      expect(lista.find((a) => a.builtin)?.tools).toEqual([]);
+      // A edição do Agente pelo Admin devolve o Agente com as Ferramentas dele.
+      const editado: AgentDto = await (
+        await t.as(juliana).patch(`/api/agents/${faro.id}`, { model: "claude-haiku-5-5" })
+      ).json();
+      expect(editado.tools).toEqual([{ id: "listar_agentes", title: "listar Agentes", origin: "workspace" }]);
+
+      expect((await t.as(bruno).put(`/api/agents/${faro.id}/tools/listar_agentes`)).status).toBe(403);
+      expect((await t.as(bruno).delete(`/api/agents/${faro.id}/tools/listar_agentes`)).status).toBe(403);
+      const depois: AgentDto[] = await (await t.as(bruno).get("/api/agents")).json();
+      expect(depois.find((a) => a.id === faro.id)?.tools).toHaveLength(1);
+    },
+    LONGO,
+  );
+});
+
 describe("o pedido à Messages API", () => {
   test(
     "um Agente sem a concessão não recebe a Ferramenta; com a concessão, a recebe no pedido",
@@ -346,6 +376,54 @@ describe("custo", () => {
 
       const lista: AgentDto[] = await (await t.as(juliana).get("/api/agents")).json();
       expect(lista.find((a) => a.id === faro.id)?.keySpendUsd).toBeCloseTo(4, 6);
+    },
+    LONGO,
+  );
+});
+
+describe("a Articuladora sabe as Ferramentas de cada Agente", () => {
+  test(
+    "num Canal com dois Agentes, só um com a Ferramenta pedida, o roteamento recebe as Ferramentas de cada um, continua sem Ferramentas, e o Desfecho delega a quem a tem",
+    async () => {
+      const t = await testApp();
+      const { faro, geral } = await workspace(t);
+      await t.as(juliana).put(`/api/agents/${faro.id}/tools/listar_agentes`);
+      const lince: AgentDto = await (
+        await t.as(juliana).post("/api/agents", {
+          name: "Lince",
+          description: "Jurídico: contratos.",
+          model: "claude-sonnet-5-5",
+        })
+      ).json();
+      await t.as(juliana).post(`/api/channels/${geral.id}/agents`, { agentId: lince.id });
+      // Um Agente de fora do Canal, com a Ferramenta: a Articuladora o conhece por ela também.
+      const prisma: AgentDto = await (
+        await t.as(juliana).post("/api/agents", { name: "Prisma", description: "Dados.", model: "claude-sonnet-5-5" })
+      ).json();
+      await t.as(juliana).put(`/api/agents/${prisma.id}/tools/listar_agentes`);
+
+      t.anthropic.reply(
+        {
+          json: {
+            decisao: "delegar",
+            agentes: [{ agente: "faro", cobrir: "listar os Agentes" }],
+            motivo: "O Faro tem a Ferramenta.",
+          },
+        },
+        { text: "Os Agentes são Faro, Lince e Prisma." },
+      );
+      const origem = await enviar(t, geral.id, "Quem são os Agentes do Workspace?");
+      const resposta = await respostaA(t, geral.id, origem);
+      expect(resposta.author).toMatchObject({ kind: "agent", id: faro.id });
+
+      const roteamento = t.anthropic.requests.find((r) => r.body.output_config)!;
+      expect(roteamento.body).not.toHaveProperty("tools");
+      const system = String(roteamento.body.system);
+      const linha = (handle: string) => system.split("\n").find((l) => l.startsWith(`- @${handle} `)) ?? "";
+      expect(linha("faro")).toContain("Ferramentas: listar Agentes");
+      expect(linha("lince")).toContain("Ferramentas: nenhuma");
+      expect(linha("prisma")).toContain("Ferramentas: listar Agentes");
+      expect(system).toContain("delegue a quem a tem");
     },
     LONGO,
   );

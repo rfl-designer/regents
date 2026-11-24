@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, isNotNull, notInArray, or } from "drizzle-orm";
 import type { Agent } from "./agents";
 import { recentMessages } from "./context";
 import { type Db, schema } from "./db/client";
+import type { ToolPort } from "./tools/port";
 
 const { messages, agents, channels, channelAgents, channelParticipants, mentionHandles } = schema;
 
@@ -45,6 +46,9 @@ export const ROUTING_SCHEMA = {
 
 type TeamMember = { id: string; name: string; handle: string; description: string };
 
+/** As Ferramentas concedidas a cada Agente (a porta de Ferramentas): o roteamento as lista, sem usá-las. */
+type GrantsOf = ToolPort["grantsOf"];
+
 /** O Desfecho decidido, já conferido contra os Agentes do Canal. */
 export type Decision =
   | { decision: "reply" | "none"; reason: string; delegates: [] }
@@ -55,7 +59,13 @@ export type Decision =
  * deste Canal, cada um com os Canais (desses) em que está. Um Canal privado de que o autor não
  * participa nunca aparece, nem pelo nome (para não vazar numa sugestão).
  */
-export async function workspaceMapFor(db: Db, authorMemberId: string, channelId: string) {
+export async function workspaceMapFor(
+  db: Db,
+  authorMemberId: string,
+  channelId: string,
+  /** Com ele, cada Agente vem com as Ferramentas dele (o roteamento). */
+  grantsOf?: GrantsOf,
+) {
   const visible = await db
     .select({ id: channels.id, name: channels.name })
     .from(channels)
@@ -104,11 +114,12 @@ export async function workspaceMapFor(db: Db, authorMemberId: string, channelId:
           )
       : [];
   const nameOf = new Map(visible.map((c) => [c.id, c.name!]));
+  const grants = grantsOf ? await grantsOf(outside.map((a) => a.id)) : undefined;
   const lines = {
     channels: visible.map((c) => `#${c.name}`).join(", "),
     agents: outside.map((a) => {
       const where = placements.filter((p) => p.agentId === a.id).map((p) => `#${nameOf.get(p.channelId)}`);
-      return `- ${agentLine(a)}${where.length ? ` · está em ${where.join(", ")}` : ""}`;
+      return `- ${agentLine(a)}${where.length ? ` · está em ${where.join(", ")}` : ""}${toolsSuffix(a, grants)}`;
     }),
   };
   return lines;
@@ -116,6 +127,17 @@ export async function workspaceMapFor(db: Db, authorMemberId: string, channelId:
 
 function agentLine(a: TeamMember) {
   return `@${a.handle} (${a.name})${a.description ? `: ${a.description}` : ""}`;
+}
+
+/** " · Ferramentas: a, b" (ou "nenhuma"), quando o pedido leva as Ferramentas de cada Agente. */
+function toolsSuffix(a: Pick<TeamMember, "id">, grants?: Awaited<ReturnType<GrantsOf>>) {
+  if (!grants) return "";
+  return ` · Ferramentas: ${
+    grants
+      .get(a.id)
+      ?.map((t) => t.title)
+      .join(", ") || "nenhuma"
+  }`;
 }
 
 /** Os Agentes do Canal a quem ela pode delegar (todos menos ela), com o identificador. */
@@ -144,15 +166,17 @@ async function spokeInThread(db: Db, rootId: string, team: readonly TeamMember[]
 /**
  * O pedido de roteamento de uma mensagem de pessoa num Canal: o `system`, a conversa e quem pode
  * receber. Numa Thread, a conversa é a raiz e a Thread (`recentMessages`), e os Agentes que já
- * falaram ali vêm marcados como preferidos.
+ * falaram ali vêm marcados como preferidos. Cada Agente vem com as Ferramentas dele, para que ela
+ * delegue a quem consegue atender; o pedido de roteamento em si continua sem Ferramentas.
  */
-export async function buildRouting(db: Db, articuladora: Agent, originMessageId: string) {
+export async function buildRouting(db: Db, articuladora: Agent, originMessageId: string, grantsOf: GrantsOf) {
   const [origin] = await db.select().from(messages).where(eq(messages.id, originMessageId));
   if (!origin?.authorMemberId) throw new Error(`buildRouting: ${originMessageId} não é mensagem de pessoa`);
   const [channel] = await db.select().from(channels).where(eq(channels.id, origin.channelId));
   const recent = await recentMessages(db, origin, Math.min(ROUTING_RECENT, channel!.recentMessages));
   const team = await delegatesIn(db, channel!.id);
-  const map = await workspaceMapFor(db, origin.authorMemberId, channel!.id);
+  const map = await workspaceMapFor(db, origin.authorMemberId, channel!.id, grantsOf);
+  const grants = await grantsOf(team.map((a) => a.id));
   const author = recent.at(-1)!.author;
   const inThread = origin.threadRootId !== null;
   const spoke = inThread ? await spokeInThread(db, origin.threadRootId!, team) : [];
@@ -166,6 +190,7 @@ export async function buildRouting(db: Db, articuladora: Agent, originMessageId:
     `- delegar: passe para até ${MAX_DELEGATES} Agentes do Canal, cada um com uma frase sobre o que cobrir. Só Agentes da lista "Agentes do Canal", pelo identificador. Um Agente de fora do Canal você nunca delega.`,
     "- nenhum: nenhum Agente precisa agir (conversa entre pessoas, recado, cumprimento, assunto encerrado).",
     "Na dúvida entre responder e nenhum, fique com nenhum.",
+    "Cada Agente vem com as Ferramentas que tem. Quando o pedido precisa de uma Ferramenta, delegue a quem a tem; se só um Agente de fora do Canal a tem, responda sugerindo esse Agente.",
     ...(inThread
       ? [
           'Prefira, entre os Agentes do Canal, os que já falaram nesta Thread (a lista "Já falaram nesta Thread"), para manter a continuidade.',
@@ -177,7 +202,7 @@ export async function buildRouting(db: Db, articuladora: Agent, originMessageId:
   const system = [
     contract,
     section("Instruções do Canal", channel!.instructions),
-    section("Agentes do Canal", team.map((a) => `- ${agentLine(a)}`).join("\n")),
+    section("Agentes do Canal", team.map((a) => `- ${agentLine(a)}${toolsSuffix(a, grants)}`).join("\n")),
     section("Já falaram nesta Thread", spoke.map((a) => `- @${a.handle} (${a.name})`).join("\n")),
     section("Outros Agentes do Workspace", map.agents.join("\n")),
     section(`Canais que ${author} pode ver`, map.channels),

@@ -2,6 +2,7 @@ import {
   AGENT_MODELS,
   type AgentDto,
   type AgentModel,
+  type AgentToolSummaryDto,
   type CreateAgentInput,
   type UpdateAgentInput,
 } from "@shearim/contracts";
@@ -13,6 +14,7 @@ import { type Db, isUuid, schema } from "./db/client";
 import { budgetOf, type KeyLedger, keySpend, monthOf, parseBudget } from "./key-budget";
 import type { Env } from "./members";
 import { claimHandle, handleBase } from "./mention-handles";
+import type { ToolPort } from "./tools/port";
 
 export type Agent = typeof schema.agents.$inferSelect;
 /** O Agente com o identificador de Menção dele (`mention_handles`). */
@@ -26,15 +28,18 @@ const PHOTO = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 const PHOTO_MAX = 400_000;
 const BUDGET_INVALID = "O orçamento mensal é um valor em dólares, zero ou mais (vazio: sem teto).";
 
-/** Agentes: o Admin cria; todo Membro vê o nome, a foto, a descrição e o modelo. */
+/** Agentes: o Admin cria; todo Membro vê o nome, a foto, a descrição, o modelo e as Ferramentas. */
 export function agentRoutes(deps: {
   db: Db;
   clock: Clock;
   ledger: KeyLedger;
+  /** As Ferramentas concedidas a cada Agente (a porta de Ferramentas). */
+  tools: Pick<ToolPort, "grantsOf">;
   /** O Admin mudou o orçamento de um Agente: quem espera na fila por quem pague decide de novo. */
   onBudgetChanged?: () => void;
 }) {
   const { db, clock, ledger } = deps;
+  const toolsOf = async (id: string) => (await deps.tools.grantsOf([id])).get(id) ?? [];
   const routes = new Hono<Env>();
 
   routes.get("/agents", async (c) => {
@@ -44,9 +49,11 @@ export function agentRoutes(deps: {
       .from(agents)
       .innerJoin(mentionHandles, eq(mentionHandles.agentId, agents.id))
       .orderBy(desc(agents.builtin), asc(agents.createdAt), asc(agents.name));
-    if (!admin) return c.json(all.map((a) => toAgentDto(a, { admin })));
+    const grants = await deps.tools.grantsOf();
+    const tools = (id: string) => grants.get(id) ?? [];
+    if (!admin) return c.json(all.map((a) => toAgentDto(a, { admin, tools: tools(a.id) })));
     const spend = await keySpend(db, monthOf(clock.now()));
-    return c.json(all.map((a) => toAgentDto(a, { admin, keySpendUsd: spend.get(a.id) ?? 0 })));
+    return c.json(all.map((a) => toAgentDto(a, { admin, tools: tools(a.id), keySpendUsd: spend.get(a.id) ?? 0 })));
   });
 
   routes.post("/agents", async (c) => {
@@ -90,7 +97,7 @@ export function agentRoutes(deps: {
       return { ...agent, handle };
     });
     if (!created) return c.json({ error: "name_taken", message: `Já existe um Agente chamado ${name}.` }, 409);
-    return c.json(toAgentDto(created, { admin: true, keySpendUsd: 0 }), 201);
+    return c.json(toAgentDto(created, { admin: true, tools: [], keySpendUsd: 0 }), 201);
   });
 
   /**
@@ -169,7 +176,9 @@ export function agentRoutes(deps: {
     const budgetChanged = change.monthlyBudgetUsd !== undefined && change.monthlyBudgetUsd !== current.monthlyBudgetUsd;
     const budget = budgetChanged ? await ledger.budgetChanged(updated.id) : await ledger.budgetNow(updated.id);
     if (budgetChanged) deps.onBudgetChanged?.();
-    return c.json(toAgentDto(updated, { admin: true, keySpendUsd: budget.keySpendUsd }));
+    return c.json(
+      toAgentDto(updated, { admin: true, tools: await toolsOf(updated.id), keySpendUsd: budget.keySpendUsd }),
+    );
   });
 
   return routes;
@@ -185,10 +194,13 @@ export function agentHandleBase(name: string) {
 }
 
 /**
- * O Agente como `GET /api/agents` o devolve. Para o Admin, também as instruções e, com
- * `keySpendUsd` (o gasto do mês na Chave), o orçamento.
+ * O Agente como `GET /api/agents` o devolve, com as Ferramentas concedidas a ele. Para o Admin,
+ * também as instruções e, com `keySpendUsd` (o gasto do mês na Chave), o orçamento.
  */
-export function toAgentDto(row: AgentWithHandle, opts: { admin: boolean; keySpendUsd?: number }): AgentDto {
+export function toAgentDto(
+  row: AgentWithHandle,
+  opts: { admin: boolean; tools: AgentToolSummaryDto[]; keySpendUsd?: number },
+): AgentDto {
   const a = withBuiltinText(row);
   const dto: AgentDto = {
     id: a.id,
@@ -198,6 +210,7 @@ export function toAgentDto(row: AgentWithHandle, opts: { admin: boolean; keySpen
     description: a.description,
     model: a.model as AgentModel,
     builtin: a.builtin,
+    tools: opts.tools,
   };
   if (opts.admin) dto.instructions = a.instructions;
   if (opts.admin && opts.keySpendUsd !== undefined) {
