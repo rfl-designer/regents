@@ -360,6 +360,11 @@ body {
     content: "...";
   }
 }
+.tool-failed {
+  margin: 2px 0 0;
+  font-size: 0.85rem;
+  color: var(--warn);
+}
 .failcard {
   margin: 0;
   min-width: 0;

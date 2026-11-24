@@ -32,48 +32,99 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
       if (request.payer.kind !== "key") throw new Error("keyBrain só atende pagamento pela Chave");
       const client = new Anthropic({ apiKey: request.payer.apiKey, baseURL, maxRetries: 0 });
       let terminal: ModelEvent | undefined;
-      /** O uso informado até aqui (o `message_start` e o `message_delta`), no modelo do Agente. */
-      const { model } = request;
-      const usage = { inputTokens: 0, outputTokens: 0 };
-      const spent = (): ModelEvent => ({ type: "usage", model, usage: { ...usage }, costUsd: costUsd(model, usage) });
+      /**
+       * O uso informado até aqui, no modelo do Agente: o dos turnos que já acabaram (`before`) mais
+       * o do turno em curso (o `message_start` e o `message_delta`). Todo turno conta no orçamento.
+       */
+      const { model, tools } = request;
+      const before = { inputTokens: 0, outputTokens: 0 };
+      const turn = { inputTokens: 0, outputTokens: 0 };
+      const sum = () => ({
+        inputTokens: before.inputTokens + turn.inputTokens,
+        outputTokens: before.outputTokens + turn.outputTokens,
+      });
+      const spent = (): ModelEvent => ({ type: "usage", model, usage: sum(), costUsd: costUsd(model, sum()) });
       try {
-        const stream = client.messages.stream(
-          {
-            model: request.model,
-            max_tokens: MAX_TOKENS,
-            system: request.system,
-            messages: request.messages,
-            ...(request.output && {
-              output_config: { format: { type: "json_schema", schema: request.output.schema } },
-            }),
-          },
-          { signal },
-        );
-        for await (const event of stream) {
-          if (event.type === "message_start") {
-            usage.inputTokens = event.message.usage.input_tokens;
-            usage.outputTokens = event.message.usage.output_tokens;
-            yield spent();
-          } else if (event.type === "message_delta") {
-            usage.inputTokens = event.usage.input_tokens ?? usage.inputTokens;
-            usage.outputTokens = event.usage.output_tokens;
-            yield spent();
-          } else if (event.type === "content_block_start" && event.content_block.type === "thinking") {
-            yield { type: "thinking" };
-          } else if (event.type === "content_block_delta") {
-            if (event.delta.type === "text_delta") yield { type: "text", text: event.delta.text };
-            else if (event.delta.type === "thinking_delta" || event.delta.type === "signature_delta") {
+        const offered = tools ? await tools.list() : [];
+        const apiTools = offered.map((t) => ({
+          name: t.name,
+          description: t.description,
+          input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+        }));
+        const messages: Anthropic.MessageParam[] = [...request.messages];
+        /** Já saiu texto num turno anterior: o do turno seguinte vem depois de uma linha em branco. */
+        let wrote = false;
+        // O vai-e-vem de `tool_use`: cada turno que pede Ferramentas recebe os resultados e segue.
+        for (;;) {
+          turn.inputTokens = 0;
+          turn.outputTokens = 0;
+          let wroteThisTurn = false;
+          const stream = client.messages.stream(
+            {
+              model: request.model,
+              max_tokens: MAX_TOKENS,
+              system: request.system,
+              messages,
+              ...(apiTools.length && { tools: apiTools }),
+              ...(request.output && {
+                output_config: { format: { type: "json_schema", schema: request.output.schema } },
+              }),
+            },
+            { signal },
+          );
+          for await (const event of stream) {
+            if (event.type === "message_start") {
+              turn.inputTokens = event.message.usage.input_tokens;
+              turn.outputTokens = event.message.usage.output_tokens;
+              yield spent();
+            } else if (event.type === "message_delta") {
+              turn.inputTokens = event.usage.input_tokens ?? turn.inputTokens;
+              turn.outputTokens = event.usage.output_tokens;
+              yield spent();
+            } else if (event.type === "content_block_start" && event.content_block.type === "thinking") {
               yield { type: "thinking" };
+            } else if (event.type === "content_block_delta") {
+              if (event.delta.type === "text_delta") {
+                if (wrote && !wroteThisTurn) yield { type: "text", text: "\n\n" };
+                wrote = wroteThisTurn = true;
+                yield { type: "text", text: event.delta.text };
+              } else if (event.delta.type === "thinking_delta" || event.delta.type === "signature_delta") {
+                yield { type: "thinking" };
+              }
             }
+            // `ping` e o resto não são progresso.
           }
-          // `ping` e o resto não são progresso.
-        }
-        const final = await stream.finalMessage();
-        if (final.stop_reason === "refusal") {
-          terminal = { type: "failed", reason: "o modelo se recusou a responder", retryable: false };
-        } else {
-          const total = { inputTokens: final.usage.input_tokens, outputTokens: final.usage.output_tokens };
-          terminal = { type: "done", usage: total, costUsd: costUsd(model, total) };
+          const final = await stream.finalMessage();
+          turn.inputTokens = final.usage.input_tokens;
+          turn.outputTokens = final.usage.output_tokens;
+          before.inputTokens += turn.inputTokens;
+          before.outputTokens += turn.outputTokens;
+          turn.inputTokens = 0;
+          turn.outputTokens = 0;
+          if (final.stop_reason === "refusal") {
+            terminal = { type: "failed", reason: "o modelo se recusou a responder", retryable: false };
+            break;
+          }
+          const calls = final.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+          if (final.stop_reason !== "tool_use" || !tools || calls.length === 0) {
+            terminal = { type: "done", usage: sum(), costUsd: costUsd(model, sum()) };
+            break;
+          }
+          // Cada chamada passa pela porta de Ferramentas (o passo no Andamento, o prazo); a falha
+          // volta ao modelo como resultado de erro, e a resposta segue.
+          const results: Anthropic.ToolResultBlockParam[] = [];
+          for (const call of calls) {
+            const result = await tools.call(call.name, call.input, signal);
+            if (signal.aborted) return;
+            results.push({
+              type: "tool_result",
+              tool_use_id: call.id,
+              content: result.content,
+              ...(result.isError && { is_error: true }),
+            });
+          }
+          messages.push({ role: "assistant", content: final.content as Anthropic.ContentBlockParam[] });
+          messages.push({ role: "user", content: results });
         }
       } catch (err) {
         if (signal.aborted || err instanceof Anthropic.APIUserAbortError) return;

@@ -631,3 +631,48 @@ export const installationAlerts = pgTable(
   },
   (t) => [primaryKey({ columns: [t.kind, t.ref] })],
 );
+
+// ---------- Ferramentas (Spec #44) ----------
+
+/**
+ * As Ferramentas concedidas a cada Agente, pelo Admin. `tool` é o id da Ferramenta no catálogo
+ * (`tools/catalog.ts`); as de um Conector ganham, quando existirem, a coluna do Conector (com a
+ * remoção em cascata: remover o Conector tira as concessões dele).
+ */
+export const agentTools = pgTable(
+  "agent_tools",
+  {
+    agentId: uuid()
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    tool: text().notNull(),
+    grantedAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.agentId, t.tool] })],
+);
+
+/**
+ * Cada uso de Ferramenta numa execução, para o Andamento: o passo em andamento e a falha com
+ * motivo. `attempt` é a tentativa da execução em que ele aconteceu (o Andamento mostra só os da
+ * tentativa atual).
+ */
+export const executionToolCalls = pgTable(
+  "execution_tool_calls",
+  {
+    id: uuid().primaryKey(),
+    seq: bigint({ mode: "number" }).generatedAlwaysAsIdentity(),
+    executionId: uuid()
+      .notNull()
+      .references(() => executions.id),
+    attempt: integer().notNull(),
+    tool: text().notNull(),
+    title: text().notNull(),
+    label: text().notNull(),
+    /** `running`, `done` ou `failed`. */
+    state: text().notNull(),
+    reason: text(),
+    startedAt: timestamp({ withTimezone: true }).notNull(),
+    finishedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [index().on(t.executionId, t.attempt)],
+);

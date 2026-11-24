@@ -6,6 +6,8 @@
  * se do outro lado está a Messages API (pela Chave, `key.ts`) ou um `claude -p` (pela Conta, #26).
  */
 
+import type { ExecutionTools } from "../tools/port";
+
 /** Uma mensagem do contexto, já com o autor marcado no texto quando importa. */
 export interface ModelMessage {
   role: "user" | "assistant";
@@ -31,6 +33,13 @@ export interface ModelRequest {
    * do `claude -p`, com o `structured_output` do `result` emitido como o texto (ADR 0009).
    */
   output?: { schema: Record<string, unknown> };
+  /**
+   * As Ferramentas da execução (a porta de Ferramentas, já presa à execução). Pela Chave, o
+   * cérebro as oferece como client tools e roda o vai-e-vem de `tool_use`: cada chamada passa pela
+   * porta, que grava o passo no Andamento e aplica o prazo. Ausente: o pedido vai sem Ferramentas
+   * (o roteamento, ADR 0009).
+   */
+  tools?: ExecutionTools;
 }
 
 export interface ModelUsage {

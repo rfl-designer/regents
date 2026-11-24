@@ -399,6 +399,8 @@ export async function testApp(
     installation?: AppDeps["installation"];
     /** Os tetos de concorrência das execuções (padrão: os da Spec). */
     limits?: AppDeps["limits"];
+    /** A porta de Ferramentas: prazo e catálogo (ex.: uma Ferramenta que trava). */
+    tools?: AppDeps["tools"];
   } = {},
 ) {
   const db = opts.db ?? (await testDb()).db;
@@ -422,6 +424,7 @@ export async function testApp(
       push: { contact: TEST_VAPID_CONTACT, agent: push.agent },
       installation: opts.installation,
       limits: opts.limits,
+      tools: opts.tools,
     });
     await built.start();
     return built;

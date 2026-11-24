@@ -1,6 +1,7 @@
 import type {
   AccountDto,
   AgentDto,
+  AgentToolDto,
   ApiError,
   ApproveJoinRequestDto,
   ChannelDto,
@@ -141,6 +142,9 @@ export const api = {
   updateAgent: (agentId: string, input: UpdateAgentInput) =>
     call<AgentDto>(`/api/agents/${agentId}`, json("PATCH", input)),
   agents: () => call<AgentDto[]>("/api/agents"),
+  agentTools: (agentId: string) => call<AgentToolDto[]>(`/api/agents/${agentId}/tools`),
+  setAgentTool: (agentId: string, toolId: string, granted: boolean) =>
+    call<AgentToolDto[]>(`/api/agents/${agentId}/tools/${toolId}`, { method: granted ? "PUT" : "DELETE" }),
   createAgent: (input: CreateAgentInput) => call<AgentDto>("/api/agents", json("POST", input)),
   addAgent: (channelId: string, agentId: string) =>
     call<ChannelDto>(`/api/channels/${channelId}/agents`, json("POST", { agentId })),
