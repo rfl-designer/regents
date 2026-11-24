@@ -58,6 +58,7 @@ apps/server/        Bun + Hono + Drizzle
   src/outcomes.ts   os Desfechos gravados (`outcomes`) e o `OutcomeDto`
   src/context.ts    montagem de contexto: as 6 camadas que cada execução recebe (buildContext)
   src/workspace-context.ts  o Contexto do Workspace (só Admin)
+  src/threads.ts    Threads seguidas: quem segue (`recordFollows`, `followersOf`) e `GET /api/threads/followed`
   src/reading.ts    leitura e não-lido: quais mensagens cada Membro viu, contagens e `unread.updated`
   src/presence.ts   Presença: qual conversa cada conexão tem à vista (faz o push calar)
   src/push.ts       push: par VAPID, inscrições por aparelho, gatilhos de Menção e DM; push-sender.ts é o adaptador do `web-push`
@@ -181,6 +182,23 @@ Uma DM é uma conversa fechada sem nome, fora dos Canais: `dm` (duas pessoas, ou
 Uma DM nova sai como `dm.updated` (com o `DmDto`) para os participantes. `MessageDto.channelId` é o id da conversa, Canal ou DM.
 
 Para provar que algo **não** chegou, sem `sleep`: publique depois um evento que chega a todos e verifique que o próximo evento daquele tipo na conexão é ele (exemplo em `apps/server/test/realtime.test.ts`).
+
+### Threads e Thread seguida (#29)
+
+Uma Thread é a sequência de mensagens com o mesmo `messages.thread_root_id`, pendurada numa mensagem do fluxo principal da mesma conversa (Canal ou DM). Não há linha de "Thread" à parte: a primeira resposta a abre. Não há Thread dentro de Thread.
+
+| Rota | Quem | O quê |
+|---|---|---|
+| `POST /api/conversations/:id/messages` | quem vê | `{ body, threadRootId }` responde na Thread daquela raiz; raiz de outra conversa, inexistente ou que já está numa Thread: `400 invalid_input` |
+| `GET /api/conversations/:id/messages` | quem vê | todas as mensagens, as de Thread inclusive (`MessageDto.threadRootId`); o cliente separa o fluxo principal das Threads |
+| `GET /api/threads/followed` | Membro | `FollowedThreadDto[]` (`conversationId`, `rootMessageId`, `since`): as Threads que ele segue |
+
+- **Quem age:** a mensagem de pessoa numa Thread passa pelo mesmo `whoActs`: Menção chama o mencionado; num Canal com outros Agentes, cada uma recebe o Desfecho da Articuladora. A resposta ancorada a uma mensagem de Thread fica na Thread (`threadRootId` da origem).
+- **Contexto e roteamento:** `recentMessages` (em `context.ts`) trata o fluxo principal e cada Thread como conversas separadas: no fluxo principal, as N anteriores sem as mensagens de Thread; numa Thread, a raiz sempre (fora do N) e as N anteriores da Thread. O preâmbulo diz "numa Thread do Canal #x". O roteamento recebe a raiz e até 5 da Thread, a seção `## Já falaram nesta Thread` (os Agentes do Canal que já escreveram na raiz ou na Thread) e a instrução de preferi-los.
+- **Thread seguida:** seguem, sozinhos e uma vez só, o autor da raiz, quem respondeu e quem foi mencionado na Thread ou na raiz (as Menções que o #19 registra, de quem vê a conversa), gravados na mesma transação da mensagem (`thread_follows`, com `since`). Quem passa a seguir recebe `thread.followed` (só nas conexões dele). Agentes não seguem. Seguir e deixar de seguir à mão ficam fora da v1. O push de Thread seguida (#32) avisa `followersOf(db, raiz)`.
+- **Não-lido:** a mensagem de Thread conta como não-lida só para quem segue a Thread, e só a partir de `since`: quem não segue vê no Canal só o resumo ("3 respostas") e não fica com um badge que só sumiria abrindo Threads de que não participa. Na ordem de exibição, a Thread vem logo depois do grupo da raiz (a raiz e as respostas ancoradas a ela), na ordem dela, com as respostas ancoradas sob cada mensagem. O `unread.updated` continua indo a todo participante a cada mensagem nova.
+- **Ordem (#42):** a "conversa para a ordem" é `(executions.channel_id, executions.thread_root_id)` (`seriesOf` em `executions.ts`): o fluxo principal e cada Thread contam como conversas separadas para a série por Agente.
+- **PWA:** sob cada mensagem do fluxo principal, "Responder na Thread" (ou "n respostas") abre o painel da Thread ao lado (no celular, por cima), com a raiz, as mensagens da Thread com a resposta ancorada, o Desfecho e o Andamento, e o campo "Responder na Thread". O painel tem a própria leitura (`useReading`), e mostra "Você segue esta Thread".
 
 ### Leitura e não-lido
 
