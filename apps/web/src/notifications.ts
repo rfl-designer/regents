@@ -100,6 +100,24 @@ async function subscribe(opts: { fresh?: boolean } = {}) {
   });
 }
 
+/** Uma renovação de cada vez: a conferência da abertura e um "Ligar" não podem se cruzar. */
+let renewals: Promise<unknown> = Promise.resolve();
+
+/**
+ * Inscreve este aparelho e entrega ao servidor, decidindo pela lista do servidor no momento:
+ * se ele diz que este aparelho parou, a inscrição guardada é trocada por uma nova.
+ */
+function renewSubscription(): Promise<DeviceDto[]> {
+  const work = renewals.then(async () => {
+    const before = await api.devices();
+    const mine = before.find((d) => d.id === deviceId());
+    await subscribe({ fresh: mine !== undefined && !mine.pushing });
+    return api.devices();
+  });
+  renewals = work.catch(() => {});
+  return work;
+}
+
 async function unsubscribeHere() {
   try {
     const registration = await navigator.serviceWorker.getRegistration();
@@ -160,15 +178,16 @@ export function usePush(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
+    // A permissão de quando o app abriu: o que um "Ligar" der depois é com ele.
+    const renew = pushSupported() && Notification.permission === "granted" && savedChoice() !== "removed";
     void (async () => {
       const list = await api.devices().catch(() => null);
       if (cancelled) return;
       if (list) setDevices(list);
-      if (pushSupported() && Notification.permission === "granted" && savedChoice() !== "removed") {
-        const mine = list?.find((d) => d.id === deviceId());
+      if (renew) {
         try {
-          await subscribe({ fresh: mine !== undefined && !mine.pushing });
-          if (!cancelled) await reload();
+          const after = await renewSubscription();
+          if (!cancelled) setDevices(after);
         } catch (err) {
           // Sem o gesto, o iPhone pode recusar: a faixa deste aparelho oferece "Ligar".
           console.error("shearim: não consegui renovar a inscrição de push deste aparelho", err);
@@ -179,7 +198,7 @@ export function usePush(enabled: boolean) {
     return () => {
       cancelled = true;
     };
-  }, [enabled, reload]);
+  }, [enabled]);
 
   const thisId = deviceId();
   const mine = devices?.find((d) => d.id === thisId);
@@ -192,17 +211,17 @@ export function usePush(enabled: boolean) {
       const granted = await Notification.requestPermission();
       setPermission(granted);
       if (granted !== "granted") return { kind: "blocked" };
-      await subscribe({ fresh: mine !== undefined && !mine.pushing });
+      const after = await renewSubscription();
       saveChoice("on");
       setChoice("on");
-      await reload();
+      setDevices(after);
       return { kind: "on" };
     } catch (err) {
       return { kind: "failed", detail: err instanceof Error ? err.message : String(err) };
     } finally {
       setWorking(false);
     }
-  }, [mine, reload]);
+  }, []);
 
   /** Pular o onboarding neste aparelho. */
   const skip = useCallback(() => {
