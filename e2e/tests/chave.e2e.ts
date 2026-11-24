@@ -30,6 +30,19 @@ async function agenteNoGeral(app: { baseUrl: string }) {
   return { name, id: agent.id };
 }
 
+/**
+ * Guarda em `<html data-incidente>` o texto da faixa "Incidente da Chave" quando ela aparece. O
+ * incidente é do Workspace inteiro e o banco é da execução: um teste em paralelo que tem uma
+ * resposta pela Chave logo depois da recusa encerra o incidente, e a faixa pode sumir antes de o
+ * teste olhar. O que se confere é que ela apareceu. Roda antes do PWA.
+ */
+function registraFaixaDoIncidente() {
+  new MutationObserver(() => {
+    const faixa = document.querySelector('section[aria-label="Incidente da Chave"]');
+    if (faixa) document.documentElement.setAttribute("data-incidente", faixa.textContent ?? "");
+  }).observe(document, { childList: true, subtree: true });
+}
+
 describe("Chave e orçamentos", () => {
   test("o Admin põe o orçamento no formulário do Agente; estourado, vê a faixa, e o Agente não age pela Chave", {
     timeout: 120_000,
@@ -72,8 +85,9 @@ describe("Chave e orçamentos", () => {
 
   test("a Chave recusada abre a faixa do incidente para o Admin, que some na primeira resposta pela Chave", {
     timeout: 120_000,
-  }, async ({ app, screen }) => {
+  }, async ({ app, screen, browser }) => {
     const { name: agente } = await agenteNoGeral(app);
+    await browser.addInitScript(registraFaixaDoIncidente);
     await app.open("/");
     const mensagens = screen.getByRole("list", "Mensagens de #geral");
     await expect(mensagens).toHaveAttribute("aria-busy", "false");
@@ -84,8 +98,7 @@ describe("Chave e orçamentos", () => {
     await expect(
       mensagens.getByRole("listitem").filter({ hasText: recusada }).getByRole("group", `Falha de ${agente}`),
     ).toContainText(`${agente} não respondeu: a Chave do Workspace foi recusada pela Anthropic.`, { timeout: 30_000 });
-    const faixa = screen.getByRole("region", "Incidente da Chave");
-    await expect(faixa).toContainText("A Anthropic recusou a Chave do Workspace");
+    await expect(browser.locator("html")).toHaveAttribute("data-incidente", /A Anthropic recusou a Chave do Workspace/);
 
     const depois = `@${agente} e agora? ${Date.now()}`;
     await screen.getByRole("textbox", "Mensagem para #geral").fill(depois);
