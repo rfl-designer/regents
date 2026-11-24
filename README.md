@@ -33,6 +33,8 @@ bun run start          # servidor servindo o build (precisa de SHEARIM_IDENTITY,
 | `SHEARIM_PGLITE_DIR` | `.data/pglite` | Pasta do PGlite de desenvolvimento. `memory://`: em memória, some ao parar (o e2e usa). |
 | `HOST` / `PORT` | `0.0.0.0` / `3000` | Onde escutar (`bun run dev` usa `127.0.0.1`). |
 | `SHEARIM_WEB_DIST` | `apps/web/dist` | Build do PWA servido em `/`. |
+| `SHEARIM_CLAUDE_BIN` | `claude` do `PATH` | O binário do Claude Code das Contas (ADR 0005). Sem ele, "Ligar minha Conta" mostra o erro na tela. |
+| `SHEARIM_ACCOUNTS_DIR` | `.data/accounts` | Pasta-raiz das Contas: uma pasta de `CLAUDE_CONFIG_DIR` por login, fora do backup. O Shearim nunca lê o que há dentro. |
 
 ## Layout
 
@@ -40,11 +42,13 @@ bun run start          # servidor servindo o build (precisa de SHEARIM_IDENTITY,
 apps/server/        Bun + Hono + Drizzle
   src/app.ts        createApp(deps) -> { app, websocket, events }: o seam dos testes
   src/events.ts     WebSocket de eventos: EventHub.publish(audiência, evento)
+  src/accounts/     Contas: rotas /api/account e o adaptador do binário `claude` (claude-cli.ts)
   src/main.ts       entrypoint: serve | migrate
   src/db/           schema.ts (Drizzle), client.ts, connect.ts (Postgres ou PGlite)
   src/identity/     porta de identidade + adaptador de dev
   migrations/       SQL gerado pelo drizzle-kit (commitado)
-  test/harness.ts   arnês: testApp(), testDb(), fakeClock(), fakeIdentity
+  test/harness.ts   arnês: testApp(), testDb(), fakeClock(), fakeIdentity, throwawayAccounts()
+  test/fake-claude/ o dublê do binário `claude` (processo de verdade, roteirizável)
 apps/web/           PWA em React + Vite, pt-BR
 packages/contracts/ DTOs do HTTP e eventos do WebSocket (ServerEvent), compartilhados
 e2e/                e2e.config.ts + tests/*.e2e.ts (@e2e-dev/web)
@@ -61,6 +65,8 @@ await juliana.post(`/api/channels/${id}/messages`, { body: "oi" });
 t.clock.advance(90_000);
 await t.anonymous("funnel").get("/api/me");                  // sem identidade
 ```
+
+Prazos esperam pelo relógio injetável: o código chama `clock.after(ms, fn)` (nunca `setTimeout` direto), e `t.clock.advance(ms)` dispara, em ordem, o que venceu no caminho. Os 10 minutos da espera pelo código rodam num `advance`.
 
 O que cada teste abre é fechado sozinho no fim dele (`onCleanup` no arnês, executado pelo `afterEach` de `test/preload.ts`).
 
@@ -82,6 +88,21 @@ t.events.publish({ members: [id] }, evento);                 // publicar direto 
 ```
 
 Para provar que algo **não** chegou, sem `sleep`: publique depois um evento que chega a todos e verifique que o próximo evento daquele tipo na conexão é ele (exemplo em `apps/server/test/realtime.test.ts`).
+
+### fake-claude
+
+`apps/server/test/fake-claude/` é o dublê do binário `claude` (Spec, "Testing Decisions"): um processo de verdade, sem mock de `spawn`. `testApp()` já cria um e passa o caminho em `deps.accounts.claudeBin`, junto com uma pasta-raiz de Contas descartável (`t.accountsRoot`). Quem monta o `createApp` à mão usa `throwawayAccounts()`.
+
+```ts
+t.claude.script({ login: { mode: "silent" } });               // o roteiro vale a partir do próximo start
+t.claude.script({ run: { kind: "error", error: "billing_error", apiErrorStatus: 403 } });
+t.claude.callsOf("auth login")[0]!.env.CLAUDE_CONFIG_DIR;     // o que cada start recebeu: argv, cwd, env
+```
+
+- `auth login`: imprime a URL num hyperlink OSC 8 e o prompt, como o 2.1.30x, e lê o código no stdin. O código certo é `FAKE_LOGIN_CODE`. Com ele, grava o "login" na pasta de `CLAUDE_CONFIG_DIR` (o token falso `FAKE_ACCESS_TOKEN` e a conta) e sai 0. Com outro código, sai 1. `mode: "silent"` não imprime nada e não sai; `mode: "die"` sai 1 sem URL. `account` troca quem entra (o padrão é `DEFAULT_FAKE_ACCOUNT`, `fulana@exemplo.com`, Max).
+- `auth status --json`: os campos do real (`loggedIn`, `email`, `orgId`, `subscriptionType`, `planTier`, `loginExpiresAt`...). Sem login, sai 1 com `loggedIn: false`.
+- `auth logout`: apaga o login da pasta.
+- `claude -p` em `stream-json`: `run` diz o que acontece (`reply` em deltas com `result` de sucesso e, se pedido, `credential_expires_at`; `error` com a categoria em `assistant.error` e `result.is_error`, `die`, `hang`). Sem login na pasta, responde `authentication_failed`. O #26 estende `FakeRun` com passos (pensamento, silêncio, `api_retry`, `rate_limit_event`, morte no meio, `SIGINT`).
 
 ## e2e
 

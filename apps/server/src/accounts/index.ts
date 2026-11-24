@@ -106,6 +106,8 @@ export function createAccounts(deps: { db: Db; clock: Clock; events: EventHub; c
   const procs = processTracker();
   const cli = { clock, procs };
   const flows = new Map<string, Flow>();
+  /** Depois do `close()`, nenhum processo novo sobe (ele ficaria órfão). */
+  let closed = false;
 
   async function row(memberId: string) {
     const [found] = await db.select().from(accounts).where(eq(accounts.memberId, memberId));
@@ -180,6 +182,7 @@ export function createAccounts(deps: { db: Db; clock: Clock; events: EventHub; c
     flows.set(memberId, flow);
     if (old) await release(old);
     await mkdir(flow.dir, { recursive: true, mode: 0o700 });
+    if (closed) return { ok: false, message: "O Shearim está parando. Tente de novo em instantes." };
 
     try {
       flow.login = startLogin(config.claudeBin, flow.dir, procs);
@@ -342,9 +345,13 @@ export function createAccounts(deps: { db: Db; clock: Clock; events: EventHub; c
     unlink,
     /** Encerra os processos do `claude` em andamento (testes e parada do servidor). */
     async close() {
-      for (const flow of flows.values()) flow.stopTimer?.();
+      closed = true;
+      const pending = [...flows.values()];
       flows.clear();
+      for (const flow of pending) flow.stopTimer?.();
       await procs.killAll();
+      // Um login pela metade não sobrevive à parada: a pasta nova dele não serve para nada.
+      await Promise.all(pending.map((flow) => rm(flow.dir, { recursive: true, force: true })));
     },
   };
 }

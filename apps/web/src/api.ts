@@ -1,4 +1,12 @@
-import type { ApiError, ChannelDto, MeDto, MessageDto, SendMessageInput } from "@shearim/contracts";
+import type {
+  AccountDto,
+  ApiError,
+  ChannelDto,
+  MeDto,
+  MessageDto,
+  SendMessageInput,
+  SubmitAccountCodeInput,
+} from "@shearim/contracts";
 
 /** Falha de uma chamada à API, já com o que a tela precisa para explicar. */
 export class ApiFailure extends Error {
@@ -37,4 +45,18 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(input),
     }),
+  account: {
+    get: () => call<AccountDto>("/api/account"),
+    notNow: () => call<AccountDto>("/api/account/not-now", { method: "POST" }),
+    startLinking: () => call<AccountDto>("/api/account/linking", { method: "POST" }),
+    submitCode: (input: SubmitAccountCodeInput) =>
+      call<AccountDto>("/api/account/linking/code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    confirm: () => call<AccountDto>("/api/account/linking/confirm", { method: "POST" }),
+    cancelLinking: () => call<AccountDto>("/api/account/linking", { method: "DELETE" }),
+    unlink: () => call<AccountDto>("/api/account", { method: "DELETE" }),
+  },
 };

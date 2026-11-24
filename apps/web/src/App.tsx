@@ -2,6 +2,7 @@ import type { ChannelDto, MeDto } from "@shearim/contracts";
 import { useEffect, useState } from "react";
 import { ApiFailure, api, Offline } from "./api";
 import { ChannelView } from "./ChannelView";
+import { AccountOffer, MyAccount, useAccount } from "./MyAccount";
 
 type State =
   | { kind: "loading" }
@@ -64,14 +65,35 @@ export function App() {
     );
   }
 
-  const channel = state.channels[0];
+  return <Workspace me={state.me} channels={state.channels} />;
+}
+
+function Workspace({ me, channels }: { me: MeDto; channels: ChannelDto[] }) {
+  const [view, setView] = useState<"channel" | "account">("channel");
+  const account = useAccount();
+  const channel = channels[0];
   return (
     <div className="shell">
       <header className="topbar">
         <strong>Shearim</strong>
-        <span className="whoami">Você está como {state.me.displayName}</span>
+        <span className="whoami">Você está como {me.displayName}</span>
+        <button
+          type="button"
+          className="link"
+          aria-pressed={view === "account"}
+          onClick={() => setView(view === "account" ? "channel" : "account")}
+        >
+          {view === "account" ? "Voltar à conversa" : "Minha Conta"}
+        </button>
       </header>
-      {channel ? <ChannelView channel={channel} /> : <main className="center">Nenhum Canal ainda.</main>}
+      {view === "account" ? (
+        <MyAccount state={account} />
+      ) : (
+        <>
+          <AccountOffer state={account} onOpen={() => setView("account")} />
+          {channel ? <ChannelView channel={channel} /> : <main className="center">Nenhum Canal ainda.</main>}
+        </>
+      )}
     </div>
   );
 }
