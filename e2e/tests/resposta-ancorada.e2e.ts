@@ -65,9 +65,8 @@ describe("resposta ancorada", () => {
 
     const origem = mensagens.getByRole("listitem").filter({ hasText: pergunta });
     const respostas = origem.getByRole("list", "Respostas a Pessoa Dev");
-    // A fila de execuções é uma só e serial (#42 traz o paralelismo): no e2e, a resposta espera as dos outros testes.
     await expect(respostas.getByRole("article", `Mensagem de ${agente}`)).toContainText(RESPOSTA, {
-      timeout: 60_000,
+      timeout: 20_000,
     });
     await expect(mensagens.getByRole("listitem").filter({ hasText: depois })).not.toContainText(RESPOSTA);
   });

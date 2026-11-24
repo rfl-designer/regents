@@ -1,5 +1,5 @@
 import type { AgentBudgetDto, KeyIncidentDto } from "@shearim/contracts";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
@@ -127,10 +127,14 @@ export function createKeyLedger(deps: { db: Db; clock: Clock; events: EventHub; 
       return { ok: false, reason: `${budget.name} estourou o orçamento do mês na Chave` };
     },
 
-    /** Uma chamada que a Chave pagou terminou bem: grava o uso (Agente, pagador, custo). */
+    /**
+     * Uma chamada que a Chave pagou terminou bem: grava o uso (Agente, pagador, custo). `startedAt`
+     * é quando ela começou: com várias rodando ao mesmo tempo (#42), só a que começou depois da
+     * recusa prova que a Chave voltou.
+     */
     async charged(
       execution: { id: string; agentId: string },
-      call: { model: string; usage: ModelUsage; costUsd: number },
+      call: { model: string; usage: ModelUsage; costUsd: number; startedAt: Date },
     ) {
       const now = clock.now();
       await db.insert(executionUsage).values({
@@ -147,11 +151,11 @@ export function createKeyLedger(deps: { db: Db; clock: Clock; events: EventHub; 
       });
       const budget = await announce(execution.agentId);
       if (budget.overBudget) await overrun(budget);
-      // A primeira chamada bem-sucedida pela Chave encerra o incidente.
+      // A primeira chamada bem-sucedida pela Chave, começada depois da recusa, encerra o incidente.
       const closed = await db
         .update(keyIncidents)
         .set({ closedAt: now })
-        .where(isNull(keyIncidents.closedAt))
+        .where(and(isNull(keyIncidents.closedAt), lte(keyIncidents.openedAt, call.startedAt)))
         .returning({ id: keyIncidents.id });
       if (closed.length) events.publish(await adminAudience(), { type: "key_incident.updated", incident: null });
     },

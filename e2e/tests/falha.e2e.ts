@@ -4,8 +4,8 @@ import { addMember, as, newPerson } from "../support/people";
 
 /** O que a Messages API falsa do `serve.ts` responde quando não falha. */
 const RESPOSTA = "Oi! Tudo certo por aqui: o prazo é sexta-feira.";
-/** A falha passa pela nova tentativa automática, 10 s depois, antes do cartão (e a fila é serial). */
-const ATE_O_CARTAO = 70_000;
+/** A falha passa pela nova tentativa automática, 10 s depois, antes do cartão. */
+const ATE_O_CARTAO = 30_000;
 
 /** Chama a API como a "Pessoa Dev" (a primeira a chegar, Admin), sem passar pela tela. */
 async function chamar<T>(app: { baseUrl: string }, method: string, path: string, body?: unknown): Promise<T> {
@@ -76,7 +76,7 @@ describe("cartão de falha", () => {
 
     await cartao.getByRole("button", "Tentar de novo").tap();
 
-    await expect(origem.getByRole("article", `Mensagem de ${agente}`)).toContainText(RESPOSTA, { timeout: 60_000 });
+    await expect(origem.getByRole("article", `Mensagem de ${agente}`)).toContainText(RESPOSTA, { timeout: 20_000 });
     await expect(cartao).toHaveCount(0);
   });
 
