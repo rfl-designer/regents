@@ -6,10 +6,8 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
-import { eq } from "drizzle-orm";
+import type { AccountDto, AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
 import { ROUTING_MODEL } from "../src/articuladora";
-import { schema } from "../src/db/client";
 import { ROUTING_SCHEMA } from "../src/routing";
 import type { FakeClaudeCall, FakeRun } from "./fake-claude";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
@@ -128,10 +126,9 @@ describe("quem paga: a Conta do autor ou a Chave", () => {
     const origem = await enviar(t, geral.id, "@Faro oi");
     await respostaA(t, geral.id, origem);
 
-    // A validade só aparece em "Minha Conta" com o #35; até lá, quem a guarda é a linha da Conta.
-    const doMembro = await t.db.select().from(schema.members).where(eq(schema.members.tailnetUserId, juliana.id));
-    const [conta] = await t.db.select().from(schema.accounts).where(eq(schema.accounts.memberId, doMembro[0]!.id));
-    expect(conta!.credentialExpiresAt).toEqual(new Date("2026-12-20T09:00:00.000Z"));
+    // "Minha Conta" mostra a validade 3 dias antes do vencimento da credencial.
+    const conta: AccountDto = await (await t.as(juliana).get("/api/account")).json();
+    expect(conta.status).toMatchObject({ state: "linked", validity: { until: "2026-12-17T09:00:00.000Z" } });
   });
 });
 
