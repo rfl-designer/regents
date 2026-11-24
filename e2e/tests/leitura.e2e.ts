@@ -5,9 +5,10 @@ import { addMember, as, type DevPerson, newPerson } from "../support/people";
 
 /**
  * Quanto esperar a resposta do Agente. As execuções rodam em paralelo (#42), mas a máquina do
- * e2e é dividida com os outros testes e a Chave tem teto de 4.
+ * e2e é dividida com os outros testes, a Chave tem teto de 4 e a espera conta também as
+ * mensagens que o Bruno manda para encher a conversa.
  */
-const RESPOSTA_MS = 20_000;
+const RESPOSTA_MS = 30_000;
 
 /** Quantas mensagens o Bruno manda para a origem sumir lá em cima. */
 const ENCHIMENTO = 30;

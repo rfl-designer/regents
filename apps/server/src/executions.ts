@@ -404,10 +404,11 @@ export function createExecutions(deps: {
       .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
     await publish(job.id);
     const request = await build(payer);
+    const startedAt = clock.now();
     const result = await complete(job, controller, request);
     if (result && payer.kind === "key") {
       const end = result.end;
-      if (end?.type === "done") await ledger.charged(job, { model: request.model, ...end });
+      if (end?.type === "done") await ledger.charged(job, { model: request.model, ...end, startedAt });
       if (end?.type === "auth_failed" || end?.type === "billing_failed") await ledger.refused(end.type);
       return result;
     }

@@ -411,6 +411,27 @@ describe("Várias ao mesmo tempo", () => {
     ]);
   });
 
+  test("a chamada que já rodava quando a Chave foi recusada não encerra o incidente; a que começa depois, sim", async () => {
+    const cerebro = scriptedBrain();
+    const t = await testApp({ keyBrain: cerebro.brain });
+    const { geral } = await workspace(t, ["Faro", "Lia"]);
+    await enviar(t, geral.id, "@Faro @Lia qual o prazo?");
+    const [antes, recusada] = [await cerebro.nextRun(), await cerebro.nextRun()];
+    const chave = async () => (await (await t.as(juliana).get("/api/workspace-key")).json()).incident;
+
+    t.clock.advance(1_000);
+    await recusada.emit({ type: "auth_failed" });
+    const aberto = await eventually("o incidente abrir", chave);
+
+    await responder(antes, "Sexta.");
+    await eventually("a resposta de antes sair", async () => (await respostas(t, geral.id)).length === 1);
+    expect(await chave()).toEqual(aberto);
+
+    await enviar(t, geral.id, "@Faro e agora?");
+    await responder(await cerebro.nextRun(), "Agora sim.");
+    await eventually("o incidente fechar", async () => (await chave()) === null);
+  });
+
   test("dois trabalhadores no mesmo banco nunca pegam a mesma execução nem andam a série em dobro", async () => {
     const masterKey = crypto.getRandomValues(new Uint8Array(32));
     const um = await testApp({ masterKey });

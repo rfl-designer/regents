@@ -91,7 +91,7 @@ describe("Chave e orçamentos", () => {
     await screen.getByRole("textbox", "Mensagem para #geral").fill(depois);
     await screen.getByRole("button", "Enviar").tap();
     await expect(mensagens.getByRole("listitem").filter({ hasText: depois })).toContainText(RESPOSTA, {
-      timeout: 60_000,
+      timeout: 20_000,
     });
     await expect(screen.getByRole("region", "Incidente da Chave")).toBeHidden();
   });
