@@ -4,6 +4,7 @@ import {
   bigint,
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   pgEnum,
@@ -339,3 +340,83 @@ export const accounts = pgTable("accounts", {
   offerDismissedAt: timestamp({ withTimezone: true }),
   updatedAt: timestamp({ withTimezone: true }).notNull(),
 });
+
+// ---------- Push (Spec, módulo 12) ----------
+
+/**
+ * O par VAPID do Workspace: gerado na primeira subida e nunca trocado (trocar invalida todas as
+ * inscrições). Uma linha só (`id = 1`). As chaves vão em base64url, como o `web-push` as usa.
+ */
+export const vapidKeys = pgTable(
+  "vapid_keys",
+  {
+    id: integer().primaryKey().default(1),
+    publicKey: text().notNull(),
+    privateKey: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [check("vapid_keys_uma_linha", sql`${t.id} = 1`)],
+);
+
+/**
+ * Os aparelhos de um Membro (cada PWA instalado ou navegador, com o id que o PWA gerou para si).
+ * Guarda quando o push parou ("parou em DD/MM", quando o push service disse que a inscrição
+ * morreu) e o último push entregue; a lista e as faixas são do #33.
+ */
+export const devices = pgTable(
+  "devices",
+  {
+    memberId: uuid()
+      .notNull()
+      .references(() => members.id),
+    /** Gerado pelo PWA e guardado nele; só vale junto com o Membro. */
+    id: uuid().notNull(),
+    /** O nome do aparelho que a tailnet informa, quando informa. */
+    label: text(),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+    lastPushAt: timestamp({ withTimezone: true }),
+    /** Quando o push service respondeu 404/410 e a inscrição foi apagada. Nulo enquanto recebe. */
+    pushStoppedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [primaryKey({ columns: [t.memberId, t.id] })],
+);
+
+/**
+ * A inscrição de push de um aparelho (`PushSubscription` do navegador): no máximo uma por
+ * aparelho, e um endpoint é de um aparelho só. `origin` é de onde o PWA se inscreveu: o
+ * `navigate` da notificação aponta para lá.
+ */
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    endpoint: text().primaryKey(),
+    memberId: uuid().notNull(),
+    deviceId: uuid().notNull(),
+    p256dh: text().notNull(),
+    auth: text().notNull(),
+    origin: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique().on(t.memberId, t.deviceId),
+    foreignKey({ columns: [t.memberId, t.deviceId], foreignColumns: [devices.memberId, devices.id] }),
+  ],
+);
+
+/**
+ * Quantos pushes de uma conversa um Membro recebeu desde a última vez que a abriu: é o "3 novas
+ * em #vendas" da notificação que substitui as anteriores. Abrir a conversa zera (apaga a linha).
+ */
+export const pushStreaks = pgTable(
+  "push_streaks",
+  {
+    memberId: uuid()
+      .notNull()
+      .references(() => members.id),
+    conversationId: uuid()
+      .notNull()
+      .references(() => channels.id),
+    count: integer().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.memberId, t.conversationId] })],
+);

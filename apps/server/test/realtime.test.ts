@@ -48,7 +48,7 @@ describe("mensagens em tempo real", () => {
 
     const aba = await t.socket(juliana);
 
-    expect(await aba.next("ready")).toEqual({ type: "ready", me });
+    expect(await aba.next("ready")).toEqual({ type: "ready", me, connectionId: expect.any(String) });
   });
 
   test("sem identidade da tailnet, o upgrade é recusado", async () => {

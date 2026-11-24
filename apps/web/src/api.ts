@@ -16,7 +16,10 @@ import type {
   MemberSummaryDto,
   MessageDto,
   MyJoinRequestDto,
+  PushKeyDto,
+  PushSubscriptionInput,
   SendMessageInput,
+  SetPresenceInput,
   SubmitAccountCodeInput,
   UnreadDto,
   UnreadMessagesDto,
@@ -63,6 +66,10 @@ const json = (method: string, body?: unknown): RequestInit => ({
 const post = { method: "POST" } as const;
 
 export const api = {
+  pushKey: () => call<PushKeyDto>("/api/push/key"),
+  putPushSubscription: (deviceId: string, input: PushSubscriptionInput) =>
+    call<void>(`/api/push/subscriptions/${deviceId}`, json("PUT", input)),
+  setPresence: (input: SetPresenceInput) => call<void>("/api/presence", json("PUT", input)),
   me: () => call<MeDto>("/api/me"),
   updateProfile: (input: UpdateProfileInput) => call<MeDto>("/api/me", json("PATCH", input)),
   members: () => call<MemberSummaryDto[]>("/api/members"),

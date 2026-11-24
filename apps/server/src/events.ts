@@ -18,27 +18,38 @@ export interface EventHub {
   publish(to: Audience, event: ServerEvent): void;
   /** Fecha todas as conexões do Membro (ex.: removido do Workspace), com esse código e motivo. */
   disconnect(memberId: string, code: number, reason: string): void;
+  /** De quem é a conexão aberta com esse id (o `connectionId` do `ready`), ou `undefined`. */
+  ownerOf(connectionId: string): string | undefined;
+  /** Chama `fn` sempre que uma conexão fecha (a Presença dela some junto). */
+  onClose(fn: (connectionId: string) => void): void;
 }
 
 interface Connection {
+  id: string;
   memberId: string;
   send(data: string): void;
   close(code: number, reason: string): void;
 }
 
 export function createEventHub() {
-  const connections = new Set<Connection>();
+  const connections = new Map<string, Connection>();
+  const closeListeners: ((connectionId: string) => void)[] = [];
 
   const hub: EventHub = {
     publish(to, event) {
       const data = JSON.stringify(event);
       const members = to === "everyone" ? undefined : new Set(to.members);
-      for (const c of connections) if (!members || members.has(c.memberId)) c.send(data);
+      for (const c of connections.values()) if (!members || members.has(c.memberId)) c.send(data);
+    },
+    ownerOf: (connectionId) => connections.get(connectionId)?.memberId,
+    onClose(fn) {
+      closeListeners.push(fn);
     },
     disconnect(memberId, code, reason) {
-      for (const c of [...connections]) {
+      for (const c of [...connections.values()]) {
         if (c.memberId !== memberId) continue;
-        connections.delete(c);
+        connections.delete(c.id);
+        for (const fn of closeListeners) fn(c.id);
         c.close(code, reason);
       }
     },
@@ -54,15 +65,20 @@ export function createEventHub() {
     return {
       onOpen(_event, ws) {
         connection = {
+          id: crypto.randomUUID(),
           memberId: member.id,
           send: (data) => ws.send(data),
           close: (code, reason) => ws.close(code, reason),
         };
-        connections.add(connection);
-        ws.send(JSON.stringify({ type: "ready", me: toMeDto(member) } satisfies ServerEvent));
+        connections.set(connection.id, connection);
+        ws.send(
+          JSON.stringify({ type: "ready", me: toMeDto(member), connectionId: connection.id } satisfies ServerEvent),
+        );
       },
       onClose() {
-        if (connection) connections.delete(connection);
+        // Fechada pelo `disconnect`, ela já saiu e os ouvintes já souberam.
+        if (!connection || !connections.delete(connection.id)) return;
+        for (const fn of closeListeners) fn(connection.id);
       },
     };
   });

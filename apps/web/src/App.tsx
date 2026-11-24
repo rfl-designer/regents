@@ -1,4 +1,11 @@
-import { type ChannelDto, type DmDto, type MeDto, NO_IDENTITY_TEXT, type UnreadDto } from "@shearim/contracts";
+import {
+  type ChannelDto,
+  conversationPath,
+  type DmDto,
+  type MeDto,
+  NO_IDENTITY_TEXT,
+  type UnreadDto,
+} from "@shearim/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { AgentsSettings, WorkspaceKeySettings } from "./AgentsAdmin";
 import { Avatar } from "./Avatar";
@@ -8,9 +15,11 @@ import { ChannelView } from "./ChannelView";
 import { DmView } from "./DmView";
 import { EntryView } from "./EntryView";
 import { JoinRequestsPanel } from "./JoinRequestsPanel";
-import { useServerEvents } from "./live";
+import { setPresence, useServerEvents } from "./live";
 import { MembersSettings } from "./MembersAdmin";
 import { AccountOffer, MyAccount, useAccount } from "./MyAccount";
+import { NotificationsOnboarding } from "./NotificationsOnboarding";
+import { closeNotificationsOf } from "./notifications";
 import { ProfileView } from "./ProfileView";
 import { type AdminView, Sidebar } from "./Sidebar";
 import { WorkspaceContextSettings } from "./WorkspaceContext";
@@ -40,6 +49,30 @@ function explain(err: unknown): State {
   return { kind: "blocked", title: "Algo deu errado", detail: "Recarregue a página para tentar de novo." };
 }
 
+/** A conversa que o endereço pede (`/c/<id>`: é para onde a notificação leva). */
+function conversationFromUrl() {
+  return /^\/c\/([0-9a-f-]{36})$/i.exec(location.pathname)?.[1] ?? null;
+}
+
+const isPageVisible = () => document.visibilityState === "visible" && document.hasFocus();
+
+/** Se a página está à vista: aba visível e em foco, ou o PWA em primeiro plano. */
+function usePageVisible() {
+  const [visible, setVisible] = useState(isPageVisible);
+  useEffect(() => {
+    const update = () => setVisible(isPageVisible());
+    document.addEventListener("visibilitychange", update);
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", update);
+    return () => {
+      document.removeEventListener("visibilitychange", update);
+      window.removeEventListener("focus", update);
+      window.removeEventListener("blur", update);
+    };
+  }, []);
+  return visible;
+}
+
 /** Insere ou troca pelo `id`, mantendo a ordem de criação (conversa nova vai para o fim). */
 function upsert<T extends { id: string }>(list: T[], item: T) {
   const i = list.findIndex((c) => c.id === item.id);
@@ -51,7 +84,7 @@ function upsert<T extends { id: string }>(list: T[], item: T) {
 
 export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(conversationFromUrl);
   const [view, setView] = useState<"channel" | "account" | "profile" | AdminView>("channel");
   const account = useAccount(state.kind === "ready");
   /** As não-lidas do Membro. O `total` é o badge do ícone (o `setAppBadge` é do #32). */
@@ -107,6 +140,38 @@ export function App() {
     void load();
   }, [load]);
 
+  // Tocar numa notificação com o Shearim já aberto: o service worker pede a conversa aqui.
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.type === "open-conversation" && typeof e.data.conversationId === "string") {
+        setSelectedId(e.data.conversationId);
+        setView("channel");
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, []);
+
+  // A conversa aberta e visível: a Presença cala o push dela, e as notificações dela neste
+  // aparelho se fecham ao abri-la.
+  const pageVisible = usePageVisible();
+  const ready = state.kind === "ready";
+  const dmShown = ready ? state.dms.find((d) => d.id === selectedId) : undefined;
+  const channelShown =
+    ready && !dmShown ? (state.channels.find((c) => c.id === selectedId) ?? state.channels[0]) : undefined;
+  const shownId = view === "channel" ? (dmShown?.id ?? channelShown?.id ?? null) : null;
+  const watching = pageVisible ? shownId : null;
+  useEffect(() => {
+    setPresence(watching);
+    if (watching) void closeNotificationsOf(watching);
+  }, [watching]);
+  useEffect(() => {
+    if (shownId && location.pathname !== conversationPath(shownId)) {
+      history.replaceState(null, "", conversationPath(shownId));
+    }
+  }, [shownId]);
+
   if (state.kind === "loading") return <main className="center">Carregando…</main>;
   if (state.kind === "entry") return <EntryView onApproved={load} />;
   if (state.kind === "blocked") {
@@ -152,6 +217,7 @@ export function App() {
       </header>
       {state.me.role === "admin" && <JoinRequestsPanel />}
       {view !== "account" && <AccountOffer state={account} onOpen={() => setView("account")} />}
+      <NotificationsOnboarding />
       <div className="workspace">
         <Sidebar
           me={state.me}
