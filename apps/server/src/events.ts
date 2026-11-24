@@ -78,7 +78,7 @@ export function createEventHub() {
         );
       },
       onClose() {
-        // Fechada pelo `disconnect`, ela já saiu e os ouvintes já souberam.
+        // Fechada pelo servidor (`disconnect`, `closeForRestart`), ela já saiu e os ouvintes já souberam.
         if (!connection || !connections.delete(connection.id)) return;
         for (const fn of closeListeners) fn(connection.id);
       },
@@ -95,8 +95,12 @@ export function createEventHub() {
    */
   function closeForRestart() {
     restarting = true;
-    for (const c of connections.values()) c.close(EVENTS_CLOSE_UPDATING, "o Shearim vai reiniciar");
+    const all = [...connections.values()];
     connections.clear();
+    for (const c of all) {
+      for (const fn of closeListeners) fn(c.id);
+      c.close(EVENTS_CLOSE_UPDATING, "o Shearim vai reiniciar");
+    }
   }
 
   return { hub, route, closeForRestart };
