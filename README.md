@@ -9,7 +9,7 @@ Precisa só do [Bun](https://bun.sh) **1.3.11**.
 ```sh
 bun install            # dependências de todos os workspaces
 bun run dev            # servidor em 127.0.0.1:3000 + Vite em http://localhost:5173
-bun test               # testes do servidor (PGlite em memória, sem Docker)
+bun run test           # testes do servidor (PGlite em memória, sem Docker); `bun test --timeout 30000` dá no mesmo
 bun run typecheck      # tsc em todos os workspaces
 bun run lint           # Biome (formatação + lint); `bunx biome check --write .` corrige
 bun run build          # build do PWA em apps/web/dist
