@@ -100,8 +100,8 @@ describe("Canais privados", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([
-      { id: doBruno.id, displayName: "Bruno" },
-      { id: daJuliana.id, displayName: "Juliana" },
+      expect.objectContaining({ id: doBruno.id, displayName: "Bruno" }),
+      expect.objectContaining({ id: daJuliana.id, displayName: "Juliana" }),
     ]);
   });
 

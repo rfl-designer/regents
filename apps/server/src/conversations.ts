@@ -16,7 +16,7 @@ import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
 import type { ExecutionKind, Executions } from "./executions";
 import type { Member } from "./members";
-import { mentionedAgents } from "./mentions";
+import { recordMentions } from "./mentions";
 import { listMessages as listConversationMessages } from "./messages";
 import { addAgent, addParticipants, audienceOf, canSee, participantsOf } from "./participation";
 
@@ -169,7 +169,11 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
       body: input.body,
       createdAt: clock.now(),
     };
-    await db.insert(messages).values(values);
+    // A mensagem e as Menções dela são gravadas juntas, antes de qualquer outra coisa.
+    const mentions = await db.transaction(async (tx) => {
+      await tx.insert(messages).values(values);
+      return recordMentions(tx, values.id, conversation, values.body);
+    });
     // Escrever num Canal público é entrar nele (numa conversa fechada, quem escreve já participa).
     const joined =
       conversation.kind === "public" && (await addParticipants(db, conversation.id, [author.id], values.createdAt));
@@ -177,14 +181,22 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
       id: values.id,
       channelId: values.channelId,
       body: values.body,
-      author: { kind: "member", id: author.id, displayName: author.displayName },
+      author: { kind: "member", id: author.id, displayName: author.displayName, profilePicUrl: author.profilePicUrl },
       originMessageId: null,
+      mentions,
       createdAt: values.createdAt.toISOString(),
     };
     events.publish(await audienceOf(db, conversation), { type: "message.created", message: dto });
     if (joined && isChannel(conversation)) await publishChannel(conversation);
     // Só depois de gravada e anunciada, a mensagem dispara os Agentes.
-    await executions.enqueue(dto, await whoActs(db, conversation, dto.body));
+    await executions.enqueue(
+      dto,
+      await whoActs(
+        db,
+        conversation,
+        mentions.filter((m) => m.kind === "agent"),
+      ),
+    );
     return c.json(dto, 201);
   }
 
@@ -252,18 +264,14 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
 async function whoActs(
   db: Db,
   conversation: ConversationRow,
-  body: string,
-): Promise<{ agent: Agent; kind: ExecutionKind }[]> {
-  const mentioned = await mentionedAgents(db, body);
+  mentioned: readonly Pick<Agent, "id">[],
+): Promise<{ agent: Pick<Agent, "id">; kind: ExecutionKind }[]> {
   const own =
     conversation.kind === "dm"
-      ? (
-          await db
-            .select({ agent: agents })
-            .from(channelAgents)
-            .innerJoin(agents, eq(agents.id, channelAgents.agentId))
-            .where(eq(channelAgents.channelId, conversation.id))
-        ).map((r) => r.agent)
+      ? await db
+          .select({ id: channelAgents.agentId })
+          .from(channelAgents)
+          .where(eq(channelAgents.channelId, conversation.id))
       : [];
   return [
     ...own.map((agent) => ({ agent, kind: "dm" as const })),

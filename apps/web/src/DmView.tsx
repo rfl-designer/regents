@@ -23,7 +23,7 @@ export function DmView({ dm, me }: { dm: DmDto; me: MeDto }) {
           <span className="hint">{dmHint(dm)}</span>
         </div>
       </header>
-      <Conversation conversationId={dm.id} label={title} />
+      <Conversation conversationId={dm.id} label={title} me={me} />
     </main>
   );
 }

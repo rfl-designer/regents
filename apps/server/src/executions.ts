@@ -32,7 +32,10 @@ export interface Executions {
    * Põe na fila uma execução por chamada (Agente mencionado, Agente da DM), na ordem dada.
    * Chame depois de gravar a mensagem.
    */
-  enqueue(origin: { id: string; channelId: string }, calls: { agent: Agent; kind: ExecutionKind }[]): Promise<void>;
+  enqueue(
+    origin: { id: string; channelId: string },
+    calls: readonly { agent: Pick<Agent, "id">; kind: ExecutionKind }[],
+  ): Promise<void>;
   /** O Andamento das execuções de um Canal que ainda não viraram resposta. */
   openIn(channelId: string): Promise<ExecutionDto[]>;
   /** Começa a pegar trabalho. Ao subir, o que estava em andamento volta para a fila. */

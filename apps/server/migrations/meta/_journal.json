@@ -47,8 +47,15 @@
     {
       "idx": 6,
       "version": "7",
-      "when": 1795516669405,
-      "tag": "0006_execucao-em-dm-com-agente",
+      "when": 1795516862458,
+      "tag": "0006_perfil-e-mencao",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795517244442,
+      "tag": "0007_execucao-em-dm-com-agente",
       "breakpoints": true
     }
   ]

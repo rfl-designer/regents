@@ -85,7 +85,18 @@ describe("Agentes", () => {
     const res = await t.as(juliana).post("/api/agents", faro);
 
     expect(res.status).toBe(201);
-    expect(await res.json()).toEqual({ id: expect.any(String), ...faro });
+    expect(await res.json()).toEqual({ id: expect.any(String), handle: "faro", ...faro });
+  });
+
+  test("o Agente ganha o identificador de Menção do nome inteiro, sem espaço nem acento", async () => {
+    const t = await testApp();
+    await t.as(juliana).get("/api/me");
+
+    const agente = await criarAgente(t, { name: "Sophya Jurídico" });
+
+    expect(agente.handle).toBe("sophyajuridico");
+    const [visto] = (await (await t.as(juliana).get("/api/agents")).json()) as AgentDto[];
+    expect(visto!.handle).toBe("sophyajuridico");
   });
 
   test("todo Membro vê a descrição dos Agentes, mas as instruções são só do Admin", async () => {
