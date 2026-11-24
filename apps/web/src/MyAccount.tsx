@@ -109,17 +109,37 @@ export function MyAccount({ state }: { state: AccountState }) {
     <main className="account">
       <h1>Minha Conta</h1>
       <section className="account-status" aria-label="Estado da Conta">
-        {account.status.state === "linked" ? (
+        {account.status.state === "not_linked" ? (
+          <strong>Não ligada</strong>
+        ) : (
           <>
-            <strong>Ligada</strong>
+            <strong>
+              {account.status.state === "limited"
+                ? `No limite até ${hour.format(new Date(account.status.until))}`
+                : account.status.state === "needs_relink"
+                  ? "Precisa ligar de novo"
+                  : "Ligada"}
+            </strong>
             <span>
               {account.status.plan} · {account.status.email}
             </span>
           </>
-        ) : (
-          <strong>Não ligada</strong>
         )}
       </section>
+      {account.status.state === "limited" && (
+        <p className="hint">Até lá, as suas mensagens aos Agentes usam a Chave do Workspace ou esperam na fila.</p>
+      )}
+      {!linking && account.status.state === "needs_relink" && (
+        <>
+          <p className="hint">
+            O login da sua Conta do Claude caiu. Até você ligar de novo, as suas mensagens aos Agentes usam a Chave do
+            Workspace ou, sem ela, esperam na fila.
+          </p>
+          <button type="button" className="primary" onClick={start}>
+            Ligar minha Conta do Claude
+          </button>
+        </>
+      )}
 
       {error && (
         <p className="error" role="alert">
@@ -215,7 +235,7 @@ export function MyAccount({ state }: { state: AccountState }) {
         </section>
       )}
 
-      {account.status.state === "linked" &&
+      {account.status.state !== "not_linked" &&
         (confirmingUnlink ? (
           <section className="warning">
             <p>

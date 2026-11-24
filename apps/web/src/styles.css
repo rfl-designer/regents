@@ -761,6 +761,16 @@ button.primary {
 .cancel button:disabled {
   opacity: 0.5;
 }
+.queued {
+  margin: 4px 0;
+  font-size: 0.85rem;
+  color: var(--warn);
+}
+.paid {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: var(--warn);
+}
 .cancelled {
   margin: 4px 0;
   font-size: 0.85rem;
