@@ -9,6 +9,7 @@ import { buildContext, type Call } from "./context";
 import { type Db, schema } from "./db/client";
 import { type EventHub, without } from "./events";
 import type { KeyLedger } from "./key-budget";
+import { recordMentions } from "./mentions";
 import { findMessage } from "./messages";
 import type { ModelEvent, ModelPort, ModelRequest, Payer, TerminalModelEvent } from "./model/port";
 import { outcomeOf, recordOutcome } from "./outcomes";
@@ -16,6 +17,7 @@ import { audienceOf, type Conversation } from "./participation";
 import type { Reading } from "./reading";
 import { buildRouting, parseDecision, ROUTING_SCHEMA } from "./routing";
 import type { SecretBox } from "./secrets";
+import { recordFollows } from "./threads";
 import { readWorkspaceKey } from "./workspace-key";
 
 const { executions, agents, channels, messages, accounts } = schema;
@@ -548,28 +550,44 @@ export function createExecutions(deps: {
       .select({ threadRootId: messages.threadRootId })
       .from(messages)
       .where(eq(messages.id, job.originMessageId));
+    const threadRootId = origin?.threadRootId ?? null;
+    const [channel] = await db.select().from(channels).where(eq(channels.id, job.channelId));
+    // As Menções a pessoas na resposta valem como as de pessoa (push, não-lidas, seguir a Thread);
+    // a de Agente fica registrada, mas não o faz responder.
     const delivered = await db.transaction(async (tx) => {
       const [row] = await tx
         .select({ state: executions.state })
         .from(executions)
         .where(eq(executions.id, job.id))
         .for("update");
-      if (row?.state !== "running") return false;
+      if (row?.state !== "running") return undefined;
       await tx.insert(messages).values({
         id: reply.id,
         channelId: job.channelId,
         authorAgentId: agent.id,
         originMessageId: job.originMessageId,
-        threadRootId: origin?.threadRootId ?? null,
+        threadRootId,
         body: text.trim(),
         createdAt: reply.createdAt,
       });
-      return close(job, "done", { replyMessageId: reply.id }, tx);
+      const mentions = await recordMentions(tx, reply.id, channel!, text.trim());
+      const followed = threadRootId
+        ? await recordFollows(tx, {
+            conversationId: job.channelId,
+            threadRootId,
+            authorMemberId: null,
+            mentions,
+            createdAt: reply.createdAt,
+          })
+        : [];
+      return (await close(job, "done", { replyMessageId: reply.id }, tx)) ? { followed } : undefined;
     });
     if (!delivered) return;
-    const [channel] = await db.select().from(channels).where(eq(channels.id, job.channelId));
     const replyDto = (await findMessage(db, reply.id))!;
     events.publish(await audienceOf(db, channel!), { type: "message.created", message: replyDto });
+    for (const { memberId, thread } of delivered.followed) {
+      events.publish({ members: [memberId] }, { type: "thread.followed", thread });
+    }
     await reading.messageCreated(replyDto);
     hooks?.replyCreated?.(replyDto, channel!);
     await publish(job.id);

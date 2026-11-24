@@ -22,15 +22,17 @@ const { messages, messageMentions, threadFollows } = schema;
  */
 
 /**
- * Registra quem passa a seguir a Thread por causa desta mensagem de pessoa (na mesma transação
- * em que ela é gravada). Devolve só quem começou a seguir agora, com a Thread como ele a vê.
+ * Registra quem passa a seguir a Thread por causa desta mensagem (na mesma transação em que ela é
+ * gravada): a de pessoa faz seguir o autor; a de Agente (`authorMemberId` nulo), só quem ela
+ * menciona e quem já seguiria pela raiz. Devolve só quem começou a seguir agora, com a Thread como
+ * ele a vê.
  */
 export async function recordFollows(
   tx: Tx,
   message: {
     conversationId: string;
     threadRootId: string;
-    authorMemberId: string;
+    authorMemberId: string | null;
     mentions: readonly MentionDto[];
     createdAt: Date;
   },
@@ -45,7 +47,7 @@ export async function recordFollows(
     .where(and(eq(messageMentions.messageId, message.threadRootId), isNotNull(messageMentions.memberId)));
   const people = new Set<string>([
     ...(root?.authorMemberId ? [root.authorMemberId] : []),
-    message.authorMemberId,
+    ...(message.authorMemberId ? [message.authorMemberId] : []),
     ...message.mentions.filter((m) => m.kind === "member").map((m) => m.id),
     ...inRoot.map((m) => m.memberId!),
   ]);
