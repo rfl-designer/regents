@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { ModelBrain, ModelEvent } from "./port";
+import { type ModelBrain, type ModelEvent, NOT_STRUCTURED_REASON } from "./port";
 
 /** Preço por milhão de tokens (entrada, saída), em dólares, para o gasto na Chave (#28). */
 const PRICES: Record<string, { input: number; output: number }> = {
@@ -41,6 +41,10 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
             messages: request.messages,
             betas: ["server-side-fallback-2026-07-01"],
             fallbacks: "default",
+            // A decisão estruturada (ADR 0009): o mesmo schema que vai em `--json-schema` pela Conta.
+            ...(request.outputSchema
+              ? { output_config: { format: { type: "json_schema" as const, schema: request.outputSchema } } }
+              : {}),
           },
           { signal },
         );
@@ -61,6 +65,14 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
         } else {
           const usage = { inputTokens: final.usage.input_tokens, outputTokens: final.usage.output_tokens };
           terminal = { type: "done", usage, costUsd: costUsd(request.model, usage) };
+          if (request.outputSchema) {
+            const text = final.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
+            const structured = parseJson(text);
+            terminal =
+              structured === undefined
+                ? { type: "failed", reason: NOT_STRUCTURED_REASON, retryable: true }
+                : { ...terminal, structured };
+          }
         }
       } catch (err) {
         if (signal.aborted || err instanceof Anthropic.APIUserAbortError) return;
@@ -104,4 +116,12 @@ function classify(err: unknown): ModelEvent {
 function errorTypeOf(body: unknown): string | null {
   const error = (body as { error?: { type?: unknown } } | undefined)?.error;
   return typeof error?.type === "string" ? error.type : null;
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
 }

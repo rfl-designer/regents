@@ -6,13 +6,13 @@ import { buildContext } from "./context";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
 import { findMessage } from "./messages";
-import type { ModelEvent, ModelPort, TerminalModelEvent } from "./model/port";
+import type { ModelEvent, ModelPort, Payer, TerminalModelEvent } from "./model/port";
 import { audienceOf } from "./participation";
 import type { Reading } from "./reading";
 import type { SecretBox } from "./secrets";
 import { readWorkspaceKey } from "./workspace-key";
 
-const { executions, agents, channels, messages } = schema;
+const { executions, agents, channels, messages, accounts } = schema;
 type Row = typeof executions.$inferSelect;
 /** O tipo de uma execução: `mention` (Agente mencionado) ou `dm` (o Agente de uma DM com Agente). */
 export type ExecutionKind = Row["kind"];
@@ -57,7 +57,8 @@ export interface ExecutionHooks {
  * "o servidor reiniciou" e segue a nova tentativa.
  *
  * Fica para depois, com o seam indicado:
- * - quem paga (Conta do autor, fila "até HH:MM", orçamento) (#27): `choosePayer`;
+ * - quem paga (a tabela completa: no limite até HH:MM, Precisa ligar de novo, fila, orçamento) (#27):
+ *   `choosePayer` e a troca no meio em `run`;
  * - ordem por Agente e conversa, paralelismo e tetos (#42): `claim` e o laço em `work`;
  * - incidente da Chave em `auth_failed`/`billing_failed` e o gasto por Agente (#28): `settle`;
  * - push da falha ao autor (#32): `hooks.executionFailed`.
@@ -160,11 +161,23 @@ export function createExecutions(deps: {
   }
 
   /**
-   * Quem paga esta execução, decidido de novo a cada tentativa. Hoje só a Chave; sem ela,
-   * "Agentes não agem". O #27 completa a tabela; `job.retriedByAuthor` diz que é o "Tentar de
-   * novo" do autor, que a Spec quer pago pela Conta dele.
+   * Quem paga esta execução, decidido de novo a cada tentativa: a Conta ligada do autor; sem ela
+   * (ou com `skipAccount`, depois da troca no meio), a Chave; sem nenhuma, "Agentes não agem".
+   * O #27 completa a tabela (no limite até HH:MM, Precisa ligar de novo, a fila, o orçamento);
+   * `job.retriedByAuthor` diz que é o "Tentar de novo" do autor, que a Spec quer pago pela Conta dele.
    */
-  async function choosePayer(_job: Row): Promise<{ kind: "key"; apiKey: string } | { kind: "none"; reason: string }> {
+  async function choosePayer(
+    job: Row,
+    opts: { skipAccount?: boolean } = {},
+  ): Promise<Payer | { kind: "none"; reason: string }> {
+    if (!opts.skipAccount) {
+      const [account] = await db
+        .select({ memberId: accounts.memberId, configDir: accounts.configDir })
+        .from(messages)
+        .innerJoin(accounts, eq(accounts.memberId, messages.authorMemberId))
+        .where(and(eq(messages.id, job.originMessageId), eq(accounts.state, "linked"), isNotNull(accounts.configDir)));
+      if (account) return { kind: "account", memberId: account.memberId, configDir: account.configDir! };
+    }
     const apiKey = await readWorkspaceKey(db, secrets);
     return apiKey ? { kind: "key", apiKey } : { kind: "none", reason: "o Workspace não tem Chave" };
   }
@@ -236,16 +249,11 @@ export function createExecutions(deps: {
     if (failed) hooks?.executionFailed?.(failed);
   }
 
-  async function run(job: Row, controller: AbortController) {
-    const { signal } = controller;
-    const payer = await choosePayer(job);
-    if (payer.kind === "none") return void (await settle(job, "not_acting", { reason: payer.reason }));
-    await db.update(executions).set({ payer: "key" }).where(eq(executions.id, job.id));
-    await publish(job.id);
-
-    const [agent] = await db.select().from(agents).where(eq(agents.id, job.agentId));
-    const context = await buildContext(db, agent!, job.originMessageId, { kind: job.kind });
-    const step = (job.step as ExecutionStep | null) ?? "writing";
+  /**
+   * Uma chamada ao cérebro, com a vigia de 2 min sem progresso: junta o texto e devolve o fim
+   * (nada quando o `signal` abortou).
+   */
+  async function talk(job: Row, request: Parameters<ModelPort["run"]>[0], controller: AbortController) {
     const watchdog = stallWatch(clock, STALL_MS, () => controller.abort("stalled" satisfies Interruption));
     let text = "";
     let end: TerminalModelEvent | undefined;
@@ -260,7 +268,7 @@ export function createExecutions(deps: {
       await publish(job.id);
     }
     try {
-      for await (const event of model.run({ model: agent!.model, ...context, payer }, signal)) {
+      for await (const event of model.run(request, controller.signal)) {
         if (isProgress(event)) watchdog.reset();
         if (event.type === "api_retry") await showApiRetry(event);
         else if ((event.type === "text" || event.type === "thinking") && apiRetrying) await showApiRetry(null);
@@ -270,11 +278,47 @@ export function createExecutions(deps: {
     } finally {
       watchdog.cancel();
     }
-    if (signal.aborted) {
-      // Na vigia, é falha. No cancelamento, já está gravado. No reinício, continua "em andamento"
-      // até a próxima subida.
-      if ((signal.reason as Interruption) === "stalled") await fail(job, STALL_REASON[step]);
-      return;
+    return { text, end };
+  }
+
+  async function run(job: Row, controller: AbortController) {
+    const { signal } = controller;
+    const [agent] = await db.select().from(agents).where(eq(agents.id, job.agentId));
+    const step = (job.step as ExecutionStep | null) ?? "writing";
+    let context: Awaited<ReturnType<typeof buildContext>> | undefined;
+    let skipAccount = false;
+    let text = "";
+    let end: TerminalModelEvent | undefined;
+    for (;;) {
+      const payer = await choosePayer(job, { skipAccount });
+      if (payer.kind === "none") return void (await settle(job, "not_acting", { reason: payer.reason }));
+      await db
+        .update(executions)
+        .set({ payer: payer.kind, apiRetryAttempt: null, apiRetryMax: null })
+        .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
+      await publish(job.id);
+      context ??= await buildContext(db, agent!, job.originMessageId, { kind: job.kind });
+
+      ({ text, end } = await talk(job, { model: agent!.model, ...context, payer }, controller));
+      if (signal.aborted) {
+        // Na vigia, é falha. No cancelamento, já está gravado. No reinício, continua "em andamento"
+        // até a próxima subida.
+        if ((signal.reason as Interruption) === "stalled") await fail(job, STALL_REASON[step]);
+        return;
+      }
+      // Troca no meio (Spec, módulo 6): a Conta bateu no limite ou caiu. O parcial é descartado e
+      // a resposta é refeita inteira pela Chave, à vista, na mesma tentativa.
+      if (payer.kind === "account" && (end?.type === "limit" || end?.type === "auth_failed")) {
+        skipAccount = true;
+        continue;
+      }
+      if (payer.kind === "account" && end?.type === "done" && end.credentialExpiresAt) {
+        await db
+          .update(accounts)
+          .set({ credentialExpiresAt: end.credentialExpiresAt })
+          .where(and(eq(accounts.memberId, payer.memberId), eq(accounts.configDir, payer.configDir)));
+      }
+      break;
     }
 
     if (end?.type !== "done") return fail(job, failureReason(end), { retryable: isRetryable(end) });
