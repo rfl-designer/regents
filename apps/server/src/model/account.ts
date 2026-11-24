@@ -132,7 +132,11 @@ function argsFor(request: ModelRequest): string[] {
   return args;
 }
 
-/** Se o processo sai em até `ms`. */
+/**
+ * Se o processo sai em até `ms`. Exceção à regra do relógio injetável (README, "Testes"): o prazo
+ * do encerramento é o de um processo de verdade, que vive no tempo real; os testes o encurtam
+ * com `stopGrace`, não com `clock.advance`.
+ */
 async function exitsWithin(proc: ClaudeProcess, ms: number) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<false>((resolve) => {

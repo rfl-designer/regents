@@ -821,6 +821,18 @@ export function createExecutions(deps: {
     wakeUp?.();
   }
 
+  /** Espera `ms` no relógio, ou menos, se algo acordar o trabalhador (trabalho novo, parada). */
+  async function pause(ms: number) {
+    await new Promise<void>((resolve) => {
+      const cancel = clock.after(ms, resolve);
+      wakeUp = () => {
+        cancel();
+        resolve();
+      };
+    });
+    wakeUp = undefined;
+  }
+
   async function idle() {
     if (pending || stopping) return;
     await new Promise<void>((resolve) => {
@@ -938,7 +950,7 @@ export function createExecutions(deps: {
       } catch (err) {
         if (stopping) break;
         console.error("shearim: a fila de execuções falhou ao pegar trabalho", err);
-        await new Promise((r) => setTimeout(r, 1_000));
+        await pause(1_000);
         continue;
       }
       await idle();

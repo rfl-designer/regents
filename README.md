@@ -114,7 +114,7 @@ t.clock.advance(90_000);
 await t.anonymous("funnel").get("/api/me");                  // sem identidade
 ```
 
-Prazos esperam pelo relógio injetável: o código chama `clock.after(ms, fn)` (nunca `setTimeout` direto), e `t.clock.advance(ms)` dispara, em ordem, o que venceu no caminho. Os 10 minutos da espera pelo código rodam num `advance`.
+Prazos esperam pelo relógio injetável: o código chama `clock.after(ms, fn)` (nunca `setTimeout` direto), e `t.clock.advance(ms)` dispara, em ordem, o que venceu no caminho. A exceção é o encerramento do `claude -p` (`SIGINT`, 10 s, `SIGTERM`, 5 s, `SIGKILL`; `exitsWithin` em `model/account.ts`): é o prazo de um processo de verdade, no tempo real, e os testes o encurtam com `stopGrace`. Os 10 minutos da espera pelo código rodam num `advance`.
 
 O que cada teste abre é fechado sozinho no fim dele (`onCleanup` no arnês, executado pelo `afterEach` de `test/preload.ts`).
 
