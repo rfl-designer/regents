@@ -6,13 +6,16 @@
 #
 # Regras que não se negociam (o desvio de headers depende delas):
 # - Nenhum serviço tem `ports:`. O único caminho até o app é o Serve.
-# - A rede `interna` tem só tailscale, app, postgres e (no #38) backup. Nenhum
+# - A rede `interna` tem só tailscale, app, postgres e backup. Nenhum
 #   docker-compose.override.yml pode ligar outro serviço a ela: qualquer container ali
 #   fala com app:3000 e forja X-Forwarded-For.
 # - O sidecar fica em userspace, sem /dev/net/tun e sem capabilities.
 #
 # Configuração do Admin só no .env (o setup o escreve); segredos em ./secrets (deploy/setup.sh).
-# Atualizar: `docker compose pull && docker compose up -d`.
+# Atualizar: `docker compose pull && docker compose up -d`. Na subida, o app faz um dump em ./backups
+# antes de migrar; uma versão mais velha não sobe num banco migrado por uma mais nova (voltar de
+# versão é `docker compose run --rm app restore <dump de antes da migração>`).
+# Backup completo: ./backups (um pg_dump por noite, 14 dias) mais ./secrets. Guarde os dois fora daqui.
 
 name: shearim
 
@@ -68,6 +71,10 @@ services:
       SHEARIM_VAPID_CONTACT: ${SHEARIM_VAPID_CONTACT:?rode deploy/setup.sh (falta SHEARIM_VAPID_CONTACT no .env)}
       # Pasta-raiz das Contas: o volume `contas` abaixo.
       SHEARIM_ACCOUNTS_DIR: /data/contas
+      # A versão na seção Instalação: a mesma tag da imagem.
+      SHEARIM_VERSION: ${SHEARIM_VERSION:-local}
+      # O dump de antes de migrar e o `restore <arquivo>` (que acha o arquivo pelo nome aqui).
+      SHEARIM_BACKUPS_DIR: /backups
     secrets:
       - postgres_password
       - master_key
@@ -76,6 +83,7 @@ services:
       - ts-socket:/var/run/tailscale:ro
       # CLAUDE_CONFIG_DIR de cada Membro (Contas). Fora do backup, de propósito.
       - contas:/data/contas
+      - ./backups:/backups
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,8 +124,32 @@ services:
     stop_grace_period: 30s
     restart: unless-stopped
 
-  # backup: o pg_dump noturno em ./backups (14 dias) entra aqui no #38, também na rede
-  # `interna`, com o segredo postgres_password. O backup completo é o dump mais ./secrets.
+  # O pg_dump noturno em ./backups, com 14 dias de retenção. É a mesma imagem do app rodando
+  # `backup`: grava cada tentativa no banco, e o app avisa o Admin (push e faixa) quando falha ou
+  # passa 36 h sem um backup bom. Espera o app subir (é ele quem migra).
+  backup:
+    image: ${SHEARIM_IMAGE:-ghcr.io/rfl-designer/shearim}:${SHEARIM_VERSION:-local}
+    init: true
+    command: ["backup"]
+    environment:
+      DATABASE_URL: postgres://shearim@postgres:5432/shearim
+      DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+      SHEARIM_BACKUPS_DIR: /backups
+      # HH:MM na hora local do container (TZ, padrão UTC).
+      SHEARIM_BACKUP_AT: ${SHEARIM_BACKUP_AT:-03:00}
+      TZ: ${TZ:-UTC}
+    secrets:
+      - postgres_password
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      app:
+        condition: service_healthy
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [interna]
+    stop_grace_period: 30s
+    restart: unless-stopped
 
 networks:
   interna: {}
