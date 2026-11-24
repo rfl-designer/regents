@@ -154,6 +154,13 @@ export type DmKind = "dm" | "group";
 /** Toda conversa: Canal ou DM. O id de qualquer uma serve em `/api/conversations/:id/...`. */
 export type ConversationKind = ChannelKind | DmKind;
 
+export const CHANNEL_KINDS: readonly ChannelKind[] = ["public", "private"];
+export const DM_KINDS: readonly DmKind[] = ["dm", "group"];
+/** A conversa é um Canal (público ou privado). */
+export const isChannelKind = (kind: string): kind is ChannelKind => (CHANNEL_KINDS as readonly string[]).includes(kind);
+/** A conversa é uma DM (entre duas partes ou em grupo). */
+export const isDmKind = (kind: string): kind is DmKind => (DM_KINDS as readonly string[]).includes(kind);
+
 /**
  * Quem participa de uma conversa: uma pessoa ou um Agente.
  * `photo` do Agente é um `data:` URL de imagem, ou `null`.

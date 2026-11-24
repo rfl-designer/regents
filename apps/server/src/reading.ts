@@ -1,4 +1,10 @@
-import type { MarkReadInput, MessageDto, UnreadDto, UnreadMessagesDto } from "@shearim/contracts";
+import {
+  isDmKind,
+  type MarkReadInput,
+  type MessageDto,
+  type UnreadDto,
+  type UnreadMessagesDto,
+} from "@shearim/contracts";
 import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { type Context, Hono } from "hono";
@@ -183,7 +189,7 @@ export async function unreadOf(db: Db, memberId: string): Promise<UnreadDto> {
       c.mentions++;
       unread.mentions++;
     }
-    if (r.kind === "dm" || r.kind === "group") unread.dms++;
+    if (isDmKind(r.kind)) unread.dms++;
   }
   return unread;
 }

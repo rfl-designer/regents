@@ -1,3 +1,4 @@
+import { isChannelKind } from "@shearim/contracts";
 import { and, asc, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import type { Agent } from "./agents";
 import { withBuiltinText } from "./articuladora";
@@ -77,7 +78,7 @@ export async function buildContext(
     .then((rows) => rows.map((a) => withBuiltinText({ ...a, instructions: "" })));
 
   const caller = recent.at(-1)!;
-  const isChannel = conversation!.kind === "public" || conversation!.kind === "private";
+  const isChannel = isChannelKind(conversation!.kind);
   const where = origin.threadRootId
     ? isChannel
       ? `numa Thread do Canal #${conversation!.name}`

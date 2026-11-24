@@ -1,4 +1,4 @@
-import type { DmDto, DmKind, OpenDmInput } from "@shearim/contracts";
+import { DM_KINDS, type DmDto, type DmKind, type OpenDmInput } from "@shearim/contracts";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "./clock";
@@ -12,8 +12,6 @@ type Env = { Variables: { member: Member } };
 export type Dm = ConversationRow & { kind: DmKind };
 
 const { channels, channelParticipants, channelAgents, members, agents } = schema;
-
-const DM_KINDS: readonly DmKind[] = ["dm", "group"];
 
 /** Numa DM, o N (mensagens recentes no contexto dos Agentes) é fixo: o Admin só edita o de Canais. */
 export const DM_RECENT_MESSAGES = 30;

@@ -1,12 +1,14 @@
-import type {
-  AddAgentInput,
-  AddParticipantInput,
-  ChannelDto,
-  ChannelKind,
-  ChannelSettingsDto,
-  CreateChannelInput,
-  MessageDto,
-  SendMessageInput,
+import {
+  type AddAgentInput,
+  type AddParticipantInput,
+  CHANNEL_KINDS,
+  type ChannelDto,
+  type ChannelKind,
+  type ChannelSettingsDto,
+  type CreateChannelInput,
+  isChannelKind,
+  type MessageDto,
+  type SendMessageInput,
 } from "@shearim/contracts";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
@@ -31,8 +33,7 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 export type ConversationRow = typeof schema.channels.$inferSelect;
 export type Channel = ConversationRow & { kind: ChannelKind; name: string };
 
-const CHANNEL_KINDS: readonly ChannelKind[] = ["public", "private"];
-const isChannel = (row: ConversationRow): row is Channel => (CHANNEL_KINDS as readonly string[]).includes(row.kind);
+const isChannel = (row: ConversationRow): row is Channel => isChannelKind(row.kind);
 
 const { channels, channelAgents, messages, members, agents } = schema;
 

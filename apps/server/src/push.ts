@@ -1,8 +1,11 @@
 import type https from "node:https";
 import {
+  type ConversationKind,
   conversationPath,
   type DeviceDto,
   type ExecutionDto,
+  isChannelKind,
+  isDmKind,
   type MessageDto,
   messagePath,
   type PushKeyDto,
@@ -167,7 +170,7 @@ export function createPush(deps: {
       const authorId = message.author.kind === "member" ? message.author.id : undefined;
       const participants = (await participantsOf(db, [conversation.id])).get(conversation.id) ?? [];
       const people = participants.filter((p) => p.kind === "member");
-      const isDm = conversation.kind === "dm" || conversation.kind === "group";
+      const isDm = isDmKind(conversation.kind);
       const recipients = new Map<string, Urgency>();
       const add = (ids: Iterable<string>, urgency: Urgency) => {
         for (const id of ids) if (recipients.get(id) !== "high") recipients.set(id, urgency);
@@ -211,28 +214,15 @@ export function createPush(deps: {
             .filter((p) => !ids.includes(p.id))
             .map((p) => p.displayName)
             .join(", ");
-        const text = excerpt(message.body);
-        const notification =
-          n === 1
-            ? {
-                title:
-                  conversation.kind === "dm"
-                    ? author
-                    : conversation.kind === "group"
-                      ? `${author} em DM com ${othersThan(recipientId, authorId)}`
-                      : `#${row?.name} · ${author}`,
-                body: text,
-              }
-            : {
-                // A notificação nova toma o lugar da anterior (mesma `tag`): ela conta por todas.
-                title:
-                  conversation.kind === "dm"
-                    ? `${n} novas de ${author}`
-                    : conversation.kind === "group"
-                      ? `${n} novas em DM com ${othersThan(recipientId)}`
-                      : `${n} novas em #${row?.name}`,
-                body: `${author}: ${text}`,
-              };
+        const notification = conversationNotice(conversation.kind as ConversationKind, {
+          n,
+          author,
+          text: excerpt(message.body),
+          channelName: row?.name ?? "",
+          // Na DM em grupo, com quem: na primeira, os outros além de quem escreveu; no "n novas", todos os outros.
+          others: () => othersThan(recipientId, authorId),
+          everyoneElse: () => othersThan(recipientId),
+        });
         await deliverToConversation(recipientId, conversation.id, notification, urgency);
       }
     });
@@ -338,8 +328,7 @@ export function createPush(deps: {
       const who = `${execution.agent.displayName} não respondeu`;
       const reason = execution.reason ?? "algo deu errado";
       await deliverNotice(authorId, {
-        title:
-          conversation.kind === "public" || conversation.kind === "private" ? `#${conversation.name} · ${who}` : who,
+        title: isChannelKind(conversation.kind) ? `#${conversation.name} · ${who}` : who,
         body: `${reason.charAt(0).toUpperCase()}${reason.slice(1)}.`,
         path: messagePath(execution.channelId, execution.originMessageId),
         tag: `falha-${execution.id}`,
@@ -450,6 +439,32 @@ export function createPush(deps: {
 }
 
 export type Push = ReturnType<typeof createPush>;
+
+interface NoticeText {
+  /** Quantas desta conversa desde a última vez que ela foi aberta, esta inclusive. */
+  n: number;
+  author: string;
+  text: string;
+  channelName: string;
+  others: () => string;
+  everyoneElse: () => string;
+}
+
+/**
+ * Título e corpo do push de conversa, por tipo de conversa: o primeiro (`n` 1) e o "n novas",
+ * que toma o lugar do anterior (mesma `tag`) e conta por todos.
+ */
+const NOTICE_TITLES: Record<ConversationKind, (t: NoticeText) => { first: string; many: string }> = {
+  dm: (t) => ({ first: t.author, many: `${t.n} novas de ${t.author}` }),
+  group: (t) => ({ first: `${t.author} em DM com ${t.others()}`, many: `${t.n} novas em DM com ${t.everyoneElse()}` }),
+  public: (t) => ({ first: `#${t.channelName} · ${t.author}`, many: `${t.n} novas em #${t.channelName}` }),
+  private: (t) => ({ first: `#${t.channelName} · ${t.author}`, many: `${t.n} novas em #${t.channelName}` }),
+};
+
+function conversationNotice(kind: ConversationKind, t: NoticeText) {
+  const title = NOTICE_TITLES[kind](t);
+  return t.n === 1 ? { title: title.first, body: t.text } : { title: title.many, body: `${t.author}: ${t.text}` };
+}
 
 /** O texto da mensagem numa linha, com cerca de 140 caracteres. */
 function excerpt(body: string) {
