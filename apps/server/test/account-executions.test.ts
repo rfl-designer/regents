@@ -206,16 +206,23 @@ describe("a vigia, a morte do processo e o cancelamento pela Conta", () => {
     expect(ainda!.state).toBe("running");
   });
 
-  test("processo que morre no meio é falha na hora, sem esperar a vigia", async () => {
+  test("processo que morre no meio é falha na hora, sem esperar a vigia; só a autora vê que é o Claude Code", async () => {
     const t = await testApp();
     const { geral } = await comContaLigada(t);
+    await t.addMember(bruno, { by: juliana });
+    await t.as(bruno).post(`/api/channels/${geral.id}/join`);
     const aba = await t.socket(juliana);
+    const doBruno = await t.socket(bruno, "aba do Bruno");
     t.claude.script({ run: { kind: "steps", steps: [{ text: "Vou te" }, { die: 1 }] } });
 
     await enviar(t, geral.id, "@Faro tá aí?");
 
     const falha = await andamento(aba, (e) => e.state === "retrying");
     expect(falha).toMatchObject({ reason: "o Claude Code parou sem terminar a resposta", attempt: 1 });
+    // A Conta é só da autora (ADR 0005): o Bruno não fica sabendo que a execução corria por ela.
+    expect(await andamento(doBruno, (e) => e.state === "retrying")).toMatchObject({
+      reason: "a resposta parou no meio",
+    });
     expect(t.anthropic.requests).toHaveLength(0);
   });
 

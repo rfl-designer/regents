@@ -50,11 +50,11 @@ export function accountBrain(opts: {
       if (payer.kind !== "account") throw new Error("accountBrain só atende pagamento pela Conta");
       if (signal.aborted) return;
       if (Buffer.byteLength(request.system) > MAX_SYSTEM_PROMPT_BYTES) {
-        yield {
-          type: "failed",
-          reason: "o contexto fixo do Agente é grande demais para o Claude Code",
-          retryable: false,
-        };
+        yield accountFailure(
+          "o contexto fixo do Agente é grande demais",
+          "o contexto fixo do Agente é grande demais para o Claude Code",
+          false,
+        );
         return;
       }
 
@@ -63,7 +63,11 @@ export function accountBrain(opts: {
         proc = opts.procs.track(spawnClaude(opts.claudeBin, argsFor(request), payer.configDir));
       } catch (err) {
         if (!(err instanceof ClaudeMissing)) throw err;
-        yield { type: "failed", reason: "o Claude Code não está instalado neste servidor", retryable: false };
+        yield accountFailure(
+          "o Shearim não conseguiu rodar a execução",
+          "o Claude Code não está instalado neste servidor",
+          false,
+        );
         return;
       }
       let stopped: Promise<void> | undefined;
@@ -251,7 +255,9 @@ function streamReading(request: ModelRequest) {
       // O limite vale mesmo sem `result` (o limite semanal pode sair 1 sem nada).
       if (limited || category === "rate_limit") return { type: "limit", resetsAt: limited?.resetsAt ?? null };
       if (category === "authentication_failed" || result?.api_error_status === 401) return { type: "auth_failed" };
-      if (!result) return { type: "failed", reason: "o Claude Code parou sem terminar a resposta", retryable: true };
+      if (!result) {
+        return accountFailure("a resposta parou no meio", "o Claude Code parou sem terminar a resposta", true);
+      }
       return failure(category, str(result.terminal_reason), num(result.api_error_status));
     },
   };
@@ -311,5 +317,13 @@ function failure(
   if (status === 529) return failed("a Anthropic está sobrecarregada", true);
   if (status === 404) return failed("o modelo do Agente não existe na Anthropic", false);
   if (terminal === "aborted_streaming") return failed("a resposta parou no meio", true);
-  return failed("o Claude Code respondeu com erro", true);
+  return accountFailure("deu erro ao gerar a resposta", "o Claude Code respondeu com erro", true);
+}
+
+/**
+ * Uma falha cujo motivo revela que a execução corria pela Conta (fala do Claude Code): a Conta é
+ * só do autor (ADR 0005), então os outros veem `reason`, neutro, e só ele vê `authorReason`.
+ */
+function accountFailure(reason: string, authorReason: string, retryable: boolean) {
+  return { type: "failed" as const, reason, authorReason, retryable };
 }

@@ -269,7 +269,23 @@ describe("a falha se lê por is_error, assistant.error e terminal_reason", () =>
     [
       "o processo morre no meio, sem result",
       { kind: "steps", steps: [{ text: "Vou te" }, { die: 1 }] },
-      { type: "failed", reason: "o Claude Code parou sem terminar a resposta", retryable: true },
+      // Só o autor sabe que a execução corria pela Conta (ADR 0005): os outros veem o neutro.
+      {
+        type: "failed",
+        reason: "a resposta parou no meio",
+        authorReason: "o Claude Code parou sem terminar a resposta",
+        retryable: true,
+      },
+    ],
+    [
+      "erro sem categoria",
+      { kind: "steps", steps: [], end: { result: "error" } },
+      {
+        type: "failed",
+        reason: "deu erro ao gerar a resposta",
+        authorReason: "o Claude Code respondeu com erro",
+        retryable: true,
+      },
     ],
   ];
   for (const [caso, run, fim] of casos) {
@@ -290,7 +306,27 @@ describe("a falha se lê por is_error, assistant.error e terminal_reason", () =>
     const events = await collect(brain.run(s.request(), new AbortController().signal));
 
     expect(events).toEqual([
-      { type: "failed", reason: "o Claude Code não está instalado neste servidor", retryable: false },
+      {
+        type: "failed",
+        reason: "o Shearim não conseguiu rodar a execução",
+        authorReason: "o Claude Code não está instalado neste servidor",
+        retryable: false,
+      },
+    ]);
+  });
+
+  test("o contexto fixo grande demais para o Claude Code: só o autor vê que é o Claude Code", async () => {
+    const s = setup();
+
+    const events = await collect(s.brain.run(s.request({ system: "x".repeat(200_000) }), new AbortController().signal));
+
+    expect(events).toEqual([
+      {
+        type: "failed",
+        reason: "o contexto fixo do Agente é grande demais",
+        authorReason: "o contexto fixo do Agente é grande demais para o Claude Code",
+        retryable: false,
+      },
     ]);
   });
 });
