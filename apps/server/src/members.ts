@@ -1,5 +1,6 @@
 import type { MeDto, MemberSummaryDto } from "@shearim/contracts";
 import { asc, eq, getTableColumns, type SQL, sql } from "drizzle-orm";
+import { addArticuladora } from "./articuladora";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { Identity } from "./identity/port";
@@ -93,7 +94,10 @@ export async function memberFor(
       .values({ id: crypto.randomUUID(), name: INITIAL_CHANNEL_NAME, kind: "public", createdAt: now })
       .onConflictDoNothing()
       .returning({ id: schema.channels.id });
-    if (initial) await addParticipants(tx, initial.id, [admin.id], now);
+    if (initial) {
+      await addParticipants(tx, initial.id, [admin.id], now);
+      await addArticuladora(tx, initial.id, now);
+    }
     return admin;
   });
 }

@@ -15,6 +15,8 @@ export interface FakeReply {
   /** O texto da resposta, mandado em pedaços (`chunks`) ou palavra por palavra. */
   text?: string;
   chunks?: string[];
+  /** Saída estruturada (`output_config.format`): o JSON vai como o texto, em pedaços. */
+  json?: unknown;
   /** Um bloco de pensamento (com texto vazio, como o `display: "omitted"`) antes do texto. */
   thinking?: boolean;
   /** Espera entre um evento e outro do stream. */
@@ -90,6 +92,17 @@ export function lastUserText(body: RecordedRequest["body"]) {
   return last.content.map((b) => b.text ?? "").join("");
 }
 
+/**
+ * O padrão: um texto curto; ao roteamento da Articuladora (com `output_config`), o Desfecho
+ * "nenhum", para um teste que não roteiriza o roteamento não ver resposta a mais.
+ */
+export function defaultFakeReply(req: RecordedRequest): FakeReply {
+  if (req.body.output_config) {
+    return { json: { decisao: "nenhum", agentes: [], motivo: "Resposta padrão do falso." } };
+  }
+  return { text: "Resposta de teste." };
+}
+
 export async function startFakeMessagesApi(
   opts: { port?: number; defaultReply?: (req: RecordedRequest) => FakeReply } = {},
 ): Promise<FakeMessagesApi> {
@@ -97,11 +110,12 @@ export async function startFakeMessagesApi(
   const requests: RecordedRequest[] = [];
   const accepted = new Set<string>();
   const arrivals: (() => void)[] = [];
-  const defaultReply = opts.defaultReply ?? ((): FakeReply => ({ text: "Resposta de teste." }));
+  const defaultReply = opts.defaultReply ?? defaultFakeReply;
 
   function stream(reply: FakeReply, model: string, signal: AbortSignal) {
     const usage = reply.usage ?? { input_tokens: 42, output_tokens: 12 };
-    const pieces = reply.chunks ?? (reply.text ?? "").split(/(?<=\s)/).filter(Boolean);
+    const text = reply.json !== undefined ? JSON.stringify(reply.json) : reply.text;
+    const pieces = reply.chunks ?? (text ?? "").split(/(?<=\s)/).filter(Boolean);
     const delay = reply.delayMs ?? 0;
     return new ReadableStream<Uint8Array>({
       async start(controller) {

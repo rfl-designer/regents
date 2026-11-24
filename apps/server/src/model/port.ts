@@ -25,6 +25,12 @@ export interface ModelRequest {
   system: string;
   messages: ModelMessage[];
   payer: Payer;
+  /**
+   * Saída estruturada (o roteamento da Articuladora): o texto da resposta é um JSON que segue
+   * `schema`. Pela Chave vai em `output_config.format`; pela Conta (#26), no `--json-schema`
+   * do `claude -p`, com o `structured_output` do `result` emitido como o texto.
+   */
+  output?: { schema: Record<string, unknown> };
 }
 
 export interface ModelUsage {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentDto, ChannelDto, MessageDto, WorkspaceContextDto } from "@shearim/contracts";
-import { type Person, type TestApp, testApp } from "./harness";
+import { eventually, type Person, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
 const bruno = { id: "1002", login: "bruno@exemplo.com", name: "Bruno" };
@@ -45,9 +45,15 @@ async function workspaceComFaro(t: TestApp) {
   return { faro, geral };
 }
 
-/** O que chegou à Messages API falsa na chamada `n` (a partir de 1), com o `system` como texto. */
+/**
+ * O que chegou à Messages API falsa na chamada `n` (a partir de 1) a um Agente, com o `system`
+ * como texto. O roteamento da Articuladora (as mensagens sem Menção no Canal com o Faro) fica de fora.
+ */
 async function contextoDaChamada(t: TestApp, n = 1) {
-  const chamadas = await t.anthropic.waitForRequests(n);
+  const chamadas = await eventually(`a chamada ${n} a um Agente`, async () => {
+    const respostas = t.anthropic.requests.filter((r) => !r.body.output_config);
+    return respostas.length >= n ? respostas : undefined;
+  });
   const { system, messages } = chamadas[n - 1]!.body;
   const texto = typeof system === "string" ? system : (system ?? []).map((b) => b.text).join("\n");
   const conversa = messages
@@ -150,15 +156,11 @@ describe("Montagem de contexto", () => {
 
     const { system } = await contextoDaChamada(t);
     const quemEQuem = system.slice(system.indexOf("## Quem é quem"));
+    expect(quemEQuem).toContain(["Pessoas:", "- Bruno: Cuido do financeiro.", "- Juliana", "Agentes:"].join("\n"));
+    // A Articuladora vem primeiro, com a descrição do Shearim; depois os Agentes do Canal.
+    expect(quemEQuem).toContain("Agentes:\n- Sophya: A Articuladora do Shearim");
     expect(quemEQuem).toContain(
-      [
-        "Pessoas:",
-        "- Bruno: Cuido do financeiro.",
-        "- Juliana",
-        "Agentes:",
-        "- Faro (você): Comercial: propostas e preços.",
-        "- Lince: Pesquisa de mercado.",
-      ].join("\n"),
+      ["- Faro (você): Comercial: propostas e preços.", "- Lince: Pesquisa de mercado."].join("\n"),
     );
   });
 

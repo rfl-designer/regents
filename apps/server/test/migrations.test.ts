@@ -62,6 +62,35 @@ describe("Migração do identificador de Menção (0006)", () => {
       memberId: ids.juliana,
       agentId: null,
     });
-    expect(handles).toHaveLength(3);
+    // Os 3 de antes, mais o da Articuladora, que chega na 0010.
+    expect(handles.filter((h) => h.handle !== "sophya")).toHaveLength(3);
+  });
+});
+
+describe("Migração da Articuladora (0010)", () => {
+  test("um Workspace de antes ganha a Sophya, em todo Canal (não nas DMs), com sufixo se @sophya já é de alguém", async () => {
+    const { db, client } = await migratedUntil("0009_leitura-mensagens-vistas");
+    const ids = { sophya: crypto.randomUUID(), vendas: crypto.randomUUID(), dm: crypto.randomUUID() };
+    const ontem = "2026-11-23T12:00:00Z";
+    await client.query(
+      `INSERT INTO members (id, tailnet_user_id, login, display_name, role, created_at)
+       VALUES ($1, '1001', 'sophya@exemplo.com', 'Sophya Lima', 'admin', $2)`,
+      [ids.sophya, ontem],
+    );
+    await client.query(`INSERT INTO mention_handles (handle, member_id) VALUES ('sophya', $1)`, [ids.sophya]);
+    await client.query(
+      `INSERT INTO channels (id, name, kind, created_at) VALUES ($1, 'vendas', 'private', $3), ($2, NULL, 'dm', $3)`,
+      [ids.vendas, ids.dm, ontem],
+    );
+
+    await migrate(db, { migrationsFolder });
+
+    const builtin = await db.select().from(schema.agents);
+    expect(builtin).toMatchObject([{ name: "Sophya", builtin: true, model: "claude-sonnet-5-5" }]);
+    const owners = await resolveHandles(db, ["sophya", "sophya2"]);
+    expect(owners.get("sophya")).toEqual({ kind: "member", id: ids.sophya });
+    expect(owners.get("sophya2")).toEqual({ kind: "agent", id: builtin[0]!.id });
+    const where = await db.select().from(schema.channelAgents);
+    expect(where.map((r) => [r.channelId, r.agentId])).toEqual([[ids.vendas, builtin[0]!.id]]);
   });
 });

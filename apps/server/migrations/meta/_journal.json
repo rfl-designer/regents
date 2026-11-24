@@ -71,6 +71,13 @@
       "when": 1795517690246,
       "tag": "0009_leitura-mensagens-vistas",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795518131674,
+      "tag": "0010_articuladora-e-desfecho",
+      "breakpoints": true
     }
   ]
 }

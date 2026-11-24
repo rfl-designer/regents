@@ -1,20 +1,26 @@
 import type { ExecutionDto, ExecutionState, ExecutionStep } from "@shearim/contracts";
 import { and, asc, eq, ne, type SQL, sql } from "drizzle-orm";
 import type { Agent } from "./agents";
+import { ROUTING_MODEL } from "./articuladora";
 import type { Clock } from "./clock";
-import { buildContext } from "./context";
+import { buildContext, type Call } from "./context";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
 import { findMessage } from "./messages";
-import type { ModelPort, TerminalModelEvent } from "./model/port";
+import type { ModelPort, ModelRequest, Payer, TerminalModelEvent } from "./model/port";
+import { outcomeOf, recordOutcome } from "./outcomes";
 import { audienceOf } from "./participation";
 import type { Reading } from "./reading";
+import { buildRouting, parseDecision, ROUTING_SCHEMA } from "./routing";
 import type { SecretBox } from "./secrets";
 import { readWorkspaceKey } from "./workspace-key";
 
 const { executions, agents, channels, messages } = schema;
 type Row = typeof executions.$inferSelect;
-/** O tipo de uma execução: `mention` (Agente mencionado) ou `dm` (o Agente de uma DM com Agente). */
+/**
+ * O tipo de uma execução: `mention` (Agente mencionado), `dm` (o Agente de uma DM com Agente),
+ * `route` (o roteamento da Articuladora), `reply` (ela responde) ou `delegated` (um delegado dela).
+ */
 export type ExecutionKind = Row["kind"];
 
 /**
@@ -86,7 +92,13 @@ export function createExecutions(deps: {
       if (!next) return undefined;
       const [claimed] = await tx
         .update(executions)
-        .set({ state: "running", step: "writing", since: clock.now(), attempt: sql`${executions.attempt} + 1` })
+        .set({
+          state: "running",
+          // O roteamento é o passo "decidindo"; o resto, "escrevendo".
+          step: sql`case when ${executions.kind} = 'route' then 'deciding' else 'writing' end`,
+          since: clock.now(),
+          attempt: sql`${executions.attempt} + 1`,
+        })
         .where(eq(executions.id, next.id))
         .returning();
       return claimed;
@@ -126,13 +138,9 @@ export function createExecutions(deps: {
     await publish(job.id);
 
     const [agent] = await db.select().from(agents).where(eq(agents.id, job.agentId));
-    const context = await buildContext(db, agent!, job.originMessageId, { kind: job.kind });
-    let text = "";
-    let end: TerminalModelEvent | undefined;
-    for await (const event of model.run({ model: agent!.model, ...context, payer }, signal)) {
-      if (event.type === "text") text += event.text;
-      else if (event.type !== "thinking" && event.type !== "api_retry") end = event;
-    }
+    if (job.kind === "route") return route(job, agent!, payer, signal);
+    const context = await buildContext(db, agent!, job.originMessageId, await callOf(job));
+    const { text, end } = await complete({ model: agent!.model, ...context, payer }, signal);
     if (signal.aborted) return; // parou no meio (reinício): continua "em andamento" até a próxima subida
 
     if (end?.type !== "done") return finish(job, "failed", { reason: failureReason(end) });
@@ -152,6 +160,54 @@ export function createExecutions(deps: {
     events.publish(await audienceOf(db, channel!), { type: "message.created", message: replyDto });
     await reading.messageCreated(replyDto);
     await finish(job, "done", { replyMessageId: reply.id });
+  }
+
+  /** Roda um pedido até o fim: o texto inteiro e o evento que o encerrou. */
+  async function complete(request: ModelRequest, signal: AbortSignal) {
+    let text = "";
+    let end: TerminalModelEvent | undefined;
+    for await (const event of model.run(request, signal)) {
+      if (event.type === "text") text += event.text;
+      else if (event.type !== "thinking" && event.type !== "api_retry") end = event;
+    }
+    return { text, end };
+  }
+
+  /** Por que o Agente foi chamado (o preâmbulo do contexto). */
+  async function callOf(job: Row): Promise<Call> {
+    if (job.kind === "mention" || job.kind === "dm") return { kind: job.kind };
+    const outcome = await outcomeOf(db, job.originMessageId);
+    if (job.kind === "reply") return { kind: "reply", reason: outcome?.reason ?? "" };
+    const cover = outcome?.delegates.find((d) => d.agent.id === job.agentId)?.cover ?? "";
+    return { kind: "delegated", by: outcome?.by.displayName ?? "A Articuladora", cover };
+  }
+
+  /**
+   * O roteamento (Spec, módulo 4): a Articuladora dá o Desfecho com o modelo barato fixo, pago
+   * como qualquer execução dela. Depois de gravado e anunciado, "responder" põe na fila a
+   * resposta dela e "delegar" a de cada delegado; quem entra na fila mantém a hora de chegada.
+   */
+  async function route(job: Row, articuladora: Agent, payer: Payer, signal: AbortSignal) {
+    const { team, ...request } = await buildRouting(db, articuladora, job.originMessageId);
+    const { text, end } = await complete(
+      { model: ROUTING_MODEL, ...request, output: { schema: ROUTING_SCHEMA }, payer },
+      signal,
+    );
+    if (signal.aborted) return;
+    if (end?.type !== "done") return finish(job, "failed", { reason: failureReason(end) });
+    const decided = parseDecision(text, team);
+    if (!decided) return finish(job, "failed", { reason: "a Articuladora não devolveu um Desfecho válido" });
+
+    const origin = { id: job.originMessageId, channelId: job.channelId };
+    const outcome = await recordOutcome(db, origin, decided, clock.now());
+    const [channel] = await db.select().from(channels).where(eq(channels.id, job.channelId));
+    events.publish(await audienceOf(db, channel!), { type: "outcome.created", outcome });
+    const next =
+      decided.decision === "reply"
+        ? [{ agent: articuladora, kind: "reply" as const }]
+        : decided.delegates.map((d) => ({ agent: { id: d.agentId }, kind: "delegated" as const }));
+    await insert(origin, next, job.arrivedAt);
+    await finish(job, "done");
   }
 
   // ---------- o trabalhador ----------
@@ -207,7 +263,12 @@ export function createExecutions(deps: {
     }
   }
 
-  const enqueue: Executions["enqueue"] = async (origin, calls) => {
+  /** Põe as chamadas na fila, chegando em `arrivedAt`, e acorda o trabalhador. */
+  async function insert(
+    origin: { id: string; channelId: string },
+    calls: readonly { agent: Pick<Agent, "id">; kind: ExecutionKind }[],
+    arrivedAt: Date,
+  ) {
     if (calls.length === 0) return;
     const now = clock.now();
     const rows = calls.map(({ agent, kind }) => ({
@@ -218,12 +279,14 @@ export function createExecutions(deps: {
       agentId: agent.id,
       state: "queued" as const,
       since: now,
-      arrivedAt: now,
+      arrivedAt,
     }));
     await db.insert(executions).values(rows);
     for (const r of rows) await publish(r.id);
     wake();
-  };
+  }
+
+  const enqueue: Executions["enqueue"] = (origin, calls) => insert(origin, calls, clock.now());
 
   return {
     enqueue,
@@ -270,6 +333,7 @@ async function selectDtos(db: Db, where: SQL | undefined): Promise<ExecutionDto[
     .orderBy(asc(executions.arrivedAt), asc(executions.seq));
   return rows.map(({ e, agentName, agentPhoto }) => ({
     id: e.id,
+    kind: e.kind,
     channelId: e.channelId,
     originMessageId: e.originMessageId,
     agent: { id: e.agentId, displayName: agentName, photo: agentPhoto },

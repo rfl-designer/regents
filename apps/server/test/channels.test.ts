@@ -33,7 +33,11 @@ describe("Canais públicos", () => {
       kind: "public",
       instructions: "",
       recentMessages: 30,
-      participants: [{ kind: "member", id: eu.id, displayName: "Bruno" }],
+      // A Articuladora está em todo Canal (ADR 0004).
+      participants: [
+        { kind: "member", id: eu.id, displayName: "Bruno" },
+        { kind: "agent", id: expect.any(String), displayName: "Sophya", photo: null },
+      ],
     });
     expect((await canais(t, juliana)).map((c) => c.name)).toEqual(["geral", "vendas"]);
     expect((await canais(t, bruno)).find((c) => c.name === "vendas")).toEqual(vendas);
@@ -50,7 +54,10 @@ describe("Canais públicos", () => {
 
     expect(res.status).toBe(200);
     const depois: ChannelDto = await res.json();
-    expect(depois.participants.map((p) => p.displayName)).toEqual(["Bruno", "Carla"]);
+    expect(depois.participants.filter((p) => p.kind === "member").map((p) => p.displayName)).toEqual([
+      "Bruno",
+      "Carla",
+    ]);
     expect((await daJuliana.next("channel.updated")).channel).toEqual(depois);
     expect((await t.as(carla).post(`/api/channels/${vendas.id}/join`)).status).toBe(200);
   });
@@ -64,7 +71,10 @@ describe("Canais públicos", () => {
     await t.as(bruno).post(`/api/channels/${vendas.id}/messages`, { body: "cheguei" });
 
     const [, lista] = await canais(t, juliana);
-    expect(lista!.participants.map((p) => p.displayName)).toEqual(["Juliana", "Bruno"]);
+    expect(lista!.participants.filter((p) => p.kind === "member").map((p) => p.displayName)).toEqual([
+      "Juliana",
+      "Bruno",
+    ]);
   });
 
   test("o primeiro Admin já participa do Canal inicial", async () => {
@@ -73,7 +83,10 @@ describe("Canais públicos", () => {
 
     const [geral] = await canais(t, juliana);
 
-    expect(geral!.participants).toEqual([{ kind: "member", id: me.id, displayName: "Juliana" }]);
+    expect(geral!.participants).toEqual([
+      { kind: "member", id: me.id, displayName: "Juliana" },
+      { kind: "agent", id: expect.any(String), displayName: "Sophya", photo: null },
+    ]);
   });
 
   test("o nome do Canal é obrigatório e único, sem diferença de maiúsculas", async () => {
@@ -161,7 +174,10 @@ describe("Canais privados", () => {
     expect(res.status).toBe(200);
     const atualizado: ChannelDto = await res.json();
 
-    expect(atualizado.participants.map((p) => p.displayName)).toEqual(["Bruno", "Carla"]);
+    expect(atualizado.participants.filter((p) => p.kind === "member").map((p) => p.displayName)).toEqual([
+      "Bruno",
+      "Carla",
+    ]);
     expect((await abaDaCarla.next("channel.updated")).channel).toEqual(atualizado);
     expect((await canais(t, carla)).map((c) => c.name)).toEqual(["geral", "diretoria"]);
     const historico = await (await t.as(carla).get(`/api/channels/${diretoria.id}/messages`)).json();

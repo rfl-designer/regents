@@ -116,21 +116,31 @@ describe("Menção a um Agente pela Chave", () => {
     expect(mensagens).toEqual([origem]);
   });
 
-  test("mensagem sem Menção não chama Agente nenhum", async () => {
+  test("mensagem sem Menção não chama o Agente: vai ao roteamento da Articuladora", async () => {
     const t = await testApp();
-    const { geral } = await workspaceComFaro(t);
+    const { faro, geral } = await workspaceComFaro(t);
     const aba = await t.socket(juliana);
 
     const semMencao = await enviar(t, geral.id, "Faro é bom, mas ninguém chamou. email@Faro também não.");
     const comMencao = await enviar(t, geral.id, "Agora sim, @Faro.");
 
-    // A primeira execução que chega é a da segunda mensagem: a primeira não gerou nenhuma.
-    expect((await aba.next("execution.updated")).execution.originMessageId).toBe(comMencao.id);
-    expect(semMencao.id).not.toBe(comMencao.id);
-    await aba.next("message.created");
-    await aba.next("message.created");
-    await aba.next("message.created");
-    expect(t.anthropic.requests).toHaveLength(1);
+    // A primeira mensagem não chama o Faro; ela recebe o Desfecho da Articuladora (o padrão do falso: nenhum).
+    expect((await aba.next("execution.updated")).execution).toMatchObject({
+      originMessageId: semMencao.id,
+      kind: "route",
+    });
+    expect((await aba.next("execution.updated")).execution).toMatchObject({
+      originMessageId: comMencao.id,
+      kind: "mention",
+      agent: { id: faro.id },
+    });
+    await eventually("as duas execuções terminarem", async () => {
+      const abertas: ExecutionDto[] = await (await t.as(juliana).get(`/api/channels/${geral.id}/executions`)).json();
+      return abertas.length === 0 || undefined;
+    });
+    const doFaro = t.anthropic.requests.filter((r) => !r.body.output_config);
+    expect(doFaro).toHaveLength(1);
+    expect(JSON.stringify(doFaro[0]!.body.messages)).toContain("Agora sim, @Faro.");
   });
 
   test("a resposta continua pendente e sai depois que o servidor reinicia", async () => {
@@ -220,10 +230,15 @@ describe("Menção a um Agente pelo identificador de Menção", () => {
     expect(faro.handle).toBe("faro2");
     expect(paraPessoa.mentions).toEqual([{ kind: "member", id: doFaroPessoa.id }]);
     expect(paraAgente.mentions).toEqual([{ kind: "agent", id: faro.id }]);
-    // Só a segunda mensagem gera execução.
-    expect((await aba.next("execution.updated")).execution.originMessageId).toBe(paraAgente.id);
-    await t.anthropic.waitForRequests(1);
-    expect(t.anthropic.requests).toHaveLength(1);
+    // Só a segunda mensagem chama o Faro; a primeira vai ao roteamento da Articuladora.
+    expect((await aba.next("execution.updated")).execution).toMatchObject({
+      originMessageId: paraPessoa.id,
+      kind: "route",
+    });
+    expect((await aba.next("execution.updated")).execution).toMatchObject({
+      originMessageId: paraAgente.id,
+      kind: "mention",
+    });
   });
 });
 
