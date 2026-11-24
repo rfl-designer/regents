@@ -1,12 +1,12 @@
 /**
  * O app do e2e com os dublês nas pontas: sobe a Messages API falsa (que responde devagar, para a
- * bolha "escrevendo" ficar à vista) e o servidor de verdade apontado para ela, com uma pasta de
- * segredos temporária. O runner do e2e chama `bun serve.ts` e encerra com SIGTERM.
+ * bolha "escrevendo" ficar à vista) e o servidor de verdade apontado para ela, com uma chave
+ * mestra temporária. O runner do e2e chama `bun serve.ts` e encerra com SIGTERM.
  *
  * Variáveis: as do servidor (PORT, HOST...) passam direto; `FAKE_MESSAGES_API_DELAY_MS` é a
  * espera entre pedaços da resposta (padrão 400 ms).
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { startFakeMessagesApi } from "../apps/server/test/fakes/messages-api";
@@ -16,9 +16,11 @@ const anthropic = await startFakeMessagesApi({
   defaultReply: () => ({ text: "Oi! Tudo certo por aqui: o prazo é sexta-feira.", delayMs }),
 });
 const secretsDir = mkdtempSync(join(tmpdir(), "shearim-e2e-secrets-"));
+const masterKeyFile = join(secretsDir, "master_key");
+writeFileSync(masterKeyFile, Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex"), { mode: 0o600 });
 
 const server = Bun.spawn(["bun", resolve(import.meta.dir, "../apps/server/src/main.ts"), "serve"], {
-  env: { ...process.env, SHEARIM_ANTHROPIC_BASE_URL: anthropic.url, SHEARIM_SECRETS_DIR: secretsDir },
+  env: { ...process.env, SHEARIM_ANTHROPIC_BASE_URL: anthropic.url, SHEARIM_MASTER_KEY_FILE: masterKeyFile },
   stdio: ["inherit", "inherit", "inherit"],
 });
 

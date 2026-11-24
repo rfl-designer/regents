@@ -1,148 +1,9 @@
 {
-  "id": "963b5ce9-3530-40ac-b2c9-037dcdb2358f",
+  "id": "8c2014c3-a143-4aec-a02c-ec3599e29916",
   "prevId": "1252e8bd-3b1b-47c4-8040-42f94a532d23",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.agents": {
-      "name": "agents",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "photo": {
-          "name": "photo",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
-        },
-        "instructions": {
-          "name": "instructions",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
-        },
-        "model": {
-          "name": "model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "agents_name_lower_unique": {
-          "name": "agents_name_lower_unique",
-          "columns": [
-            {
-              "expression": "lower(\"name\")",
-              "asc": true,
-              "isExpression": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.channel_agents": {
-      "name": "channel_agents",
-      "schema": "",
-      "columns": {
-        "channel_id": {
-          "name": "channel_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "agent_id": {
-          "name": "agent_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "added_at": {
-          "name": "added_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "channel_agents_channel_id_channels_id_fk": {
-          "name": "channel_agents_channel_id_channels_id_fk",
-          "tableFrom": "channel_agents",
-          "tableTo": "channels",
-          "columnsFrom": [
-            "channel_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "channel_agents_agent_id_agents_id_fk": {
-          "name": "channel_agents_agent_id_agents_id_fk",
-          "tableFrom": "channel_agents",
-          "tableTo": "agents",
-          "columnsFrom": [
-            "agent_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "channel_agents_channel_id_agent_id_pk": {
-          "name": "channel_agents_channel_id_agent_id_pk",
-          "columns": [
-            "channel_id",
-            "agent_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.channel_participants": {
       "name": "channel_participants",
       "schema": "",
@@ -285,8 +146,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.executions": {
-      "name": "executions",
+    "public.join_requests": {
+      "name": "join_requests",
       "schema": "",
       "columns": {
         "id": {
@@ -295,144 +156,96 @@
           "primaryKey": true,
           "notNull": true
         },
-        "seq": {
-          "name": "seq",
-          "type": "bigint",
+        "tailnet_user_id": {
+          "name": "tailnet_user_id",
+          "type": "text",
           "primaryKey": false,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "executions_seq_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "9223372036854775807",
-            "cache": "1",
-            "cycle": false
-          }
+          "notNull": true
         },
-        "kind": {
-          "name": "kind",
-          "type": "execution_kind",
+        "login": {
+          "name": "login",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "profile_pic_url": {
+          "name": "profile_pic_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "device": {
+          "name": "device",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sharee": {
+          "name": "sharee",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "join_request_status",
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
-        "channel_id": {
-          "name": "channel_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "origin_message_id": {
-          "name": "origin_message_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "agent_id": {
-          "name": "agent_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "state": {
-          "name": "state",
-          "type": "execution_state",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "step": {
-          "name": "step",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "since": {
-          "name": "since",
+        "created_at": {
+          "name": "created_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
         },
-        "attempt": {
-          "name": "attempt",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "payer": {
-          "name": "payer",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "reason": {
-          "name": "reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "arrived_at": {
-          "name": "arrived_at",
+        "decided_at": {
+          "name": "decided_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
-        "reply_message_id": {
-          "name": "reply_message_id",
+        "decided_by_member_id": {
+          "name": "decided_by_member_id",
           "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "finished_at": {
-          "name": "finished_at",
-          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         }
       },
       "indexes": {
-        "executions_state_arrived_at_seq_index": {
-          "name": "executions_state_arrived_at_seq_index",
+        "join_requests_one_pending": {
+          "name": "join_requests_one_pending",
           "columns": [
             {
-              "expression": "state",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "arrived_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "seq",
+              "expression": "tailnet_user_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
-          "isUnique": false,
+          "isUnique": true,
+          "where": "\"join_requests\".\"status\" = 'pending'",
           "concurrently": false,
           "method": "btree",
           "with": {}
         },
-        "executions_channel_id_state_index": {
-          "name": "executions_channel_id_state_index",
+        "join_requests_tailnet_user_id_created_at_index": {
+          "name": "join_requests_tailnet_user_id_created_at_index",
           "columns": [
             {
-              "expression": "channel_id",
+              "expression": "tailnet_user_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             },
             {
-              "expression": "state",
+              "expression": "created_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -445,51 +258,12 @@
         }
       },
       "foreignKeys": {
-        "executions_channel_id_channels_id_fk": {
-          "name": "executions_channel_id_channels_id_fk",
-          "tableFrom": "executions",
-          "tableTo": "channels",
+        "join_requests_decided_by_member_id_members_id_fk": {
+          "name": "join_requests_decided_by_member_id_members_id_fk",
+          "tableFrom": "join_requests",
+          "tableTo": "members",
           "columnsFrom": [
-            "channel_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "executions_origin_message_id_messages_id_fk": {
-          "name": "executions_origin_message_id_messages_id_fk",
-          "tableFrom": "executions",
-          "tableTo": "messages",
-          "columnsFrom": [
-            "origin_message_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "executions_agent_id_agents_id_fk": {
-          "name": "executions_agent_id_agents_id_fk",
-          "tableFrom": "executions",
-          "tableTo": "agents",
-          "columnsFrom": [
-            "agent_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "executions_reply_message_id_messages_id_fk": {
-          "name": "executions_reply_message_id_messages_id_fk",
-          "tableFrom": "executions",
-          "tableTo": "messages",
-          "columnsFrom": [
-            "reply_message_id"
+            "decided_by_member_id"
           ],
           "columnsTo": [
             "id"
@@ -599,19 +373,7 @@
           "name": "author_member_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
-        },
-        "author_agent_id": {
-          "name": "author_agent_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "origin_message_id": {
-          "name": "origin_message_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "body": {
           "name": "body",
@@ -675,86 +437,12 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
-        },
-        "messages_author_agent_id_agents_id_fk": {
-          "name": "messages_author_agent_id_agents_id_fk",
-          "tableFrom": "messages",
-          "tableTo": "agents",
-          "columnsFrom": [
-            "author_agent_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "messages_origin_message_id_messages_id_fk": {
-          "name": "messages_origin_message_id_messages_id_fk",
-          "tableFrom": "messages",
-          "tableTo": "messages",
-          "columnsFrom": [
-            "origin_message_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "messages_um_autor": {
-          "name": "messages_um_autor",
-          "value": "num_nonnulls(\"messages\".\"author_member_id\", \"messages\".\"author_agent_id\") = 1"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.workspace_settings": {
-      "name": "workspace_settings",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "default": 1
-        },
-        "key_ciphertext": {
-          "name": "key_ciphertext",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "key_iv": {
-          "name": "key_iv",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "key_updated_at": {
-          "name": "key_updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "workspace_settings_uma_linha": {
-          "name": "workspace_settings_uma_linha",
-          "value": "\"workspace_settings\".\"id\" = 1"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     }
   },
@@ -767,22 +455,13 @@
         "private"
       ]
     },
-    "public.execution_kind": {
-      "name": "execution_kind",
+    "public.join_request_status": {
+      "name": "join_request_status",
       "schema": "public",
       "values": [
-        "mention"
-      ]
-    },
-    "public.execution_state": {
-      "name": "execution_state",
-      "schema": "public",
-      "values": [
-        "queued",
-        "running",
-        "done",
-        "failed",
-        "not_acting"
+        "pending",
+        "approved",
+        "refused"
       ]
     },
     "public.member_role": {

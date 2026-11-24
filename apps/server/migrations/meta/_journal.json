@@ -19,8 +19,29 @@
     {
       "idx": 2,
       "version": "7",
-      "when": 1795515320860,
-      "tag": "0002_agentes-chave-e-execucoes",
+      "when": 1795515004087,
+      "tag": "0002_join_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795515272217,
+      "tag": "0003_contas",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795515736102,
+      "tag": "0004_dms-entre-pessoas-e-em-grupo",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795516284920,
+      "tag": "0005_agentes-chave-e-execucoes",
       "breakpoints": true
     }
   ]

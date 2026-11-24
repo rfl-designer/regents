@@ -1,15 +1,21 @@
-import type { ChannelDto } from "@shearim/contracts";
-import { type FormEvent, useState } from "react";
+import type { ChannelDto, DmDto, MeDto, MemberSummaryDto } from "@shearim/contracts";
+import { type FormEvent, useEffect, useState } from "react";
 import { ApiFailure, api } from "./api";
+import { dmTitle } from "./DmView";
 
 interface Props {
+  me: MeDto;
   channels: ChannelDto[];
+  dms: DmDto[];
+  /** A conversa aberta (Canal ou DM: os ids não se repetem entre os dois). */
   selectedId: string | null;
   isAdmin: boolean;
   /** Qual tela do Admin está aberta, se alguma. */
   adminView: AdminView | null;
   onOpen(id: string): void;
   onCreated(channel: ChannelDto): void;
+  /** Uma DM foi aberta (nova ou a que já existia). */
+  onDmOpened(dm: DmDto): void;
   onOpenAdmin(view: AdminView): void;
 }
 
@@ -21,9 +27,10 @@ const ADMIN_LINKS: [AdminView, string][] = [
   ["key", "Chave do Workspace"],
 ];
 
-/** A lista de conversas: os Canais que o Membro vê (as DMs do #18 entram aqui, em outra seção). */
+/** A lista de conversas: os Canais que o Membro vê e, numa seção à parte, as DMs dele. */
 export function Sidebar(props: Props) {
   const [creating, setCreating] = useState(false);
+  const [openingDm, setOpeningDm] = useState(false);
 
   return (
     <nav className="sidebar" aria-label="Conversas">
@@ -59,6 +66,35 @@ export function Sidebar(props: Props) {
       ) : (
         <button type="button" className="link" onClick={() => setCreating(true)}>
           + Novo Canal
+        </button>
+      )}
+      <h2>Mensagens diretas</h2>
+      <ul aria-label="DMs">
+        {props.dms.map((d) => (
+          <li key={d.id}>
+            <button
+              type="button"
+              className="conversation"
+              aria-current={d.id === props.selectedId ? "page" : undefined}
+              onClick={() => props.onOpen(d.id)}
+            >
+              {dmTitle(d, props.me)}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {openingDm ? (
+        <NewDm
+          me={props.me}
+          onCancel={() => setOpeningDm(false)}
+          onOpened={(dm) => {
+            setOpeningDm(false);
+            props.onDmOpened(dm);
+          }}
+        />
+      ) : (
+        <button type="button" className="link" onClick={() => setOpeningDm(true)}>
+          + Nova DM
         </button>
       )}
       {props.isAdmin &&
@@ -118,6 +154,68 @@ function NewChannel({ onCancel, onCreated }: { onCancel(): void; onCreated(chann
       <div className="row">
         <button type="submit" disabled={busy || !name.trim()}>
           Criar
+        </button>
+        <button type="button" className="link" onClick={onCancel}>
+          Cancelar
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** Escolher com quem conversar: uma pessoa abre uma DM; várias, uma DM em grupo. */
+function NewDm({ me, onCancel, onOpened }: { me: MeDto; onCancel(): void; onOpened(dm: DmDto): void }) {
+  const [members, setMembers] = useState<MemberSummaryDto[] | null>(null);
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.members().then(
+      (list) => setMembers(list.filter((m) => m.id !== me.id)),
+      () => setError("Não foi possível carregar os Membros. Tente de novo."),
+    );
+  }, [me.id]);
+
+  function toggle(id: string) {
+    setChosen((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (chosen.size === 0 || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      onOpened(await api.openDm([...chosen]));
+    } catch (err) {
+      const body = err instanceof ApiFailure ? err.body : null;
+      setError(body && "message" in body ? body.message : "Não foi possível abrir a DM. Tente de novo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="new-channel" onSubmit={submit} aria-label="Nova DM">
+      {members?.length === 0 && <p className="hint">Ainda não há outras pessoas no Workspace.</p>}
+      {members?.map((m) => (
+        <label key={m.id}>
+          <input type="checkbox" checked={chosen.has(m.id)} onChange={() => toggle(m.id)} /> {m.displayName}
+        </label>
+      ))}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="row">
+        <button type="submit" disabled={busy || chosen.size === 0}>
+          {chosen.size > 1 ? "Abrir DM em grupo" : "Abrir DM"}
         </button>
         <button type="button" className="link" onClick={onCancel}>
           Cancelar

@@ -21,9 +21,11 @@ export const MEMORY = "memory://";
  * Com `DATABASE_URL`, fala com o Postgres (produção, compose).
  * Sem ela, usa um PGlite em disco em `pgliteDir` (só para `bun run dev`), ou em memória com `MEMORY`.
  */
-export function connect(env: { DATABASE_URL?: string; pgliteDir: string }): Connection {
+export function connect(env: { DATABASE_URL?: string; DATABASE_PASSWORD?: string; pgliteDir: string }): Connection {
   if (env.DATABASE_URL) {
-    const sql = postgres(env.DATABASE_URL, { max: 10, onnotice: () => {} });
+    // A senha pode vir à parte (do segredo do compose), para não morar na URL.
+    const password = env.DATABASE_PASSWORD ? { password: env.DATABASE_PASSWORD } : {};
+    const sql = postgres(env.DATABASE_URL, { max: 10, onnotice: () => {}, ...password });
     const db = drizzlePostgres(sql, { schema, casing: "snake_case" });
     return {
       db,

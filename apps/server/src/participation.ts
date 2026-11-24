@@ -1,4 +1,4 @@
-import type { ParticipantDto } from "@shearim/contracts";
+import type { ConversationKind, ParticipantDto } from "@shearim/contracts";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { type Db, schema } from "./db/client";
 import type { Audience } from "./events";
@@ -6,13 +6,13 @@ import type { Audience } from "./events";
 const { channelAgents, channelParticipants, members, agents } = schema;
 
 /**
- * O que a participação precisa saber de uma conversa: o id e se é aberta a todo Membro.
- * Hoje é um Canal (público ou privado). Uma DM (#18) é uma conversa fechada como o
- * Canal privado: só os participantes veem e recebem os eventos.
+ * O que a participação precisa saber de uma conversa: o id e o tipo.
+ * Só o Canal público é aberto a todo Membro. Canal privado e DM (`dm`, `group`) são fechados:
+ * só os participantes veem e recebem os eventos.
  */
 export interface Conversation {
   id: string;
-  kind: "public" | "private";
+  kind: ConversationKind;
 }
 
 /**

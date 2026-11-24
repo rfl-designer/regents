@@ -1,5 +1,5 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": { "lib": ["ES2023", "DOM"], "types": ["bun"] },
-  "include": ["e2e.config.ts", "serve.ts", "tests"]
+  "include": ["e2e.config.ts", "serve.ts", "tests", "support"]
 }

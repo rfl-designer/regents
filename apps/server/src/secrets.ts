@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname } from "node:path";
 
 /**
  * Cifra e decifra segredos guardados no banco (a Chave do Workspace) com a chave mestra
@@ -39,24 +39,35 @@ export async function secretBox(masterKey: Uint8Array): Promise<SecretBox> {
   };
 }
 
-/** Nome do arquivo da chave mestra dentro da pasta de segredos: 32 bytes em base64. */
-export const MASTER_KEY_FILE = "master_key";
+/** 32 bytes em hex (o que o `deploy/setup.sh` grava, `openssl rand -hex 32`) ou em base64. */
+export function parseMasterKey(text: string): Uint8Array {
+  const t = text.trim();
+  const key = /^[0-9a-f]{64}$/i.test(t) ? new Uint8Array(Buffer.from(t, "hex")) : unb64(t);
+  if (key.byteLength !== 32) throw new Error("a chave mestra precisa de 32 bytes, em hex ou base64");
+  return key;
+}
 
 /**
- * Lê a chave mestra de `<dir>/master_key` (32 bytes em base64, como `openssl rand -base64 32`).
- * Se o arquivo não existe, gera um (0600) e avisa: o setup da Instalação (#37) já o cria;
- * isto é para o desenvolvimento e o e2e. Sem a mesma chave mestra, a Chave gravada não abre
- * e o Admin precisa gravá-la de novo.
+ * Lê a chave mestra do arquivo (`SHEARIM_MASTER_KEY_FILE`; no compose, `./secrets/master_key`
+ * gerado pelo `deploy/setup.sh`). Com `generate`, um arquivo que falta é criado (0600): só no
+ * desenvolvimento. Sem a mesma chave mestra, a Chave gravada não abre e o Admin a grava de novo.
  */
-export function loadMasterKey(dir: string, log: (msg: string) => void = console.log): Uint8Array {
-  const file = join(dir, MASTER_KEY_FILE);
+export function loadMasterKey(
+  file: string,
+  opts: { generate?: boolean; log?: (msg: string) => void } = {},
+): Uint8Array {
   if (!existsSync(file)) {
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(file, `${b64(crypto.getRandomValues(new Uint8Array(32)))}\n`, { mode: 0o600 });
+    if (!opts.generate) throw new Error(`a chave mestra não existe em ${file}`);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex")}\n`, {
+      mode: 0o600,
+    });
     chmodSync(file, 0o600);
-    log(`shearim: chave mestra nova gerada em ${file}`);
+    (opts.log ?? console.log)(`shearim: chave mestra nova gerada em ${file}`);
   }
-  const key = unb64(readFileSync(file, "utf8").trim());
-  if (key.byteLength !== 32) throw new Error(`${file} não tem uma chave de 32 bytes em base64.`);
-  return key;
+  try {
+    return parseMasterKey(readFileSync(file, "utf8"));
+  } catch (err) {
+    throw new Error(`${file}: ${(err as Error).message}`);
+  }
 }

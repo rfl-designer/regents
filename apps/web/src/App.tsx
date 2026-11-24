@@ -1,22 +1,22 @@
-import type { ChannelDto, MeDto } from "@shearim/contracts";
+import { type ChannelDto, type DmDto, type MeDto, NO_IDENTITY_TEXT } from "@shearim/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { AgentsSettings, WorkspaceKeySettings } from "./AgentsAdmin";
 import { ApiFailure, api, Offline } from "./api";
 import { ChannelSettings } from "./ChannelSettings";
 import { ChannelView } from "./ChannelView";
+import { DmView } from "./DmView";
+import { EntryView } from "./EntryView";
+import { JoinRequestsPanel } from "./JoinRequestsPanel";
 import { useServerEvents } from "./live";
+import { AccountOffer, MyAccount, useAccount } from "./MyAccount";
 import { type AdminView, Sidebar } from "./Sidebar";
 
 type State =
   | { kind: "loading" }
-  | { kind: "ready"; me: MeDto; channels: ChannelDto[] }
+  | { kind: "ready"; me: MeDto; channels: ChannelDto[]; dms: DmDto[] }
+  /** Tem identidade da tailnet, mas ainda não é Membro: o Pedido de entrada. */
+  | { kind: "entry" }
   | { kind: "blocked"; title: string; detail: string };
-
-const NO_IDENTITY: Record<string, string> = {
-  tagged: "Este aparelho entrou na tailnet com uma tag, e nós com tag não têm uma pessoa por trás.",
-  funnel: "O acesso veio pela internet aberta (Funnel), e o Shearim só atende quem está na tailnet.",
-  unknown: "A tailnet não disse quem é você.",
-};
 
 function explain(err: unknown): State {
   if (err instanceof Offline) {
@@ -26,64 +26,70 @@ function explain(err: unknown): State {
       detail: "Confira se o Tailscale está ligado neste aparelho e tente de novo.",
     };
   }
+  // Em geral quem chega sem identidade já recebe a página estática do servidor;
+  // isto cobre o PWA aberto do cache ou a identidade que some no meio da sessão.
   if (err instanceof ApiFailure && err.body?.error === "no_identity") {
-    return {
-      kind: "blocked",
-      title: "Não sabemos quem é você",
-      detail: `${NO_IDENTITY[err.body.reason] ?? NO_IDENTITY.unknown} Entre pela tailnet com a sua própria conta.`,
-    };
+    const text = NO_IDENTITY_TEXT[err.body.reason] ?? NO_IDENTITY_TEXT.unknown;
+    return { kind: "blocked", title: "Não sabemos quem é você", detail: `${text.why} ${text.whatToDo}` };
   }
-  if (err instanceof ApiFailure && err.body?.error === "not_a_member") {
-    return {
-      kind: "blocked",
-      title: "Você ainda não é Membro deste Workspace",
-      detail: "Peça a um Admin para deixar você entrar.",
-    };
-  }
+  if (err instanceof ApiFailure && err.body?.error === "not_a_member") return { kind: "entry" };
   return { kind: "blocked", title: "Algo deu errado", detail: "Recarregue a página para tentar de novo." };
 }
 
-/** Insere ou troca pelo `id`, mantendo a ordem de criação (Canal novo vai para o fim). */
-function upsert(list: ChannelDto[], channel: ChannelDto) {
-  const i = list.findIndex((c) => c.id === channel.id);
-  if (i < 0) return [...list, channel];
+/** Insere ou troca pelo `id`, mantendo a ordem de criação (conversa nova vai para o fim). */
+function upsert<T extends { id: string }>(list: T[], item: T) {
+  const i = list.findIndex((c) => c.id === item.id);
+  if (i < 0) return [...list, item];
   const next = [...list];
-  next[i] = channel;
+  next[i] = item;
   return next;
 }
 
 export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<"channel" | AdminView>("channel");
+  const [view, setView] = useState<"channel" | "account" | AdminView>("channel");
+  const account = useAccount(state.kind === "ready");
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const me = await api.me();
-        const channels = await api.channels();
-        setState({ kind: "ready", me, channels });
-      } catch (err) {
-        setState(explain(err));
-      }
-    })();
+  const load = useCallback(async () => {
+    try {
+      const me = await api.me();
+      const [channels, dms] = await Promise.all([api.channels(), api.dms()]);
+      setState({ kind: "ready", me, channels, dms });
+    } catch (err) {
+      setState(explain(err));
+    }
   }, []);
 
   const setChannels = useCallback((change: (list: ChannelDto[]) => ChannelDto[]) => {
     setState((s) => (s.kind === "ready" ? { ...s, channels: change(s.channels) } : s));
   }, []);
+  const setDms = useCallback((change: (list: DmDto[]) => DmDto[]) => {
+    setState((s) => (s.kind === "ready" ? { ...s, dms: change(s.dms) } : s));
+  }, []);
 
   useServerEvents((event) => {
     // A cada (re)conexão, a lista do servidor manda: pode ter mudado enquanto a conexão caiu.
-    if (event.type === "ready")
+    if (event.type === "ready") {
       api.channels().then(
         (list) => setChannels(() => list),
         () => {},
       );
+      api.dms().then(
+        (list) => setDms(() => list),
+        () => {},
+      );
+    }
     if (event.type === "channel.updated") setChannels((list) => upsert(list, event.channel));
+    if (event.type === "dm.updated") setDms((list) => upsert(list, event.dm));
   });
 
+  useEffect(() => {
+    void load();
+  }, [load]);
+
   if (state.kind === "loading") return <main className="center">Carregando…</main>;
+  if (state.kind === "entry") return <EntryView onApproved={load} />;
   if (state.kind === "blocked") {
     return (
       <main className="center">
@@ -93,7 +99,8 @@ export function App() {
     );
   }
 
-  const channel = state.channels.find((c) => c.id === selectedId) ?? state.channels[0];
+  const dm = state.dms.find((d) => d.id === selectedId);
+  const channel = dm ? undefined : (state.channels.find((c) => c.id === selectedId) ?? state.channels[0]);
   const open = (id: string) => {
     setSelectedId(id);
     setView("channel");
@@ -103,26 +110,46 @@ export function App() {
       <header className="topbar">
         <strong>Shearim</strong>
         <span className="whoami">Você está como {state.me.displayName}</span>
+        <button
+          type="button"
+          className="link"
+          aria-pressed={view === "account"}
+          onClick={() => setView(view === "account" ? "channel" : "account")}
+        >
+          {view === "account" ? "Voltar à conversa" : "Minha Conta"}
+        </button>
       </header>
+      {state.me.role === "admin" && <JoinRequestsPanel />}
+      {view !== "account" && <AccountOffer state={account} onOpen={() => setView("account")} />}
       <div className="workspace">
         <Sidebar
+          me={state.me}
           channels={state.channels}
-          selectedId={view === "channel" ? (channel?.id ?? null) : null}
+          dms={state.dms}
+          selectedId={view === "channel" ? (dm?.id ?? channel?.id ?? null) : null}
           isAdmin={state.me.role === "admin"}
-          adminView={view === "channel" ? null : view}
+          adminView={view === "channel" || view === "account" ? null : view}
           onOpen={open}
           onCreated={(created) => {
             setChannels((list) => upsert(list, created));
             open(created.id);
           }}
+          onDmOpened={(opened) => {
+            setDms((list) => upsert(list, opened));
+            open(opened.id);
+          }}
           onOpenAdmin={setView}
         />
-        {view === "settings" ? (
+        {view === "account" ? (
+          <MyAccount state={account} />
+        ) : view === "settings" ? (
           <ChannelSettings />
         ) : view === "agents" ? (
           <AgentsSettings />
         ) : view === "key" ? (
           <WorkspaceKeySettings />
+        ) : dm ? (
+          <DmView key={dm.id} dm={dm} me={state.me} />
         ) : channel ? (
           <ChannelView
             key={channel.id}

@@ -1,31 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { ChannelDto, MeDto } from "@shearim/contracts";
-import { schema } from "../src/db/client";
 import { type Person, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
 const bruno = { id: "2002", login: "bruno@exemplo.com", name: "Bruno" };
 const carla = { id: "3003", login: "carla@exemplo.com", name: "Carla" };
-
-/**
- * PROVISÓRIO até o #16 (Pedido de entrada): grava o Membro direto no banco,
- * porque ainda não há como uma segunda pessoa virar Membro pela borda.
- * Quando o #16 chegar, troque por "pedir entrada + Admin aprova".
- * Juliana (a primeira a chegar) vira Admin antes.
- */
-async function membroSemPedidoDeEntrada(t: TestApp, who: Person): Promise<MeDto> {
-  await t.as(juliana).get("/api/me");
-  const id = crypto.randomUUID();
-  await t.db.insert(schema.members).values({
-    id,
-    tailnetUserId: who.id,
-    login: who.login ?? `${who.id}@exemplo.com`,
-    displayName: who.name ?? who.id,
-    role: "member",
-    createdAt: t.clock.now(),
-  });
-  return (await t.as(who).get("/api/me")).json();
-}
 
 async function canais(t: TestApp, who: Person): Promise<ChannelDto[]> {
   const res = await t.as(who).get("/api/channels");
@@ -44,7 +23,7 @@ async function criarCanal(t: TestApp, who: Person, name: string, kind: "public" 
 describe("Canais públicos", () => {
   test("um Membro cria um Canal público com nome, e todo Membro o vê na lista", async () => {
     const t = await testApp();
-    const eu = await membroSemPedidoDeEntrada(t, bruno);
+    const eu = await t.addMember(bruno, { by: juliana });
 
     const vendas = await criarCanal(t, bruno, "vendas", "public");
 
@@ -62,8 +41,8 @@ describe("Canais públicos", () => {
 
   test("qualquer Membro entra num Canal público, e todos ficam sabendo", async () => {
     const t = await testApp();
-    await membroSemPedidoDeEntrada(t, bruno);
-    await membroSemPedidoDeEntrada(t, carla);
+    await t.addMember(bruno, { by: juliana });
+    await t.addMember(carla, { by: juliana });
     const vendas = await criarCanal(t, bruno, "vendas", "public");
     const daJuliana = await t.socket(juliana, "aba da Juliana");
 
@@ -78,7 +57,7 @@ describe("Canais públicos", () => {
 
   test("quem escreve num Canal público de que não participa passa a participar", async () => {
     const t = await testApp();
-    await membroSemPedidoDeEntrada(t, bruno);
+    await t.addMember(bruno, { by: juliana });
     const vendas = await criarCanal(t, juliana, "vendas", "public");
     t.clock.advance(60_000);
 
@@ -114,7 +93,7 @@ describe("Canais públicos", () => {
 describe("Canais privados", () => {
   test("a lista de Membros mostra quem se pode adicionar a um Canal", async () => {
     const t = await testApp();
-    const doBruno = await membroSemPedidoDeEntrada(t, bruno);
+    const doBruno = await t.addMember(bruno, { by: juliana });
     const daJuliana: MeDto = await (await t.as(juliana).get("/api/me")).json();
 
     const res = await t.as(bruno).get("/api/members");
@@ -128,8 +107,8 @@ describe("Canais privados", () => {
 
   test("só quem participa vê um Canal privado; o Admin de fora não o vê nem lê as mensagens", async () => {
     const t = await testApp();
-    await membroSemPedidoDeEntrada(t, bruno);
-    await membroSemPedidoDeEntrada(t, carla);
+    await t.addMember(bruno, { by: juliana });
+    await t.addMember(carla, { by: juliana });
     const diretoria = await criarCanal(t, bruno, "diretoria", "private");
     await t.as(bruno).post(`/api/channels/${diretoria.id}/messages`, { body: "segredo" });
     const path = `/api/channels/${diretoria.id}/messages`;
@@ -148,8 +127,8 @@ describe("Canais privados", () => {
 
   test("quem não participa de um Canal privado não recebe nenhum evento dele pelo WebSocket", async () => {
     const t = await testApp();
-    await membroSemPedidoDeEntrada(t, bruno);
-    await membroSemPedidoDeEntrada(t, carla);
+    await t.addMember(bruno, { by: juliana });
+    await t.addMember(carla, { by: juliana });
     const geral = (await canais(t, juliana))[0]!;
     const daJuliana = await t.socket(juliana, "aba da Juliana (Admin, fora do Canal)");
     const daCarla = await t.socket(carla, "aba da Carla (fora do Canal)");
@@ -172,8 +151,8 @@ describe("Canais privados", () => {
 
   test("quem participa adiciona uma pessoa, que passa a ver o Canal, o histórico e os eventos", async () => {
     const t = await testApp();
-    await membroSemPedidoDeEntrada(t, bruno);
-    const daCarla = await membroSemPedidoDeEntrada(t, carla);
+    await t.addMember(bruno, { by: juliana });
+    const daCarla = await t.addMember(carla, { by: juliana });
     const diretoria = await criarCanal(t, bruno, "diretoria", "private");
     await t.as(bruno).post(`/api/channels/${diretoria.id}/messages`, { body: "antes da Carla" });
     const abaDaCarla = await t.socket(carla, "aba da Carla");
@@ -194,8 +173,8 @@ describe("Canais privados", () => {
 
   test("quem não vê o Canal privado não adiciona ninguém, e só Membro pode ser adicionado", async () => {
     const t = await testApp();
-    await membroSemPedidoDeEntrada(t, bruno);
-    const daCarla = await membroSemPedidoDeEntrada(t, carla);
+    await t.addMember(bruno, { by: juliana });
+    const daCarla = await t.addMember(carla, { by: juliana });
     const diretoria = await criarCanal(t, bruno, "diretoria", "private");
     const path = `/api/channels/${diretoria.id}/participants`;
 
@@ -208,7 +187,7 @@ describe("Canais privados", () => {
 
   test("ninguém entra sozinho num Canal privado", async () => {
     const t = await testApp();
-    await membroSemPedidoDeEntrada(t, bruno);
+    await t.addMember(bruno, { by: juliana });
     const diretoria = await criarCanal(t, bruno, "diretoria", "private");
 
     expect((await t.as(juliana).post(`/api/channels/${diretoria.id}/join`)).status).toBe(404);
@@ -219,7 +198,7 @@ describe("Canais privados", () => {
 describe("Instruções do Canal e N", () => {
   test("o Admin edita as Instruções e o N de um Canal privado de que não participa, sem ler as mensagens", async () => {
     const t = await testApp();
-    await membroSemPedidoDeEntrada(t, bruno);
+    await t.addMember(bruno, { by: juliana });
     const diretoria = await criarCanal(t, bruno, "diretoria", "private");
     await t.as(bruno).post(`/api/channels/${diretoria.id}/messages`, { body: "segredo" });
     const doBruno = await t.socket(bruno, "aba do Bruno");
@@ -260,7 +239,7 @@ describe("Instruções do Canal e N", () => {
 
   test("só o Admin mexe nas Instruções e no N, e o N é um inteiro de 0 para cima", async () => {
     const t = await testApp();
-    await membroSemPedidoDeEntrada(t, bruno);
+    await t.addMember(bruno, { by: juliana });
     const [geral] = await canais(t, juliana);
     const patch = (who: Person, body: unknown) =>
       t.as(who).request(`/api/channel-settings/${geral!.id}`, {

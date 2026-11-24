@@ -50,6 +50,34 @@ interface Props {
 
 export function ChannelView({ channel, me, onChanged }: Props) {
   const joined = channel.participants.some((p) => p.kind === "member" && p.id === me.id);
+  return (
+    <main className="channel">
+      <ChannelHeader channel={channel} joined={joined} onChanged={onChanged} />
+      <Conversation
+        conversationId={channel.id}
+        label={`#${channel.name}`}
+        // Escrever num Canal público é entrar nele; o `channel.updated` também chega, mas a tela não espera.
+        onSent={() => {
+          if (!joined) api.channel(channel.id).then(onChanged, () => {});
+        }}
+      />
+    </main>
+  );
+}
+
+/**
+ * As mensagens e o campo de escrever de uma conversa qualquer (Canal ou DM), pelo id dela.
+ * `label` é como a conversa se chama nos rótulos ("#vendas", "Bruno").
+ */
+export function Conversation({
+  conversationId,
+  label,
+  onSent,
+}: {
+  conversationId: string;
+  label: string;
+  onSent?(): void;
+}) {
   const [messages, setMessages] = useState<MessageDto[] | null>(null);
   const [executions, setExecutions] = useState<Record<string, ExecutionDto>>({});
   const [loadError, setLoadError] = useState(false);
@@ -61,7 +89,7 @@ export function ChannelView({ channel, me, onChanged }: Props) {
 
   // A lista do servidor manda; o que chegou pelo WebSocket depois dela fica no fim.
   const load = useCallback(() => {
-    Promise.all([api.messages(channel.id), api.executions(channel.id)]).then(
+    Promise.all([api.messages(conversationId), api.executions(conversationId)]).then(
       ([list, running]) => {
         setLoadError(false);
         setMessages((prev) => append(list, prev ?? []));
@@ -69,17 +97,17 @@ export function ChannelView({ channel, me, onChanged }: Props) {
       },
       () => setLoadError(true),
     );
-  }, [channel.id]);
+  }, [conversationId]);
 
   useEffect(load, [load]);
 
   useServerEvents((event) => {
     // Cada (re)conexão começa com `ready`: recarrega o que pode ter passado enquanto ela não estava aberta.
     if (event.type === "ready") load();
-    if (event.type === "message.created" && event.message.channelId === channel.id) {
+    if (event.type === "message.created" && event.message.channelId === conversationId) {
       setMessages((prev) => append(prev, [event.message]));
     }
-    if (event.type === "execution.updated" && event.execution.channelId === channel.id) {
+    if (event.type === "execution.updated" && event.execution.channelId === conversationId) {
       setExecutions((prev) => upsertExecution(prev, event.execution));
     }
   });
@@ -97,9 +125,8 @@ export function ChannelView({ channel, me, onChanged }: Props) {
     setSending(true);
     setSendError(false);
     try {
-      const msg = await api.send(channel.id, { body: draft });
-      // Escrever num Canal público é entrar nele; o `channel.updated` também chega, mas a tela não espera.
-      if (!joined) api.channel(channel.id).then(onChanged, () => {});
+      const msg = await api.send(conversationId, { body: draft });
+      onSent?.();
       atEnd.current = true; // quem envia vai para o fim
       setMessages((prev) => append(prev, [msg]));
       setDraft("");
@@ -131,12 +158,11 @@ export function ChannelView({ channel, me, onChanged }: Props) {
   const now = useNow(Object.values(executions).some((e) => e.state === "queued" || e.state === "running"));
 
   return (
-    <main className="channel">
-      <ChannelHeader channel={channel} joined={joined} onChanged={onChanged} />
+    <>
       <ol
         ref={listRef}
         className="messages"
-        aria-label={`Mensagens de #${channel.name}`}
+        aria-label={`Mensagens de ${label}`}
         aria-busy={messages === null && !loadError}
         onScroll={(e) => {
           const el = e.currentTarget;
@@ -176,8 +202,8 @@ export function ChannelView({ channel, me, onChanged }: Props) {
           </p>
         )}
         <textarea
-          aria-label={`Mensagem para #${channel.name}`}
-          placeholder={`Mensagem para #${channel.name}`}
+          aria-label={`Mensagem para ${label}`}
+          placeholder={`Mensagem para ${label}`}
           rows={2}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -187,7 +213,7 @@ export function ChannelView({ channel, me, onChanged }: Props) {
           Enviar
         </button>
       </form>
-    </main>
+    </>
   );
 }
 

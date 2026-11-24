@@ -1,15 +1,22 @@
 import type {
+  AccountDto,
   AgentDto,
   ApiError,
+  ApproveJoinRequestDto,
   ChannelDto,
   ChannelSettingsDto,
   CreateAgentInput,
   CreateChannelInput,
+  DmDto,
   ExecutionDto,
+  JoinRequestAdminDto,
+  JoinRequestDto,
   MeDto,
   MemberSummaryDto,
   MessageDto,
+  MyJoinRequestDto,
   SendMessageInput,
+  SubmitAccountCodeInput,
   UpdateChannelSettingsInput,
   WorkspaceKeyDto,
 } from "@shearim/contracts";
@@ -47,9 +54,16 @@ const json = (method: string, body?: unknown): RequestInit => ({
   body: body === undefined ? undefined : JSON.stringify(body),
 });
 
+const post = { method: "POST" } as const;
+
 export const api = {
   me: () => call<MeDto>("/api/me"),
   members: () => call<MemberSummaryDto[]>("/api/members"),
+  myJoinRequest: () => call<MyJoinRequestDto>("/api/join-request"),
+  requestToJoin: () => call<JoinRequestDto>("/api/join-request", post),
+  joinRequests: () => call<JoinRequestAdminDto[]>("/api/join-requests"),
+  approve: (id: string) => call<ApproveJoinRequestDto>(`/api/join-requests/${id}/approve`, post),
+  refuse: (id: string) => call<JoinRequestAdminDto>(`/api/join-requests/${id}/refuse`, post),
   channels: () => call<ChannelDto[]>("/api/channels"),
   channel: (channelId: string) => call<ChannelDto>(`/api/channels/${channelId}`),
   createChannel: (input: CreateChannelInput) => call<ChannelDto>("/api/channels", json("POST", input)),
@@ -59,10 +73,24 @@ export const api = {
   channelSettings: () => call<ChannelSettingsDto[]>("/api/channel-settings"),
   updateChannelSettings: (channelId: string, input: UpdateChannelSettingsInput) =>
     call<ChannelSettingsDto>(`/api/channel-settings/${channelId}`, json("PATCH", input)),
-  messages: (channelId: string) => call<MessageDto[]>(`/api/channels/${channelId}/messages`),
-  send: (channelId: string, input: SendMessageInput) =>
-    call<MessageDto>(`/api/channels/${channelId}/messages`, json("POST", input)),
-  executions: (channelId: string) => call<ExecutionDto[]>(`/api/channels/${channelId}/executions`),
+  dms: () => call<DmDto[]>("/api/dms"),
+  /** Abre a DM com essas pessoas, ou devolve a que já existe com elas. */
+  openDm: (memberIds: string[]) => call<DmDto>("/api/dms", json("POST", { memberIds })),
+  /** Mensagens de qualquer conversa (Canal ou DM). */
+  messages: (conversationId: string) => call<MessageDto[]>(`/api/conversations/${conversationId}/messages`),
+  send: (conversationId: string, input: SendMessageInput) =>
+    call<MessageDto>(`/api/conversations/${conversationId}/messages`, json("POST", input)),
+  account: {
+    get: () => call<AccountDto>("/api/account"),
+    notNow: () => call<AccountDto>("/api/account/not-now", post),
+    startLinking: () => call<AccountDto>("/api/account/linking", post),
+    submitCode: (input: SubmitAccountCodeInput) => call<AccountDto>("/api/account/linking/code", json("POST", input)),
+    confirm: () => call<AccountDto>("/api/account/linking/confirm", post),
+    cancelLinking: () => call<AccountDto>("/api/account/linking", { method: "DELETE" }),
+    unlink: () => call<AccountDto>("/api/account", { method: "DELETE" }),
+  },
+  /** O Andamento do que ainda não virou resposta numa conversa. */
+  executions: (conversationId: string) => call<ExecutionDto[]>(`/api/conversations/${conversationId}/executions`),
   agents: () => call<AgentDto[]>("/api/agents"),
   createAgent: (input: CreateAgentInput) => call<AgentDto>("/api/agents", json("POST", input)),
   addAgent: (channelId: string, agentId: string) =>

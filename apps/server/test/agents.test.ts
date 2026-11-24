@@ -6,21 +6,9 @@ import { type Person, type TestApp, testApp } from "./harness";
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
 const bruno = { id: "2002", login: "bruno@exemplo.com", name: "Bruno" };
 
-/**
- * PROVISÓRIO até o #16 (Pedido de entrada): grava o Membro direto no banco.
- * Juliana (a primeira a chegar) vira Admin antes.
- */
-async function membroSemPedidoDeEntrada(t: TestApp, who: Person): Promise<MeDto> {
-  await t.as(juliana).get("/api/me");
-  await t.db.insert(schema.members).values({
-    id: crypto.randomUUID(),
-    tailnetUserId: who.id,
-    login: who.login ?? `${who.id}@exemplo.com`,
-    displayName: who.name ?? who.id,
-    role: "member",
-    createdAt: t.clock.now(),
-  });
-  return (await t.as(who).get("/api/me")).json();
+/** Bruno entra pelo Pedido de entrada; Juliana abre o Workspace (vira Admin) e aprova. */
+function membro(t: TestApp, who: Person): Promise<MeDto> {
+  return t.addMember(who, { by: juliana });
 }
 
 const faro = {
@@ -67,7 +55,7 @@ describe("Chave do Workspace", () => {
 
   test("só o Admin vê ou grava a Chave", async () => {
     const t = await testApp();
-    await membroSemPedidoDeEntrada(t, bruno);
+    await membro(t, bruno);
 
     const ver = await t.as(bruno).get("/api/workspace-key");
     const gravar = await t.as(bruno).put("/api/workspace-key", { apiKey: "sk-ant-do-bruno" });
@@ -102,7 +90,7 @@ describe("Agentes", () => {
 
   test("todo Membro vê a descrição dos Agentes, mas as instruções são só do Admin", async () => {
     const t = await testApp();
-    await membroSemPedidoDeEntrada(t, bruno);
+    await membro(t, bruno);
     const criado = await criarAgente(t);
 
     const visto: AgentDto[] = await (await t.as(bruno).get("/api/agents")).json();
@@ -115,7 +103,7 @@ describe("Agentes", () => {
 
   test("só o Admin cria Agentes", async () => {
     const t = await testApp();
-    await membroSemPedidoDeEntrada(t, bruno);
+    await membro(t, bruno);
 
     const res = await t.as(bruno).post("/api/agents", faro);
 
@@ -141,7 +129,7 @@ describe("Agentes", () => {
 describe("Agente num Canal", () => {
   test("um Membro adiciona um Agente a um Canal, e quem vê o Canal fica sabendo", async () => {
     const t = await testApp();
-    await membroSemPedidoDeEntrada(t, bruno);
+    await membro(t, bruno);
     const agente = await criarAgente(t);
     const [geral] = (await (await t.as(bruno).get("/api/channels")).json()) as ChannelDto[];
     const aba = await t.socket(juliana);

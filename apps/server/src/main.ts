@@ -2,16 +2,22 @@
  * Entrypoint do servidor: `bun src/main.ts serve | migrate`.
  *
  * Variáveis:
- * - `SHEARIM_IDENTITY`: `dev` (cookie, só desenvolvimento). O `whois` da tailnet chega no #37.
+ * - `SHEARIM_IDENTITY`: `tailnet` (o `whois` da LocalAPI pelo socket do tailscaled; é o da
+ *   imagem Docker) ou `dev` (cookie, só desenvolvimento).
+ * - `TS_SOCKET`: socket do tailscaled (padrão `/var/run/tailscale/tailscaled.sock`, o do compose).
+ * - `DATABASE_PASSWORD_FILE`: arquivo com a senha do Postgres (o segredo do compose), à parte da URL.
  * - `DATABASE_URL`: Postgres. Sem ela, PGlite em `SHEARIM_PGLITE_DIR` (padrão `.data/pglite`;
  *   `memory://` para um banco em memória que some ao parar).
  * - `HOST` (padrão `0.0.0.0`), `PORT` (padrão `3000`).
  * - `SHEARIM_WEB_DIST`: build do PWA servido em `/` (padrão `apps/web/dist`).
- * - `SHEARIM_SECRETS_DIR`: pasta dos segredos, com a chave mestra em `master_key`
- *   (padrão `.data/secrets`; gerada se faltar).
+ * - `SHEARIM_CLAUDE_BIN`: o binário `claude` das Contas (padrão: `claude` do `PATH`).
+ * - `SHEARIM_ACCOUNTS_DIR`: pasta-raiz das Contas, fora do backup (padrão `.data/accounts`).
+ * - `SHEARIM_MASTER_KEY_FILE`: a chave mestra (32 bytes em hex ou base64), que cifra a Chave do
+ *   Workspace. No compose, `/run/secrets/master_key`. Sem a variável, `.data/secrets/master_key`,
+ *   gerada se faltar (só desenvolvimento).
  * - `SHEARIM_ANTHROPIC_BASE_URL`: a Messages API (padrão: a da Anthropic; o e2e usa a falsa).
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
@@ -19,6 +25,8 @@ import { createApp } from "./app";
 import { systemClock } from "./clock";
 import { connect, MEMORY } from "./db/connect";
 import { createDevIdentity } from "./identity/dev";
+import type { IdentityPort } from "./identity/port";
+import { createWhoisIdentity } from "./identity/whois";
 import { loadMasterKey, secretBox } from "./secrets";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
@@ -28,15 +36,33 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-function identityFromEnv() {
+const DEFAULT_TS_SOCKET = "/var/run/tailscale/tailscaled.sock";
+
+function identityFromEnv(): { identity: IdentityPort; routes?: Hono; describe: string } {
   const mode = process.env.SHEARIM_IDENTITY;
   if (mode === "dev") {
-    return createDevIdentity({ defaultUser: { id: "dev-1", name: "Pessoa Dev" } });
+    const dev = createDevIdentity({ defaultUser: { id: "dev-1", name: "Pessoa Dev" } });
+    return { ...dev, describe: "identidade de desenvolvimento" };
   }
-  fail(
-    `SHEARIM_IDENTITY=${mode || "(vazio)"} não é suportado ainda. Use SHEARIM_IDENTITY=dev; ` +
-      "a identidade pelo whois da tailnet chega com a Instalação (#37).",
-  );
+  if (mode === "tailnet") {
+    const socketPath = process.env.TS_SOCKET || DEFAULT_TS_SOCKET;
+    // Não exige o socket já na subida: o sidecar pode estar subindo. Sem ele, a API responde 503.
+    if (!existsSync(socketPath)) console.warn(`shearim: socket do tailscaled ainda não existe em ${socketPath}`);
+    return {
+      identity: createWhoisIdentity({ socketPath, clock: systemClock }),
+      describe: `whois da tailnet em ${socketPath}`,
+    };
+  }
+  fail(`SHEARIM_IDENTITY=${mode || "(vazio)"} não é suportado. Use "tailnet" (a Instalação) ou "dev".`);
+}
+
+function secretFromFile(path: string | undefined) {
+  if (!path) return undefined;
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch (err) {
+    fail(`não consegui ler o segredo em ${path}: ${String(err)}`);
+  }
 }
 
 /** `memory://` é um PGlite em memória, que some ao parar (o e2e usa para começar do zero). */
@@ -48,6 +74,7 @@ function pgliteDirFromEnv(raw: string | undefined) {
 async function main(command: string | undefined) {
   const conn = connect({
     DATABASE_URL: process.env.DATABASE_URL,
+    DATABASE_PASSWORD: secretFromFile(process.env.DATABASE_PASSWORD_FILE),
     pgliteDir: pgliteDirFromEnv(process.env.SHEARIM_PGLITE_DIR),
   });
 
@@ -59,17 +86,30 @@ async function main(command: string | undefined) {
   }
   if (command !== "serve") fail(`comando desconhecido: ${command ?? "(nenhum)"}. Use "serve" ou "migrate".`);
 
-  const dev = identityFromEnv();
-  const secretsDir = resolve(process.env.SHEARIM_SECRETS_DIR ?? resolve(repoRoot, ".data/secrets"));
-  const secrets = await secretBox(loadMasterKey(secretsDir));
+  const who = identityFromEnv();
+  const masterKeyFile = process.env.SHEARIM_MASTER_KEY_FILE;
+  let secrets: Awaited<ReturnType<typeof secretBox>>;
+  try {
+    secrets = await secretBox(
+      masterKeyFile
+        ? loadMasterKey(resolve(masterKeyFile))
+        : loadMasterKey(resolve(repoRoot, ".data/secrets/master_key"), { generate: true }),
+    );
+  } catch (err) {
+    fail((err as Error).message);
+  }
   await conn.migrate();
-  const { app, websocket, executions } = createApp({
+  const { app, websocket, executions, close } = createApp({
     db: conn.db,
-    identity: dev.identity,
+    identity: who.identity,
     clock: systemClock,
+    accounts: {
+      claudeBin: process.env.SHEARIM_CLAUDE_BIN || Bun.which("claude") || "claude",
+      root: resolve(process.env.SHEARIM_ACCOUNTS_DIR ?? resolve(repoRoot, ".data/accounts")),
+    },
     secrets,
     anthropicBaseUrl: process.env.SHEARIM_ANTHROPIC_BASE_URL || undefined,
-    devRoutes: dev.routes,
+    devRoutes: who.routes,
   });
   executions.start();
 
@@ -89,11 +129,12 @@ async function main(command: string | undefined) {
     fetch: root.fetch,
     websocket,
   });
-  console.log(`shearim: ouvindo em http://${server.hostname}:${server.port} (${conn.describe})`);
+  console.log(`shearim: ouvindo em http://${server.hostname}:${server.port} (${conn.describe}; ${who.describe})`);
 
   const stop = async () => {
     await executions.stop();
     await server.stop();
+    await close();
     await conn.close();
     process.exit(0);
   };
