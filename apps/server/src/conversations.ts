@@ -11,6 +11,7 @@ import type {
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import type { Agent } from "./agents";
+import { addArticuladora } from "./articuladora";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
@@ -18,6 +19,7 @@ import type { ExecutionKind, Executions } from "./executions";
 import type { Member } from "./members";
 import { recordMentions } from "./mentions";
 import { listMessages as listConversationMessages } from "./messages";
+import { outcomesIn } from "./outcomes";
 import { addAgent, addParticipants, audienceOf, canSee, participantsOf } from "./participation";
 import type { Push } from "./push";
 import type { Reading } from "./reading";
@@ -106,6 +108,7 @@ export function conversationRoutes(deps: {
         .values({ id: crypto.randomUUID(), name, kind, createdAt: now })
         .returning();
       await addParticipants(tx, channel!.id, [me.id], now);
+      await addArticuladora(tx, channel!.id, now);
       return channel as Channel;
     });
     if (!created) return c.json({ error: "name_taken", message: `Já existe um Canal chamado #${name}.` }, 409);
@@ -261,6 +264,12 @@ export function conversationRoutes(deps: {
     return c.json(cancelled);
   });
   routes.get("/channels/:id/executions", async (c) => listExecutions(c, await visibleChannel(c)));
+  // Os Desfechos da Articuladora (uma DM não tem: a lista vem vazia).
+  routes.get("/conversations/:id/outcomes", async (c) => {
+    const conversation = await visibleConversation(c);
+    if (!conversation) return c.json({ error: "not_found" }, 404);
+    return c.json(await outcomesIn(db, conversation.id));
+  });
 
   // ---------- Instruções do Canal e N: só o Admin, em qualquer Canal, sem as mensagens ----------
 
@@ -305,29 +314,37 @@ export function conversationRoutes(deps: {
 }
 
 /**
- * Quem age com uma mensagem de pessoa (Spec, módulo 3). Só a mensagem de pessoa passa por aqui:
- * a resposta de um Agente é gravada pela execução, então uma Menção escrita por Agente não dispara nada.
- * - Uma Menção chama o Agente mencionado, em Canal ou DM.
+ * Quem age com uma mensagem de pessoa (Spec, módulos 3 e 4). Só a mensagem de pessoa passa por
+ * aqui: a resposta de um Agente é gravada pela execução, então uma Menção escrita por Agente não
+ * dispara nada.
+ * - Uma Menção chama o Agente mencionado, em Canal ou DM, e pula o roteamento (inclusive `@Sophya`).
  * - Numa DM com Agente, ele responde a cada mensagem, mencionado ou não.
- * - Numa DM entre pessoas ou em grupo, nenhum Agente entra a não ser por Menção.
- * DMs não têm Desfecho. Num Canal, o Desfecho da Articuladora (#22) entra aqui, para as
- * mensagens sem Menção.
+ * - Numa DM entre pessoas ou em grupo, nenhum Agente entra a não ser por Menção. DMs não têm Desfecho.
+ * - Num Canal com outros Agentes além da Articuladora, a mensagem sem Menção vai ao roteamento
+ *   dela, que dá o Desfecho (ADR 0004). Num Canal só com ela, não há Desfecho.
  */
 async function whoActs(
   db: Db,
   conversation: ConversationRow,
   mentioned: readonly Pick<Agent, "id">[],
 ): Promise<{ agent: Pick<Agent, "id">; kind: ExecutionKind }[]> {
-  const own =
-    conversation.kind === "dm"
-      ? await db
-          .select({ id: channelAgents.agentId })
-          .from(channelAgents)
-          .where(eq(channelAgents.channelId, conversation.id))
-      : [];
+  const own = await db
+    .select({ id: channelAgents.agentId, builtin: agents.builtin })
+    .from(channelAgents)
+    .innerJoin(agents, eq(agents.id, channelAgents.agentId))
+    .where(eq(channelAgents.channelId, conversation.id));
+  if (isChannel(conversation)) {
+    if (mentioned.length > 0) return mentioned.map((agent) => ({ agent, kind: "mention" as const }));
+    const articuladora = own.find((a) => a.builtin);
+    const others = own.filter((a) => !a.builtin);
+    return articuladora && others.length > 0 ? [{ agent: articuladora, kind: "route" as const }] : [];
+  }
+  const dmAgents = conversation.kind === "dm" ? own : [];
   return [
-    ...own.map((agent) => ({ agent, kind: "dm" as const })),
-    ...mentioned.filter((a) => !own.some((o) => o.id === a.id)).map((agent) => ({ agent, kind: "mention" as const })),
+    ...dmAgents.map((agent) => ({ agent, kind: "dm" as const })),
+    ...mentioned
+      .filter((a) => !dmAgents.some((o) => o.id === a.id))
+      .map((agent) => ({ agent, kind: "mention" as const })),
   ];
 }
 

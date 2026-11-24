@@ -1,6 +1,13 @@
-import { AGENT_MODELS, type AgentDto, type AgentModel, type CreateAgentInput } from "@shearim/contracts";
-import { asc, eq, getTableColumns } from "drizzle-orm";
+import {
+  AGENT_MODELS,
+  type AgentDto,
+  type AgentModel,
+  type CreateAgentInput,
+  type UpdateAgentInput,
+} from "@shearim/contracts";
+import { and, asc, desc, eq, getTableColumns, ne, sql } from "drizzle-orm";
 import { Hono } from "hono";
+import { withBuiltinText } from "./articuladora";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { Member } from "./members";
@@ -17,6 +24,7 @@ const NAME_MAX = 40;
 /** Uma foto pequena: `data:` URL de imagem com até ~300 KB. */
 const PHOTO = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 const PHOTO_MAX = 400_000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Agentes: o Admin cria; todo Membro vê o nome, a foto, a descrição e o modelo. */
 export function agentRoutes(deps: { db: Db; clock: Clock }) {
@@ -29,7 +37,7 @@ export function agentRoutes(deps: { db: Db; clock: Clock }) {
       .select({ ...getTableColumns(agents), handle: mentionHandles.handle })
       .from(agents)
       .innerJoin(mentionHandles, eq(mentionHandles.agentId, agents.id))
-      .orderBy(asc(agents.createdAt), asc(agents.name));
+      .orderBy(desc(agents.builtin), asc(agents.createdAt), asc(agents.name));
     return c.json(all.map((a) => toAgentDto(a, { admin })));
   });
 
@@ -74,6 +82,75 @@ export function agentRoutes(deps: { db: Db; clock: Clock }) {
     return c.json(toAgentDto(created, { admin: true }), 201);
   });
 
+  /**
+   * O Admin edita um Agente; campo ausente fica. Da Articuladora, só o nome, a foto e o modelo:
+   * a descrição e as instruções dela são do Shearim (`403 builtin_locked`). Trocar o nome troca
+   * o identificador de Menção, pelo mesmo critério da criação.
+   */
+  routes.patch("/agents/:id", async (c) => {
+    if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
+    const id = c.req.param("id");
+    const [current] = UUID.test(id) ? await db.select().from(agents).where(eq(agents.id, id)) : [];
+    if (!current) return c.json({ error: "not_found" }, 404);
+    const input = ((await c.req.json().catch(() => null)) ?? {}) as Partial<Record<keyof UpdateAgentInput, unknown>>;
+    const invalid = (message: string) => c.json({ error: "invalid_input", message }, 400);
+
+    if (current.builtin && (input.description !== undefined || input.instructions !== undefined)) {
+      return c.json(
+        { error: "builtin_locked", message: "A descrição e as instruções da Articuladora são do Shearim." },
+        403,
+      );
+    }
+    const change: Partial<Pick<Agent, "name" | "photo" | "model" | "description" | "instructions">> = {};
+    if (input.name !== undefined) {
+      const name = typeof input.name === "string" ? input.name.trim().replace(/^@+/, "").trim() : "";
+      if (!name) return invalid("Dê um nome ao Agente.");
+      if (name.length > NAME_MAX) return invalid(`O nome do Agente tem no máximo ${NAME_MAX} caracteres.`);
+      change.name = name;
+    }
+    if (input.model !== undefined) {
+      if (!AGENT_MODELS.includes(input.model as AgentModel)) return invalid("Escolha um dos modelos da lista.");
+      change.model = input.model as AgentModel;
+    }
+    if (input.photo !== undefined) {
+      const photo = input.photo;
+      if (photo !== null && (typeof photo !== "string" || !PHOTO.test(photo) || photo.length > PHOTO_MAX)) {
+        return invalid("A foto é uma imagem PNG, JPEG, WebP ou GIF de até 300 KB.");
+      }
+      change.photo = photo as string | null;
+    }
+    for (const field of ["description", "instructions"] as const) {
+      if (input[field] === undefined) continue;
+      if (typeof input[field] !== "string") return invalid(`O campo ${field} é um texto.`);
+      change[field] = field === "description" ? (input[field] as string).trim() : (input[field] as string);
+    }
+
+    const updated = await db.transaction(async (tx) => {
+      if (change.name !== undefined && change.name !== current.name) {
+        const [taken] = await tx
+          .select({ id: agents.id })
+          .from(agents)
+          .where(and(sql`lower(${agents.name}) = lower(${change.name})`, ne(agents.id, current.id)));
+        if (taken) return undefined;
+      }
+      const [row] = Object.keys(change).length
+        ? await tx.update(agents).set(change).where(eq(agents.id, current.id)).returning()
+        : [current];
+      const owner = { kind: "agent", id: current.id } as const;
+      if (change.name !== undefined && change.name !== current.name) {
+        await tx.delete(mentionHandles).where(eq(mentionHandles.agentId, current.id));
+        return { ...row!, handle: await claimHandle(tx, owner, agentHandleBase(change.name)) };
+      }
+      const [{ handle }] = (await tx
+        .select({ handle: mentionHandles.handle })
+        .from(mentionHandles)
+        .where(eq(mentionHandles.agentId, current.id))) as [{ handle: string }];
+      return { ...row!, handle };
+    });
+    if (!updated) return c.json({ error: "name_taken", message: `Já existe um Agente chamado ${change.name}.` }, 409);
+    return c.json(toAgentDto(updated, { admin: true }));
+  });
+
   return routes;
 }
 
@@ -86,7 +163,8 @@ export function agentHandleBase(name: string) {
   return handleBase(name.replace(/\s+/g, ""), "agente");
 }
 
-export function toAgentDto(a: AgentWithHandle, opts: { admin: boolean }): AgentDto {
+export function toAgentDto(row: AgentWithHandle, opts: { admin: boolean }): AgentDto {
+  const a = withBuiltinText(row);
   const dto: AgentDto = {
     id: a.id,
     name: a.name,
@@ -94,6 +172,7 @@ export function toAgentDto(a: AgentWithHandle, opts: { admin: boolean }): AgentD
     photo: a.photo,
     description: a.description,
     model: a.model as AgentModel,
+    builtin: a.builtin,
   };
   if (opts.admin) dto.instructions = a.instructions;
   return dto;
