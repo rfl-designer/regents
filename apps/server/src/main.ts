@@ -31,6 +31,7 @@ import { serveStatic } from "hono/bun";
 import { createApp } from "./app";
 import { systemClock } from "./clock";
 import { connect, MEMORY } from "./db/connect";
+import { limitsFromEnv } from "./executions";
 import { createDevIdentity } from "./identity/dev";
 import type { IdentityPort } from "./identity/port";
 import { createWhoisIdentity } from "./identity/whois";
@@ -204,6 +205,12 @@ async function main(command: string | undefined) {
   await migrateOrFail(conn);
   const vapidContact = process.env.SHEARIM_VAPID_CONTACT || DEV_VAPID_CONTACT;
   if (!/^(mailto:|https:)/.test(vapidContact)) fail(`SHEARIM_VAPID_CONTACT=${vapidContact} não é mailto: nem https:.`);
+  let limits: ReturnType<typeof limitsFromEnv>;
+  try {
+    limits = limitsFromEnv(process.env);
+  } catch (err) {
+    fail((err as Error).message);
+  }
   const shearim = createApp({
     db: conn.db,
     identity: who.identity,
@@ -218,6 +225,8 @@ async function main(command: string | undefined) {
     push: { contact: vapidContact },
     // A seção Instalação: a versão (a tag da imagem), o backup e a chave do nó, com os avisos.
     installation: { version: process.env.SHEARIM_VERSION || "dev", watch: true, nodeKey: who.nodeKey },
+    // Os tetos de concorrência das execuções (2 por Conta, 4 na Chave, 8 processos no host).
+    limits,
   });
   // O par VAPID nasce na primeira subida (e daí em diante é sempre o mesmo, guardado no banco).
   await shearim.push.ensureKeys();

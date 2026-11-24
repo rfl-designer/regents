@@ -571,6 +571,13 @@ export interface ExecutionDto {
    */
   held: boolean;
   /**
+   * "esperando a vez" (Spec, módulo 6, Ordem e Tetos): pronta para sair (em `queued`, ou em
+   * `retrying` com a hora vencida), mas o trabalhador ainda não pôde pô-la para rodar, porque o
+   * mesmo Agente responde antes a outra mensagem da conversa ou porque o teto de quem paga está
+   * cheio (2 respostas por Conta, 4 na Chave, 8 processos no host). Todos veem.
+   */
+  waitingTurn: boolean;
+  /**
    * Só na cópia do autor da mensagem de origem (os outros recebem nulo): o motivo ligado à Conta
    * dele, quando ela explica a fila, a Chave pagando ou "Agentes não agem". Nulo quando a Conta
    * não tem nada a ver com o que se vê.

@@ -11,7 +11,7 @@ import { conversationRoutes } from "./conversations";
 import type { Db } from "./db/client";
 import { dmRoutes } from "./dms";
 import { createEventHub } from "./events";
-import { createExecutions, type ExecutionHooks } from "./executions";
+import { createExecutions, type ExecutionHooks, type ExecutionLimits } from "./executions";
 import type { Identity, IdentityPort } from "./identity/port";
 import { IdentityUnavailableError } from "./identity/whois";
 import { createInstallation, type InstallationConfig } from "./installation/status";
@@ -58,6 +58,8 @@ export interface AppDeps {
   push: PushConfig;
   /** A versão que está rodando e de onde vem o vencimento da chave do nó (seção Instalação). */
   installation?: InstallationConfig;
+  /** Os tetos de concorrência das execuções (padrão: 2 por Conta, 4 na Chave, 8 processos). */
+  limits?: Partial<ExecutionLimits>;
 }
 
 type Env = { Variables: { who: TailnetUser; member: Member } };
@@ -108,7 +110,18 @@ export function createApp(deps: AppDeps) {
   });
   const reading = createReading({ db, clock, events });
   const ledger = createKeyLedger({ db, clock, events, hooks });
-  const executions = createExecutions({ db, clock, events, model, secrets, accounts, hooks, reading, ledger });
+  const executions = createExecutions({
+    db,
+    clock,
+    events,
+    model,
+    secrets,
+    accounts,
+    hooks,
+    reading,
+    ledger,
+    limits: deps.limits,
+  });
   // A Presença avisa o push quando uma conversa fica à vista; o push pergunta a ela antes de mandar.
   const presence = createPresence({ db, events, onOpened: (m, conv) => push.conversationOpened(m, conv) });
   const push = createPush({

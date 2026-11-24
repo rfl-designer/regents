@@ -238,8 +238,9 @@ export function Conversation({
   const pending = new Map<string, ExecutionDto[]>();
   const deciding = new Map<string, ExecutionDto>();
   for (const e of Object.values(executions)) {
-    // O roteamento que espera na fila mostra "⏸ na fila", não "decidindo".
-    if (e.kind === "route" && !e.held && (e.state === "queued" || e.state === "running")) {
+    // O roteamento que espera na fila mostra "⏸ na fila", e o que espera a vez, "esperando a vez":
+    // não "decidindo".
+    if (e.kind === "route" && !e.held && !e.waitingTurn && (e.state === "queued" || e.state === "running")) {
       deciding.set(e.originMessageId, e);
     } else pending.set(e.originMessageId, [...(pending.get(e.originMessageId) ?? []), e]);
   }
@@ -710,8 +711,9 @@ function DelegationLine({ outcome }: { outcome: OutcomeDto }) {
 
 /**
  * O Andamento no lugar onde a resposta vai entrar: a bolha "escrevendo · 0:05" (com "2ª tentativa"
- * e "tentando de novo (n/m)"), a espera da nova tentativa automática, o cartão de falha com
- * "Tentar de novo" (só para quem escreveu: `onRetry`), "Agentes não agem" e o cancelamento.
+ * e "tentando de novo (n/m)"), "esperando a vez", a espera da nova tentativa automática, o cartão
+ * de falha com "Tentar de novo" (só para quem escreveu: `onRetry`), "Agentes não agem" e o
+ * cancelamento.
  */
 function Progress({ execution: e, now, onRetry }: { execution: ExecutionDto; now: number; onRetry?(): Promise<void> }) {
   const name = e.agent.displayName;
@@ -750,6 +752,14 @@ function Progress({ execution: e, now, onRetry }: { execution: ExecutionDto; now
   if (e.state === "cancelled") {
     // Sem motivo, foi quem escreveu; com motivo, o Shearim (ex.: quem escreveu saiu do Workspace).
     return <p className="cancelled">{e.reason ? `cancelada: ${e.reason}` : "cancelada por quem escreveu"}</p>;
+  }
+  if (e.waitingTurn) {
+    // Pronta, mas o Agente ainda responde a outra mensagem ou o teto de quem paga está cheio.
+    return (
+      <p className="queued" role="status" aria-label={`${name} esperando a vez`}>
+        {name} · esperando a vez
+      </p>
+    );
   }
   if (e.state === "retrying") {
     const wait = mmss(e.retryAt ? new Date(e.retryAt).getTime() - now : 0);

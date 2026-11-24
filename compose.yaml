@@ -76,6 +76,11 @@ services:
       SHEARIM_VERSION: ${SHEARIM_VERSION:-local}
       # O dump de antes de migrar e o `restore <arquivo>` (que acha o arquivo pelo nome aqui).
       SHEARIM_BACKUPS_DIR: /backups
+      # Tetos de concorrência das execuções, ajustáveis no `.env` (vazio: 2 por Conta, 4 na Chave,
+      # 8 processos `claude -p` no host).
+      SHEARIM_MAX_PER_ACCOUNT: ${SHEARIM_MAX_PER_ACCOUNT:-}
+      SHEARIM_MAX_ON_KEY: ${SHEARIM_MAX_ON_KEY:-}
+      SHEARIM_MAX_PROCESSES: ${SHEARIM_MAX_PROCESSES:-}
     secrets:
       - postgres_password
       - master_key

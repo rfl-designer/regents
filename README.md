@@ -46,6 +46,9 @@ deploy/release.sh 1.2.3 dist   # empacota a release (o workflow de release roda;
 | `SHEARIM_PG_BIN_DIR` | (o `PATH`) | Pasta do `pg_dump`/`pg_restore`. |
 | `SHEARIM_VERSION` | `dev` | A versão na seção Instalação (a imagem traz a tag). |
 | `SHEARIM_VAPID_CONTACT` | `mailto:shearim@example.com` (só dev) | O `sub` do VAPID do push: `mailto:` com domínio real (a Apple recusa `localhost`). O `deploy/setup.sh` grava no `.env`. |
+| `SHEARIM_MAX_PER_ACCOUNT` | `2` | Respostas ao mesmo tempo pela Conta de um Membro (o roteamento fica fora). No compose, vem do `.env`. |
+| `SHEARIM_MAX_ON_KEY` | `4` | Execuções ao mesmo tempo pela Chave do Workspace (roteamento incluso). |
+| `SHEARIM_MAX_PROCESSES` | `8` | Processos `claude -p` ao mesmo tempo no host: todas as execuções pela Conta, roteamento incluso. Valor que não é inteiro maior que zero impede a subida. |
 
 ## Layout
 
@@ -317,7 +320,7 @@ t.claude.callsOf("auth login")[0]!.env.CLAUDE_CONFIG_DIR;     // o que cada star
 | `POST /api/conversations/:id/messages/:messageId/cancel` | autor da mensagem | cancela, em qualquer passo, o que a mensagem ainda tem aberto (`queued`, `running`, `retrying`) e devolve as canceladas. `403 not_author`, `409 nothing_to_cancel` |
 | `GET`/`PUT /api/workspace-context` | Admin | `{ context }`: o Contexto do Workspace (até 4000 caracteres, `WORKSPACE_CONTEXT_MAX`) |
 
-Uma mensagem de pessoa com `@identificador` de um Agente (qualquer Agente do Workspace, sem diferença de maiúsculas nem acentos), num Canal ou numa DM, é gravada e anunciada; depois, uma execução por Agente mencionado entra na fila (tabela `executions`, `kind: "mention"`). Numa DM com Agente, ele responde a cada mensagem, mencionado ou não (`kind: "dm"`, uma vez só mesmo se mencionado); numa DM entre pessoas ou em grupo, Agente só entra por Menção e não vira participante. DMs não têm Desfecho. Quem decide quem age é `whoActs` em `conversations.ts`; a resposta de um Agente não passa por lá, então uma Menção escrita por Agente não dispara nada. O trabalhador (`executions.start()`, um por processo, uma execução por vez) decide quem paga (a tabela de "Quem paga e fila", abaixo; `choosePayer` e `byPayer` em `executions.ts`), chama a porta de modelo e grava a resposta com `originMessageId` (a resposta ancorada). O Andamento sai como `execution.updated` (`queued` → `running`/`writing` → `done`, `failed` com `reason`, `not_acting` sem Chave, ou `cancelled`); a resposta sai antes como `message.created`.
+Uma mensagem de pessoa com `@identificador` de um Agente (qualquer Agente do Workspace, sem diferença de maiúsculas nem acentos), num Canal ou numa DM, é gravada e anunciada; depois, uma execução por Agente mencionado entra na fila (tabela `executions`, `kind: "mention"`). Numa DM com Agente, ele responde a cada mensagem, mencionado ou não (`kind: "dm"`, uma vez só mesmo se mencionado); numa DM entre pessoas ou em grupo, Agente só entra por Menção e não vira participante. DMs não têm Desfecho. Quem decide quem age é `whoActs` em `conversations.ts`; a resposta de um Agente não passa por lá, então uma Menção escrita por Agente não dispara nada. O trabalhador (`executions.start()`, um por processo, várias execuções ao mesmo tempo: ver "Concorrência e ordem", abaixo) decide quem paga (a tabela de "Quem paga e fila", abaixo; `choosePayer` e `byPayer` em `executions.ts`), chama a porta de modelo e grava a resposta com `originMessageId` (a resposta ancorada). O Andamento sai como `execution.updated` (`queued` → `running`/`writing` → `done`, `failed` com `reason`, `not_acting` sem Chave, ou `cancelled`); a resposta sai antes como `message.created`.
 
 Nenhuma execução fica no limbo (ADR 0003, #24):
 
@@ -328,6 +331,20 @@ Nenhuma execução fica no limbo (ADR 0003, #24):
 
 Pela Conta (#26, ADR 0006): cada execução é um `claude -p` novo (`src/model/account.ts`), sem sessão, em `stream-json`, sem tools, settings nem MCP, com o contexto fixo em `--system-prompt` e as mensagens no stdin, na pasta da Conta (`accountEnv`: `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_MAX_RETRIES=3`, `API_TIMEOUT_MS=90000`, `CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS=90000`). A falha se lê por `is_error`, `assistant.error` e `terminal_reason`. Processo que morre sem `result` é falha na hora; a vigia, o cancelamento e a parada encerram por `SIGINT`, 10 s, `SIGTERM`, 5 s, `SIGKILL`. **Troca no meio:** `rate_limit_event` rejeitado, `assistant.error: "rate_limit"` ou `authentication_failed` descartam o parcial e refazem a resposta pela Chave na mesma tentativa (`payer` vira `key`); o aviso de 85% e o uso extra seguem na Conta; o `server_error` do lock de renovação é falha comum. O `credential_expires_at` do fim vai para `accounts.credential_expires_at` (a validade mostrada é do #35). No Andamento, `payer` é `key` pela Chave e nulo pela Conta (o estado da Conta é só do autor). O `output: { schema }` do pedido (o roteamento da Articuladora) vira `--json-schema`, e o `structured_output` do `result` volta como o texto da resposta, como pela Chave (ADR 0009); o roteamento também é pago pela Conta do autor, com a mesma troca no meio.
 - **Dreno:** no `SIGTERM`, o `drain()` do app fecha os WebSockets com 1012 e `executions.drain()` para de pegar trabalho e espera até 20 s (`DRAIN_MS`) o que está rodando; o resto fica para a subida seguinte. `SIGINT` (Ctrl-C) é o `halt()`: fecha os WebSockets igual e para na hora.
+
+### Concorrência e ordem (#42)
+
+O trabalhador olha a fila a cada mudança (mensagem nova, execução que terminou, cancelamento, nova tentativa vencida, Conta ou Chave que mudou) e põe para rodar, ao mesmo tempo, cada execução pronta que está na vez e cabe nos tetos de quem paga. Cada uma roda com o seu `AbortController` (a vigia, o cancelamento e a parada valem para ela sozinha); o dreno espera todas, e o `halt()`/`stop()` interrompe todas.
+
+- **Ordem** (`onTurn` em `executions.ts`): as respostas de um mesmo Agente numa conversa saem em série, na ordem de chegada. A conversa é `(channel_id, thread_root_id)` (`seriesOf`): o fluxo principal e cada Thread contam à parte. Uma resposta espera a do mesmo Agente que está rodando ou que chegou antes (inclusive a que espera a nova tentativa) e o roteamento ainda aberto de uma mensagem anterior da conversa, porque ele pode pôr na fila uma resposta que vem antes dela. Agentes diferentes respondem em paralelo; o roteamento não espera ninguém. Quem espera a própria Conta (`held`) sai da série e, quando volta, entra na vez pela hora de chegada (espera a que estiver rodando).
+- **Ordem de chegada:** `arrived_at`, depois a ordem das mensagens de origem e a da fila (`arrivalOrder`). Os delegados de um roteamento chegam com a hora dele.
+- **Tetos** (`ExecutionLimits`, `DEFAULT_LIMITS`, `limitsFromEnv`): até 2 respostas por Conta (o roteamento fica fora), até 4 execuções na Chave e até 8 processos `claude -p` no host (as execuções pela Conta, roteamento incluso). "Agentes não agem" e a fila por quem pague não ocupam lugar. O pagador é decidido antes de pegar a execução, para saber em que teto ela entra.
+- **Prioridade:** o roteamento passa na frente das respostas; entre as respostas, a ordem de chegada. A troca no meio (a Conta bateu no limite ou caiu) devolve a execução à fila com a hora de chegada, na mesma tentativa, e ela sai pela Chave quando houver lugar no teto da Chave.
+- **"esperando a vez":** `ExecutionDto.waitingTurn` (todos veem) marca a execução pronta (`queued`, ou `retrying` vencida) que o trabalhador olhou e não pôde pôr para rodar, pela série ou por um teto. O PWA mostra "Faro · esperando a vez".
+- **Pegar é atômico no Postgres** (`claim`): o `UPDATE` só pega a linha ainda pronta e na vez, e um `pg_advisory_xact_lock` por conversa faz duas pegas da mesma conversa se enxergarem; dois trabalhadores no mesmo banco nunca pegam a mesma execução nem andam a série em dobro. O fim do roteamento, o Desfecho e os delegados na fila são gravados juntos.
+- **Anúncios em ordem:** os `execution.updated` de uma mesma execução saem um depois do outro (cada um lê o estado na sua vez), então um mais velho nunca chega depois de um mais novo.
+
+Nos testes (`apps/server/test/concorrencia.test.ts`), `testApp({ limits: { key: 1 } })` troca os tetos; o paralelismo e a série se provam sem `sleep`, com o cérebro roteirizado (as chamadas ficam abertas até o teste soltar) ou o `fake-claude` com `hang`, e com o `waitingTurn` como sinal de que o trabalhador já decidiu que uma não sai agora.
 
 ### Quem paga e fila (#27)
 
@@ -364,7 +381,7 @@ Nos testes (`apps/server/test/validade-e-religacao.test.ts`), `fakeLogin(pasta, 
 - **Gasto:** cada chamada que a Chave pagou e terminou bem grava uma linha em `execution_usage` (execução, Agente, pagador `key`, modelo, tokens, `cost_usd` pelos preços de `model/key.ts`, `month` `YYYY-MM` em UTC pelo relógio injetado). A Conta não grava nada aqui. O gasto do mês de um Agente é a soma do mês (`keySpend`). A Articuladora paga do orçamento dela o roteamento (no Haiku) e as respostas.
 - **Orçamento:** `agents.monthly_budget_usd` (dólares, `>= 0`; nulo é sem teto), em `POST`/`PATCH /api/agents` (`monthlyBudgetUsd`; inválido dá 400). Para o Admin, `AgentDto` traz `monthlyBudgetUsd`, `keySpendUsd` (o mês corrente) e `overBudget` (gasto `>=` teto); os outros não veem nenhum dos três. É conferido em `keyUsableFor` antes de cada execução pela Chave (inclusive na troca no meio); a que já roda termina. Estourado, a Chave não é utilizável: quem não tem Conta vê "Agentes não agem: … Faro estourou o orçamento do mês na Chave", e quem tem Conta no limite espera na fila.
 - **Faixas do Admin:** `agent_budget.updated` (`AgentBudgetDto`) a cada uso da Chave e a cada mudança de teto; `key_incident.updated` (`KeyIncidentDto` ou `null`). Só para Admins. `GET /api/workspace-key` traz `incident`.
-- **Incidente da Chave:** `auth_failed`/`billing_failed` pela Chave abre um em `key_incidents` (um aberto por vez, índice parcial); a próxima chamada bem-sucedida pela Chave o encerra.
+- **Incidente da Chave:** `auth_failed`/`billing_failed` pela Chave abre um em `key_incidents` (um aberto por vez, índice parcial); a próxima chamada bem-sucedida pela Chave, começada depois da recusa, o encerra (uma que já rodava em paralelo quando a Chave foi recusada não prova nada, #42).
 - **Ganchos do push aos Admins (#34, ligados em `admin-pushes.ts`):** `hooks.keyIncidentOpened(incident)` (um por incidente) e `hooks.budgetExceeded(budget)` (no máximo um por Agente por mês, pela tabela `budget_overruns`, mesmo que o teto suba e estoure de novo). Nos testes, `testApp({ hooks })`. No e2e, `[chave recusada]` no texto faz a Messages API falsa recusar a Chave (401).
 
 ### Montagem de contexto
@@ -399,7 +416,7 @@ await chamada.emit({ type: "text", text: "Pronto." });
 await chamada.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
 ```
 
-`testApp({ hooks: { executionFailed } })` recebe as falhas de vez; `keyIncidentOpened` e `budgetExceeded`, os avisos da Chave (#28).
+`testApp({ hooks: { executionFailed } })` recebe as falhas de vez; `keyIncidentOpened` e `budgetExceeded`, os avisos da Chave (#28). `testApp({ limits })` troca os tetos de concorrência.
 
 ### A Articuladora e o Desfecho (#22, ADR 0004)
 

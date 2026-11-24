@@ -51,7 +51,7 @@ describe("Desfecho", () => {
 
     const origem = mensagens.getByRole("listitem").filter({ hasText: pergunta }).first();
     const linha = origem.getByRole("button", `↳ Sophya passou para ${faro} e ${prisma}`);
-    await expect(linha).toBeVisible({ timeout: 60_000 });
+    await expect(linha).toBeVisible({ timeout: 20_000 });
     await linha.tap();
     const detalhe = origem.getByRole("list", "Por que e o que cada um cobre");
     await expect(detalhe).toContainText("Cada um cobre uma parte.");
@@ -73,7 +73,7 @@ describe("Desfecho", () => {
 
     const origem = mensagens.getByRole("listitem").filter({ hasText: recado }).first();
     const marca = origem.getByRole("button", "Sophya: nenhum Agente precisa agir. É conversa entre pessoas.");
-    await expect(marca).toHaveText("⌀", { timeout: 60_000 });
+    await expect(marca).toHaveText("⌀", { timeout: 20_000 });
     await expect(origem.getByRole("list", `Respostas a Pessoa Dev`)).toHaveCount(0);
     await marca.tap();
     await expect(origem.getByText("Sophya: nenhum Agente precisa agir. É conversa entre pessoas.")).toBeVisible();

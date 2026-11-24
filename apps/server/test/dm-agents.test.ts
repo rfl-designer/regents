@@ -135,11 +135,12 @@ describe("Menções numa DM com Agente", () => {
       const { message } = await aba.next("message.created");
       if (message.author.kind === "agent") respostas.push([message.author.displayName, message.originMessageId]);
     }
-    expect(respostas).toEqual([
+    // As do Faro saem em série, na ordem das mensagens; a Lia responde em paralelo (#42).
+    expect(respostas.filter(([nome]) => nome === "Faro")).toEqual([
       ["Faro", soFaro.id],
       ["Faro", comLia.id],
-      ["Lia", comLia.id],
     ]);
+    expect(respostas.filter(([nome]) => nome === "Lia")).toEqual([["Lia", comLia.id]]);
     expect(t.anthropic.requests).toHaveLength(3);
   });
 
