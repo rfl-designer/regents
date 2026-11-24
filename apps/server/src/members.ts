@@ -64,3 +64,22 @@ export async function listMembers(db: Db): Promise<MemberSummaryDto[]> {
     .from(schema.members)
     .orderBy(asc(schema.members.displayName), asc(schema.members.id));
 }
+
+/** Tamanho máximo do "sobre mim". */
+export const ABOUT_ME_MAX = 500;
+
+/**
+ * "Sobre mim" do próprio Membro (campo mínimo do #21; o perfil completo é do #19).
+ * Devolve o que ficou gravado, ou o erro em pt-BR.
+ */
+export async function setAboutMe(
+  db: Db,
+  memberId: string,
+  input: unknown,
+): Promise<{ aboutMe: string } | { error: string }> {
+  if (typeof input !== "string") return { error: 'O "sobre mim" é um texto.' };
+  if (input.length > ABOUT_ME_MAX) return { error: `O "sobre mim" tem no máximo ${ABOUT_ME_MAX} caracteres.` };
+  const aboutMe = input.trim();
+  await db.update(schema.members).set({ aboutMe }).where(eq(schema.members.id, memberId));
+  return { aboutMe };
+}
