@@ -8,8 +8,9 @@ import { createEventHub } from "./events";
 import type { Identity, IdentityPort } from "./identity/port";
 import { IdentityUnavailableError } from "./identity/whois";
 import { type JoinRequestHooks, joinRequestAdminRoutes, myJoinRequestRoutes, type TailnetUser } from "./join-requests";
-import { listMembers, type Member, memberFor, toMeDto } from "./members";
+import { listMembers, type Member, memberFor } from "./members";
 import { noIdentityPage } from "./no-identity-page";
+import { profileRoutes } from "./profile";
 
 export interface AppDeps {
   db: Db;
@@ -79,7 +80,7 @@ export function createApp(deps: AppDeps) {
     await next();
   });
 
-  app.get("/api/me", (c) => c.json(toMeDto(c.get("member"))));
+  app.route("/api/me", profileRoutes({ db, clock, events }));
   app.get("/api/members", async (c) => c.json(await listMembers(db)));
   app.get(EVENTS_PATH, eventsRoute);
   app.route("/api/join-requests", joinRequestAdminRoutes({ db, clock, events, hooks }));

@@ -34,6 +34,12 @@ export interface MeDto {
   id: string;
   login: string;
   displayName: string;
+  /** Identificador de Menção, sem o `@`: único entre Membros e Agentes, editável. */
+  handle: string;
+  /** Foto da tailnet na primeira entrada; `null` se a tailnet não tinha. */
+  profilePicUrl: string | null;
+  /** "Sobre mim", opcional (vazio quando não escreveu). */
+  about: string;
   role: MemberRole;
 }
 
@@ -81,10 +87,30 @@ export interface ApproveJoinRequestDto {
 
 // ---------- Conversas ----------
 
-/** Item de `GET /api/members`: quem se pode adicionar a um Canal. */
+/**
+ * Item de `GET /api/members` (quem se pode adicionar a uma conversa, quem é quem) e
+ * do evento `member.updated`.
+ */
 export interface MemberSummaryDto {
   id: string;
   displayName: string;
+  /** Identificador de Menção, sem o `@`. */
+  handle: string;
+  profilePicUrl: string | null;
+  about: string;
+}
+
+/** Corpo de `PATCH /api/me`: o Membro edita o próprio perfil. Campo ausente fica como está. */
+export interface UpdateProfileInput {
+  /** Até 80 caracteres, não vazio. */
+  displayName?: string;
+  /**
+   * Identificador de Menção (com ou sem `@`): minúsculas, acentos e maiúsculas são normalizados;
+   * fica com `[a-z0-9_]`, até 32. Já de outro participante: 409 `handle_taken`.
+   */
+  handle?: string;
+  /** "Sobre mim", até 500 caracteres; vazio apaga. */
+  about?: string;
 }
 
 export type ChannelKind = "public" | "private";
@@ -183,6 +209,11 @@ export type ServerEvent =
    * O cliente trata como "insere ou troca pelo `id`".
    */
   | { type: "channel.updated"; channel: ChannelDto }
+  /**
+   * O perfil de um Membro mudou (nome, identificador de Menção, "sobre mim"). Para todo Membro,
+   * inclusive as outras abas de quem editou: é assim que o "Você está como Fulano" acompanha.
+   */
+  | { type: "member.updated"; member: MemberSummaryDto }
   /** Pedido de entrada novo. Só para Admins. */
   | { type: "join_request.created"; joinRequest: JoinRequestAdminDto }
   /** Um Admin aprovou ou recusou um pedido. Só para Admins (os outros tiram o card da lista). */
@@ -203,4 +234,6 @@ export type ApiError =
   | { error: "already_decided"; status: JoinRequestStatus }
   | { error: "not_found" }
   | { error: "name_taken"; message: string }
+  /** O identificador de Menção pedido já é de outra pessoa ou Agente. */
+  | { error: "handle_taken"; message: string }
   | { error: "invalid_input"; message: string };

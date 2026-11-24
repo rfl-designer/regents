@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   index,
   integer,
   pgEnum,
@@ -23,10 +24,34 @@ export const members = pgTable("members", {
   /** `UserProfile.ID` da tailnet, como texto. É a chave do Membro (ADR 0007). */
   tailnetUserId: text().notNull().unique(),
   login: text().notNull(),
+  /** Vem da tailnet na primeira entrada; depois é do Membro (a tailnet não sobrescreve). */
   displayName: text().notNull(),
+  /** Foto da tailnet na primeira entrada (`UserProfile.ProfilePicURL`); pode não ter. */
+  profilePicUrl: text(),
+  /** "Sobre mim", opcional: entra no "quem é quem" do contexto dos Agentes. */
+  about: text().notNull().default(""),
   role: memberRole().notNull(),
   createdAt: timestamp({ withTimezone: true }).notNull(),
 });
+
+/**
+ * O espaço de nomes dos identificadores de Menção, um só para Membros e Agentes (módulo 2).
+ * O identificador é a chave: dois participantes nunca têm o mesmo, sejam de que espécie forem.
+ * Cada linha tem um dono só. `agent_id` ganha a referência a `agents` quando os Agentes
+ * chegarem (#20). Quem mexe aqui é `mention-handles.ts`.
+ */
+export const mentionHandles = pgTable(
+  "mention_handles",
+  {
+    /** Minúsculo, sem acento, só `[a-z0-9_]`, sem o `@`. */
+    handle: text().primaryKey(),
+    memberId: uuid()
+      .unique()
+      .references(() => members.id),
+    agentId: uuid().unique(),
+  },
+  (t) => [check("mention_handles_one_owner", sql`num_nonnulls(${t.memberId}, ${t.agentId}) = 1`)],
+);
 
 export const channelKind = pgEnum("channel_kind", ["public", "private"]);
 

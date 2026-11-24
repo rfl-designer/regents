@@ -22,6 +22,13 @@
       "when": 1795515004087,
       "tag": "0002_join_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795515743772,
+      "tag": "0003_perfil-e-identificador-de-mencao",
+      "breakpoints": true
     }
   ]
 }

@@ -247,6 +247,7 @@ const UPGRADE_HEADERS = {
 export interface Client {
   get(path: string, init?: RequestInit): Promise<Response>;
   post(path: string, body?: unknown, init?: RequestInit): Promise<Response>;
+  patch(path: string, body?: unknown, init?: RequestInit): Promise<Response>;
   request(path: string, init?: RequestInit): Promise<Response>;
 }
 
@@ -294,16 +295,18 @@ export async function testApp(opts: { clock?: FakeClock; identity?: IdentityPort
       for (const [k, v] of Object.entries(extra)) headers.set(k, v);
       return Promise.resolve(app.request(path, { ...init, headers }));
     };
+    const withBody = (method: string) => (path: string, body?: unknown, init?: RequestInit) =>
+      request(path, {
+        ...init,
+        method,
+        headers: { "content-type": "application/json", ...init?.headers },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
     return {
       request,
       get: (path, init) => request(path, { ...init, method: "GET" }),
-      post: (path, body, init) =>
-        request(path, {
-          ...init,
-          method: "POST",
-          headers: { "content-type": "application/json", ...init?.headers },
-          body: body === undefined ? undefined : JSON.stringify(body),
-        }),
+      post: withBody("POST"),
+      patch: withBody("PATCH"),
     };
   }
 
