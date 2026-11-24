@@ -43,6 +43,25 @@ async function runApp(args: string[], env: Record<string, string>, timeoutMs = 3
   return { code, stdout, stderr };
 }
 
+/** Lê a saída do processo até aparecer `text` (ou falha em 20 s, com o que saiu). */
+async function untilOutput(stream: ReadableStream<Uint8Array>, text: string) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let seen = "";
+  const timeout = setTimeout(() => reader.cancel(), 20_000);
+  try {
+    while (!seen.includes(text)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`a saída acabou sem "${text}": ${seen}`);
+      seen += decoder.decode(value);
+    }
+  } finally {
+    clearTimeout(timeout);
+    reader.releaseLock();
+  }
+  return seen;
+}
+
 /**
  * Um PGlite em `dir` migrado com as migrações desta versão mais `extra` (as de uma versão mais
  * nova, que esta não conhece), ou só até `until` (inclusive), como uma Instalação de antes.
@@ -201,5 +220,32 @@ describe("restore", () => {
     expect(none.code).toBe(1);
     expect(none.stderr).toContain("restore <arquivo>");
     expect(readdirSync(backupsDir)).toEqual([]);
+  });
+});
+
+describe("serviço backup", () => {
+  test("`backup` faz o primeiro backup ao subir, fica rodando e para limpo no SIGTERM", async () => {
+    const dataDir = tmpDir("shearim-pg-");
+    const backupsDir = tmpDir("shearim-backups-");
+    expect((await runApp(["migrate"], envFor(dataDir, backupsDir))).code).toBe(0);
+
+    const proc = Bun.spawn(["bun", MAIN, "backup"], {
+      env: { ...process.env, DATABASE_URL: "", ...envFor(dataDir, backupsDir) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    onCleanup(() => proc.kill());
+    // O log sai depois de o resultado ficar gravado no banco.
+    await untilOutput(proc.stdout, "backup em");
+    proc.kill("SIGTERM");
+
+    expect(await proc.exited).toBe(0);
+    expect(readdirSync(backupsDir)).toEqual([expect.stringMatching(/^shearim-\d{8}T\d{6}Z\.tar\.gz$/)]);
+    const conn = connect({ pgliteDir: dataDir });
+    onCleanup(() => conn.close());
+    const t = await testApp({ db: conn.db });
+    await t.as({ id: "1001", name: "Juliana" }).get("/api/me");
+    const dto = await (await t.as({ id: "1001", name: "Juliana" }).get("/api/installation")).json();
+    expect(dto.backup.last).toMatchObject({ ok: true, file: readdirSync(backupsDir)[0] });
   });
 });

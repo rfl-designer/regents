@@ -378,6 +378,8 @@ export async function testApp(
     db?: Db;
     /** A chave mestra de `./secrets` (padrão: uma aleatória). Para subir de novo com a mesma. */
     masterKey?: Uint8Array;
+    /** A versão e o vencimento da chave do nó da seção Instalação. */
+    installation?: AppDeps["installation"];
   } = {},
 ) {
   const db = opts.db ?? (await testDb()).db;
@@ -399,6 +401,7 @@ export async function testApp(
       anthropicBaseUrl: anthropic.url,
       keyBrain: opts.keyBrain,
       push: { contact: TEST_VAPID_CONTACT, agent: push.agent },
+      installation: opts.installation,
     });
     built.executions.start();
     return built;

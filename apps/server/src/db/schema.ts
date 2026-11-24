@@ -415,3 +415,47 @@ export const pushStreaks = pgTable(
   },
   (t) => [primaryKey({ columns: [t.memberId, t.conversationId] })],
 );
+
+/**
+ * A Instalação (Spec, módulo 13): uma linha só, criada na primeira subida. `createdAt` é de quando
+ * as 36 h sem backup bom começam a contar enquanto nunca houve um.
+ */
+export const installation = pgTable(
+  "installation",
+  {
+    id: integer().primaryKey().default(1),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [check("installation_uma_linha", sql`${t.id} = 1`)],
+);
+
+/** Cada backup noturno, bom ou não (o serviço `backup` do compose grava; o app lê). */
+export const backups = pgTable(
+  "backups",
+  {
+    id: uuid().primaryKey(),
+    startedAt: timestamp({ withTimezone: true }).notNull(),
+    finishedAt: timestamp({ withTimezone: true }).notNull(),
+    ok: boolean().notNull(),
+    /** O nome do arquivo em `./backups`, quando deu certo. */
+    file: text(),
+    bytes: bigint({ mode: "number" }),
+    error: text(),
+  },
+  (t) => [index().on(t.finishedAt)],
+);
+
+/**
+ * Os pushes do Admin sobre a Instalação que já saíram, para cada um sair uma vez só (também
+ * depois de reiniciar): `kind` é o aviso, `ref` o que ele avisa (o backup que falhou, o último
+ * backup bom de quando faltou um, o vencimento da chave do nó).
+ */
+export const installationAlerts = pgTable(
+  "installation_alerts",
+  {
+    kind: text().notNull(),
+    ref: text().notNull(),
+    sentAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.kind, t.ref] })],
+);

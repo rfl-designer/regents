@@ -341,6 +341,51 @@ export interface CreateAgentInput {
 }
 
 /** `GET`/`PUT /api/workspace-key` (só Admin). A Chave em si nunca volta ao navegador. */
+/** Sem backup bom há mais que isto, o Admin recebe push e vê a faixa (Spec, história 14). */
+export const BACKUP_STALE_HOURS = 36;
+/** Quantos dias antes de a chave do nó vencer na tailnet o Admin recebe push (história 15). */
+export const NODE_KEY_WARNING_DAYS = 14;
+/** Por quantos dias os backups noturnos ficam em `./backups`. */
+export const BACKUP_RETENTION_DAYS = 14;
+
+/** Um backup noturno, bom ou não. */
+export interface BackupRunDto {
+  /** Quando terminou (ISO 8601). */
+  at: string;
+  ok: boolean;
+  /** O nome do arquivo em `./backups`, quando deu certo. */
+  file: string | null;
+  bytes: number | null;
+  /** O que deu errado, quando falhou. */
+  error: string | null;
+}
+
+/** Quando a chave do nó da Instalação vence na tailnet (o `Self.KeyExpiry` do tailscaled). */
+export type NodeKeyDto =
+  | { kind: "expires"; expiresAt: string }
+  /** Vencimento desligado (o padrão de um nó com tag). */
+  | { kind: "never" }
+  /** Não deu para perguntar ao tailscaled (ou não há tailnet, no desenvolvimento). */
+  | { kind: "unknown"; reason: string };
+
+/** O que pede a faixa do Admin sobre a Instalação. */
+export type InstallationAlertDto =
+  /** O último backup noturno falhou. */
+  | { kind: "backup_failed"; at: string; error: string }
+  /** Faz mais de 36 h sem um backup bom (`lastGoodAt` nulo: nunca houve um). */
+  | { kind: "backup_stale"; lastGoodAt: string | null };
+
+/** A seção Instalação (Spec, módulo 13; `GET /api/installation`), só para o Admin. */
+export interface InstallationDto {
+  /** A versão do Shearim que está rodando (a tag da imagem). */
+  version: string;
+  /** A última migração aplicada no banco. */
+  migration: string;
+  backup: { last: BackupRunDto | null; lastGoodAt: string | null };
+  nodeKey: NodeKeyDto;
+  alerts: InstallationAlertDto[];
+}
+
 export interface WorkspaceKeyDto {
   configured: boolean;
   /** Quando foi gravada pela última vez (ISO 8601), ou `null`. */
@@ -545,7 +590,12 @@ export type ServerEvent =
    * As não-lidas do Membro mudaram (chegou mensagem numa conversa dele, ou ele leu algo em
    * qualquer aba ou aparelho). Vai só para as conexões do próprio Membro.
    */
-  | { type: "unread.updated"; unread: UnreadDto };
+  | { type: "unread.updated"; unread: UnreadDto }
+  /**
+   * O estado da Instalação mudou (backup novo, backup que falhou, 36 h sem backup bom). Só para
+   * Admins: é o que acende e apaga a faixa.
+   */
+  | { type: "installation.updated"; installation: InstallationDto };
 
 export type ServerEventType = ServerEvent["type"];
 export type ServerEventOf<T extends ServerEventType> = Extract<ServerEvent, { type: T }>;

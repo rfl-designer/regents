@@ -19,7 +19,7 @@
  * - `SHEARIM_VAPID_CONTACT`: o `sub` do VAPID (`mailto:` com domínio real; o `deploy/setup.sh`
  *   grava no `.env`). Sem ela, só em desenvolvimento, um `mailto:` de exemplo.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
@@ -29,6 +29,7 @@ import { connect, MEMORY } from "./db/connect";
 import { createDevIdentity } from "./identity/dev";
 import type { IdentityPort } from "./identity/port";
 import { createWhoisIdentity } from "./identity/whois";
+import { createNightlyBackups } from "./installation/backups";
 import {
   type CommandDeps,
   DumpBeforeMigrationError,
@@ -36,7 +37,7 @@ import {
   RestoreError,
   restoreFrom,
 } from "./installation/commands";
-import { NewerDatabaseError } from "./installation/migrations";
+import { migrationState, NewerDatabaseError } from "./installation/migrations";
 import { loadMasterKey, secretBox } from "./secrets";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
@@ -102,6 +103,46 @@ async function migrateOrFail(conn: ReturnType<typeof connect>) {
   }
 }
 
+/**
+ * O serviço `backup` do compose: espera o app deixar o banco em dia com as migrações e faz um
+ * `pg_dump` por noite (às `SHEARIM_BACKUP_AT`, padrão 03:00, na hora local do container) em
+ * `./backups`, guardando 14 dias. No `SIGTERM`, espera o backup em andamento terminar.
+ */
+async function nightlyBackups(conn: ReturnType<typeof connect>) {
+  const [hour, minute] = (process.env.SHEARIM_BACKUP_AT || "03:00").split(":").map(Number);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour! > 23 || minute! > 59) {
+    fail(`SHEARIM_BACKUP_AT=${process.env.SHEARIM_BACKUP_AT} não é uma hora (HH:MM).`);
+  }
+  let warned = false;
+  for (;;) {
+    const state = await migrationState(conn.db);
+    if (state.kind === "current") break;
+    if (!warned) console.log("shearim: esperando o app aplicar as migrações para começar os backups");
+    warned = true;
+    await Bun.sleep(10_000);
+  }
+  const job = createNightlyBackups({
+    db: conn.db,
+    clock: systemClock,
+    dumper: conn.dumper,
+    dir: backupsDir,
+    at: { hour: hour!, minute: minute! },
+    log: (line) => console.log(`shearim: ${line}`),
+  });
+  mkdirSync(backupsDir, { recursive: true });
+  job.start();
+  console.log(
+    `shearim: backup noturno às ${process.env.SHEARIM_BACKUP_AT || "03:00"} em ${backupsDir} (${conn.describe})`,
+  );
+  const stop = async () => {
+    await job.stop();
+    await conn.close();
+    process.exit(0);
+  };
+  process.on("SIGTERM", stop);
+  process.on("SIGINT", stop);
+}
+
 async function main(command: string | undefined) {
   const conn = connect({
     DATABASE_URL: process.env.DATABASE_URL,
@@ -114,6 +155,10 @@ async function main(command: string | undefined) {
     await migrateOrFail(conn);
     console.log(`shearim: migrações aplicadas em ${conn.describe}`);
     await conn.close();
+    return;
+  }
+  if (command === "backup") {
+    await nightlyBackups(conn);
     return;
   }
   if (command === "restore") {
