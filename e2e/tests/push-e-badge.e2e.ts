@@ -21,7 +21,8 @@ describe("badge do ícone", () => {
     browser,
   }) => {
     const eu = await ensureAdmin(app.baseUrl);
-    const fulana = newPerson("Fulana");
+    // Nome único: o banco é da execução inteira, e outros testes também têm uma "Fulana".
+    const fulana = newPerson(`Rosa${Date.now() % 1_000_000}`);
     await addMember(app.baseUrl, fulana);
     await browser.addInitScript(badgeDoSistema);
     const html = browser.locator("html");
