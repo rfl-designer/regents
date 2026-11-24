@@ -3,6 +3,7 @@ import type {
   AgentDto,
   AgentToolDto,
   ApiError,
+  ApprovalRequestDto,
   ApproveJoinRequestDto,
   ChannelDto,
   ChannelSettingsDto,
@@ -137,6 +138,16 @@ export const api = {
   /** Cancela o que a mensagem ainda tem em andamento (só quem escreveu). */
   cancelMessage: (conversationId: string, messageId: string) =>
     call<ExecutionDto[]>(`/api/conversations/${conversationId}/messages/${messageId}/cancel`, post),
+  /** Os Pedidos de aprovação de uma conversa (todos que a veem). */
+  approvals: (conversationId: string) => call<ApprovalRequestDto[]>(`/api/conversations/${conversationId}/approvals`),
+  /** Aprovar ou recusar um Pedido (só o autor da mensagem de origem). */
+  approveRequest: (conversationId: string, approvalId: string) =>
+    call<ApprovalRequestDto>(`/api/conversations/${conversationId}/approvals/${approvalId}/approve`, post),
+  rejectRequest: (conversationId: string, approvalId: string, reason: string) =>
+    call<ApprovalRequestDto>(
+      `/api/conversations/${conversationId}/approvals/${approvalId}/reject`,
+      json("POST", reason.trim() ? { reason } : {}),
+    ),
   /** Os Desfechos da Articuladora numa conversa (uma DM não tem). */
   outcomes: (conversationId: string) => call<OutcomeDto[]>(`/api/conversations/${conversationId}/outcomes`),
   updateAgent: (agentId: string, input: UpdateAgentInput) =>

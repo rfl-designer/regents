@@ -1,4 +1,4 @@
-import type { AgentToolSummaryDto, ToolAccess, ToolCallDto, ToolOrigin } from "@shearim/contracts";
+import type { AgentToolSummaryDto, MessageDto, ToolAccess, ToolCallDto, ToolOrigin } from "@shearim/contracts";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
@@ -37,8 +37,26 @@ export class ToolFailure extends Error {
   }
 }
 
-/** Uma Ferramenta do catálogo: o que o Admin concede e o que a porta executa. */
-export interface ToolDefinition {
+/** O que uma Ferramenta recebe para rodar: o banco e a execução (de onde sai o alcance). */
+export interface ToolContext {
+  db: Db;
+  run: ToolRun;
+}
+
+/** Postar uma mensagem como o Agente (o que a escrita aprovada faz no Workspace). */
+export type PostAsAgent = (message: {
+  agentId: string;
+  conversationId: string;
+  threadRootId: string | null;
+  body: string;
+}) => Promise<MessageDto>;
+
+/** O que a ação aprovada recebe: o contexto e o que ela pode fazer no Workspace. */
+export interface WriteContext extends ToolContext {
+  post: PostAsAgent;
+}
+
+interface ToolBase {
   /** O id estável, que é também o nome que o modelo recebe (`^[a-z0-9_]+$`). */
   id: string;
   /** O nome em pt-BR ("listar Agentes"). */
@@ -48,14 +66,41 @@ export interface ToolDefinition {
   /** Para o modelo e para o Admin. */
   description: string;
   origin: ToolOrigin;
-  access: ToolAccess;
   /** O JSON Schema da entrada. */
   inputSchema: Record<string, unknown>;
   /** O prazo desta Ferramenta (padrão: o da Instalação). */
   timeoutMs?: number;
-  /** Roda e devolve o resultado como texto; falha com `ToolFailure`. Deve largar quando `signal` abortar. */
-  run(ctx: { db: Db; run: ToolRun }, input: unknown, signal: AbortSignal): Promise<string>;
 }
+
+/** Uma Ferramenta que só lê: roda na hora e o resultado volta ao modelo. */
+export interface ReadTool extends ToolBase {
+  access: "read";
+  /** Roda e devolve o resultado como texto; falha com `ToolFailure`. Deve largar quando `signal` abortar. */
+  run(ctx: ToolContext, input: unknown, signal: AbortSignal): Promise<string>;
+}
+
+/**
+ * Uma Ferramenta que escreve (ADR 0011): não roda durante a resposta. A porta confere a entrada e o
+ * alcance (`prepare`), cria o Pedido de aprovação com a ação exata e encerra a execução; o Shearim
+ * só executa a ação (`perform`) quando o autor aprova.
+ */
+export interface WriteTool extends ToolBase {
+  access: "write";
+  /**
+   * Confere a entrada e o alcance e resolve a ação exata (o que vai ser guardado e executado) e o
+   * resumo em pt-BR que o autor aprova. Falha com `ToolFailure`: vira falha da Ferramenta, sem Pedido.
+   */
+  prepare(
+    ctx: ToolContext,
+    input: unknown,
+    signal: AbortSignal,
+  ): Promise<{ action: Record<string, unknown>; summary: string }>;
+  /** Executa a ação aprovada, conferindo o alcance de novo; devolve o resultado ou falha com `ToolFailure`. */
+  perform(ctx: WriteContext, action: Record<string, unknown>, signal: AbortSignal): Promise<string>;
+}
+
+/** Uma Ferramenta do catálogo: o que o Admin concede e o que a porta executa. */
+export type ToolDefinition = ReadTool | WriteTool;
 
 /** Uma Ferramenta como o cérebro a oferece ao modelo. */
 export interface ToolSpec {
@@ -90,6 +135,12 @@ export interface ToolObserver {
   started(): Promise<void>;
   /** Terminou, bem ou com falha (já gravado). */
   finished(): Promise<void>;
+  /**
+   * Uma escrita passou na conferência: cria o Pedido de aprovação com a ação exata e encerra a
+   * execução em "esperando aprovação" (ADR 0011). Devolve se criou (a execução pode já ter sido
+   * cancelada ou interrompida).
+   */
+  approvalRequested(request: { tool: WriteTool; action: Record<string, unknown>; summary: string }): Promise<boolean>;
 }
 
 /**
@@ -115,8 +166,8 @@ export function createToolPort(deps: {
     return definitions.filter((d) => granted.has(d.id));
   }
 
-  /** Roda a definição com o prazo dela; devolve o texto ou o motivo da falha. */
-  async function execute(def: ToolDefinition, run: ToolRun, input: unknown, signal: AbortSignal) {
+  /** Roda `work` com o prazo da definição; devolve o que ele devolveu ou o motivo da falha. */
+  async function execute<T>(def: ToolDefinition, work: (signal: AbortSignal) => Promise<T>, signal: AbortSignal) {
     const own = new AbortController();
     const abort = () => own.abort();
     signal.addEventListener("abort", abort, { once: true });
@@ -134,8 +185,8 @@ export function createToolPort(deps: {
         once: true,
       });
     });
-    const ran = def.run({ db, run }, input, own.signal).then(
-      (content) => ({ ok: true as const, content }),
+    const ran = work(own.signal).then(
+      (value) => ({ ok: true as const, value }),
       (err) => {
         if (!(err instanceof ToolFailure)) console.error(`shearim: a Ferramenta ${def.id} falhou`, err);
         return {
@@ -193,6 +244,26 @@ export function createToolPort(deps: {
 
     exists: (toolId: string) => byId.has(toolId),
 
+    /**
+     * Executa a ação de um Pedido aprovado (ADR 0011), sem passar pelo modelo: a Ferramenta ainda
+     * tem de estar concedida ao Agente, e ela confere o alcance de novo. Nunca lança.
+     */
+    async perform(
+      tool: string,
+      run: ToolRun,
+      action: Record<string, unknown>,
+      post: PostAsAgent,
+    ): Promise<{ ok: true; result: string } | { ok: false; reason: string }> {
+      const def = (await grantedTo(run.agentId)).find((d) => d.id === tool);
+      if (def?.access !== "write") return { ok: false, reason: "a Ferramenta não está mais disponível para o Agente" };
+      const outcome = await execute(
+        def,
+        (s) => def.perform({ db, run, post }, action, s),
+        new AbortController().signal,
+      );
+      return outcome.ok ? { ok: true, result: outcome.value } : outcome;
+    },
+
     async grant(agentId: string, toolId: string) {
       await db.insert(agentTools).values({ agentId, tool: toolId, grantedAt: clock.now() }).onConflictDoNothing();
     },
@@ -231,7 +302,11 @@ export function createToolPort(deps: {
             startedAt: clock.now(),
           });
           await observer.started();
-          const outcome = await execute(def, run, input, signal);
+          // A escrita não roda aqui: só a conferência e a ação exata, que vira o Pedido de aprovação.
+          const outcome =
+            def.access === "read"
+              ? await execute(def, (s) => def.run({ db, run }, input, s), signal)
+              : await execute(def, (s) => def.prepare({ db, run }, input, s), signal);
           await db
             .update(executionToolCalls)
             .set({
@@ -241,9 +316,13 @@ export function createToolPort(deps: {
             })
             .where(eq(executionToolCalls.id, id));
           await observer.finished();
-          return outcome.ok
-            ? { content: outcome.content, isError: false }
-            : { content: `A Ferramenta ${def.title} falhou: ${outcome.reason}.`, isError: true };
+          if (!outcome.ok) return { content: `A Ferramenta ${def.title} falhou: ${outcome.reason}.`, isError: true };
+          if (def.access === "read") return { content: outcome.value as string, isError: false };
+          const prepared = outcome.value as { action: Record<string, unknown>; summary: string };
+          // A execução termina aqui (o `signal` aborta): o que volta ao modelo não chega a ser lido.
+          return (await observer.approvalRequested({ tool: def, ...prepared }))
+            ? { content: `Pedido de aprovação criado: ${prepared.summary}`, isError: false }
+            : { content: "A resposta foi interrompida.", isError: true };
         },
       };
     },

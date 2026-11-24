@@ -1,0 +1,446 @@
+/**
+ * Pedido de aprovação pela Chave (#50, ADR 0011): a escrita "postar mensagem" e "responder em
+ * Thread", pela borda do servidor.
+ *
+ * - Quando o modelo pede uma escrita, o Shearim cria o Pedido e a execução termina em "esperando
+ *   aprovação", sem ocupar vaga; o texto parcial é descartado.
+ * - O Pedido aparece para todos que veem a conversa, com o resumo exato; só o autor decide.
+ * - Na aprovação, o Shearim posta como o Agente (sem Desfecho, sem acionar Agente) e a continuação
+ *   termina a resposta; na recusa, a continuação recebe a recusa e o motivo.
+ * - Escrita fora do alcance é falha da Ferramenta, sem Pedido; o alcance é conferido de novo na
+ *   aprovação.
+ */
+import { describe, expect, test } from "bun:test";
+import type { AgentDto, ApprovalRequestDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import { toolResults } from "./fakes/messages-api";
+import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
+
+const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
+const bruno = { id: "1002", login: "bruno@exemplo.com", name: "Bruno" };
+const CHAVE = "sk-ant-api03-chave-do-workspace";
+const LONGO = 120_000;
+
+/**
+ * Juliana vira Admin, grava a Chave, cria o Faro (com "postar mensagem" e "responder em Thread") e
+ * o põe no #geral e no #anuncios; Bruno entra nos dois (sem Conta: paga a Chave).
+ */
+async function workspace(t: TestApp) {
+  await t.as(juliana).get("/api/me");
+  await t.as(juliana).put("/api/workspace-key", { apiKey: CHAVE });
+  const faro: AgentDto = await (
+    await t.as(juliana).post("/api/agents", {
+      name: "Faro",
+      photo: null,
+      description: "Comercial: preços e propostas.",
+      instructions: "Você é o Faro, do comercial.",
+      model: "claude-sonnet-5-5",
+    })
+  ).json();
+  const [geral] = (await (await t.as(juliana).get("/api/channels")).json()) as ChannelDto[];
+  const anuncios = await canal(t, "anuncios", "public");
+  for (const c of [geral!, anuncios]) await t.as(juliana).post(`/api/channels/${c.id}/agents`, { agentId: faro.id });
+  await t.addMember(bruno, { by: juliana });
+  for (const c of [geral!, anuncios]) await t.as(bruno).post(`/api/channels/${c.id}/join`);
+  for (const tool of ["postar_mensagem", "responder_thread"]) {
+    expect((await t.as(juliana).put(`/api/agents/${faro.id}/tools/${tool}`)).status).toBe(200);
+  }
+  return { faro, geral: geral!, anuncios };
+}
+
+async function canal(t: TestApp, name: string, kind: "public" | "private", who = juliana): Promise<ChannelDto> {
+  const res = await t.as(who).post("/api/channels", { name, kind });
+  expect(res.status).toBe(201);
+  return res.json();
+}
+
+async function enviar(t: TestApp, channelId: string, body: string, who = bruno): Promise<MessageDto> {
+  const res = await t.as(who).post(`/api/conversations/${channelId}/messages`, { body });
+  expect(res.status).toBe(201);
+  return res.json();
+}
+
+async function mensagens(t: TestApp, channelId: string, who = juliana): Promise<MessageDto[]> {
+  return (await t.as(who).get(`/api/conversations/${channelId}/messages`)).json();
+}
+
+async function respostaA(t: TestApp, channelId: string, origem: MessageDto) {
+  return eventually(
+    "a resposta sair",
+    async () => (await mensagens(t, channelId)).find((m) => m.originMessageId === origem.id),
+    10_000,
+  );
+}
+
+async function pedidos(t: TestApp, channelId: string, who = juliana): Promise<ApprovalRequestDto[]> {
+  const res = await t.as(who).get(`/api/conversations/${channelId}/approvals`);
+  expect(res.status).toBe(200);
+  return res.json();
+}
+
+/** Espera o Pedido pendente de número `n` (1 é o primeiro) da conversa. */
+async function pedidoPendente(t: TestApp, channelId: string, n = 1) {
+  return eventually(
+    "o Pedido aparecer",
+    async () => {
+      const lista = await pedidos(t, channelId);
+      return lista.length >= n && lista[n - 1]!.state === "pending" && lista[n - 1];
+    },
+    10_000,
+  );
+}
+
+const aprovar = (t: TestApp, p: ApprovalRequestDto, who = bruno) =>
+  t.as(who).post(`/api/conversations/${p.channelId}/approvals/${p.id}/approve`);
+const recusar = (t: TestApp, p: ApprovalRequestDto, body: unknown = {}, who = bruno) =>
+  t.as(who).post(`/api/conversations/${p.channelId}/approvals/${p.id}/reject`, body);
+
+async function andamento(aba: EventSocket, origem: MessageDto, ok: (e: ExecutionDto) => boolean) {
+  for (;;) {
+    const { execution } = await aba.next("execution.updated", { timeoutMs: 10_000 });
+    if (execution.originMessageId === origem.id && ok(execution)) return execution;
+  }
+}
+
+/** As chamadas de resposta (sem o roteamento da Articuladora) que chegaram à Messages API falsa. */
+const respostas = (t: TestApp) => t.anthropic.requests.filter((r) => !r.body.output_config);
+/** O texto inteiro que um pedido mandou como mensagens (para ver o que a continuação recebeu). */
+const textoDe = (req: { body: { messages: { content: unknown }[] } }) => JSON.stringify(req.body.messages);
+
+describe("a escrita vira Pedido de aprovação", () => {
+  test(
+    "o modelo pede para postar: a execução termina esperando aprovação, sem o texto parcial, e o Pedido aparece para todos com o resumo",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t);
+      const abaDaJuliana = await t.socket(juliana);
+
+      t.anthropic.reply({
+        text: "Vou avisar lá.",
+        toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "A reunião mudou para 15h." } }],
+      });
+      const origem = await enviar(t, geral.id, "@Faro avisa no #anuncios que a reunião mudou para 15h");
+
+      const esperando = await andamento(abaDaJuliana, origem, (e) => e.state === "awaiting_approval");
+      expect(esperando.step).toBeNull();
+      const { approval } = await abaDaJuliana.next("approval.created", { timeoutMs: 10_000 });
+      expect(approval).toMatchObject({
+        channelId: geral.id,
+        originMessageId: origem.id,
+        executionId: esperando.id,
+        agent: { displayName: "Faro" },
+        author: { displayName: "Bruno" },
+        tool: "postar_mensagem",
+        toolTitle: "postar mensagem",
+        summary: "Postar em #anuncios: “A reunião mudou para 15h.”",
+        state: "pending",
+      });
+      expect(await pedidos(t, geral.id)).toEqual([approval]);
+
+      // O texto parcial ("Vou avisar lá.") não vira resposta.
+      expect((await mensagens(t, geral.id)).some((m) => m.originMessageId === origem.id)).toBe(false);
+      // A execução continua à vista, esperando, e não ocupa a vez do Faro: a próxima mensagem sai.
+      const [aberta] = (await (
+        await t.as(juliana).get(`/api/conversations/${geral.id}/executions`)
+      ).json()) as ExecutionDto[];
+      expect(aberta).toMatchObject({ id: esperando.id, state: "awaiting_approval" });
+      t.anthropic.reply({ text: "Bom dia, Bruno." });
+      const outra = await enviar(t, geral.id, "@Faro bom dia");
+      expect((await respostaA(t, geral.id, outra)).body).toBe("Bom dia, Bruno.");
+    },
+    LONGO,
+  );
+});
+
+describe("a decisão do autor", () => {
+  test(
+    "só o autor aprova; na aprovação o Shearim posta como o Agente, sem Desfecho nem Agente acionado, e a continuação termina a resposta",
+    async () => {
+      const t = await testApp();
+      const { faro, geral, anuncios } = await workspace(t);
+      // Um segundo Agente no #anuncios: uma mensagem de pessoa ali iria ao roteamento da Articuladora.
+      const prisma: AgentDto = await (
+        await t.as(juliana).post("/api/agents", {
+          name: "Prisma",
+          photo: null,
+          description: "Dados.",
+          instructions: "Você é a Prisma.",
+          model: "claude-sonnet-5-5",
+        })
+      ).json();
+      await t.as(juliana).post(`/api/channels/${anuncios.id}/agents`, { agentId: prisma.id });
+      const abaDaJuliana = await t.socket(juliana);
+
+      t.anthropic.reply(
+        {
+          text: "Vou avisar lá.",
+          toolUse: [
+            {
+              id: "toolu_1",
+              name: "postar_mensagem",
+              input: { conversa: "anuncios", texto: "@prisma a reunião mudou para 15h." },
+            },
+          ],
+        },
+        { text: "Pronto, avisei no #anuncios." },
+      );
+      const origem = await enviar(t, geral.id, "@Faro avisa no #anuncios que a reunião mudou");
+      const pedido = await pedidoPendente(t, geral.id);
+      await abaDaJuliana.next("approval.created", { timeoutMs: 10_000 });
+
+      // Quem não é o autor vê, mas não decide.
+      const alheio = await aprovar(t, pedido, juliana);
+      expect(alheio.status).toBe(403);
+      expect(await alheio.json()).toEqual({ error: "not_author" });
+      expect((await recusar(t, pedido, {}, juliana)).status).toBe(403);
+
+      const aprovado = await aprovar(t, pedido);
+      expect(aprovado.status).toBe(200);
+      expect(await aprovado.json()).toMatchObject({
+        id: pedido.id,
+        state: "approved",
+        result: "mensagem postada em #anuncios",
+        failure: null,
+      });
+      const { approval } = await abaDaJuliana.next("approval.updated", { timeoutMs: 10_000 });
+      expect(approval).toMatchObject({ id: pedido.id, state: "approved" });
+
+      // A mensagem sai como do Faro, exatamente o texto aprovado.
+      const postada = (await mensagens(t, anuncios.id)).at(-1)!;
+      expect(postada).toMatchObject({
+        body: "@prisma a reunião mudou para 15h.",
+        author: { kind: "agent", id: faro.id },
+        originMessageId: null,
+      });
+
+      // A continuação termina a resposta, sabendo o que foi feito.
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Pronto, avisei no #anuncios.");
+      const [, continuacao] = respostas(t);
+      expect(textoDe(continuacao!)).toContain("Postar em #anuncios: “@prisma a reunião mudou para 15h.”");
+      expect(textoDe(continuacao!)).toContain("Bruno aprovou, e o Shearim fez: mensagem postada em #anuncios");
+      // A continuação não pediu de novo a escrita: só dois pedidos de resposta, nenhum roteamento.
+      expect(t.anthropic.requests).toHaveLength(2);
+      const noAnuncios = (await (
+        await t.as(juliana).get(`/api/conversations/${anuncios.id}/executions`)
+      ).json()) as ExecutionDto[];
+      expect(noAnuncios).toEqual([]);
+      expect(await (await t.as(juliana).get(`/api/conversations/${anuncios.id}/outcomes`)).json()).toEqual([]);
+
+      // Um Pedido decidido não se decide de novo.
+      const deNovo = await aprovar(t, pedido);
+      expect(deNovo.status).toBe(409);
+      expect(await deNovo.json()).toEqual({ error: "not_pending" });
+      expect((await recusar(t, pedido)).status).toBe(409);
+    },
+    LONGO,
+  );
+
+  test(
+    "na recusa, com motivo, a continuação recebe a recusa e o motivo, e nada é postado",
+    async () => {
+      const t = await testApp();
+      const { geral, anuncios } = await workspace(t);
+      const abaDaJuliana = await t.socket(juliana);
+
+      t.anthropic.reply(
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "REUNIÃO MUDOU!!!" } }] },
+        { text: "Tudo bem, não avisei." },
+      );
+      const origem = await enviar(t, geral.id, "@Faro avisa no #anuncios que a reunião mudou");
+      const pedido = await pedidoPendente(t, geral.id);
+
+      const recusado = await recusar(t, pedido, { reason: "  muda o tom  " });
+      expect(recusado.status).toBe(200);
+      expect(await recusado.json()).toMatchObject({ state: "rejected", rejectReason: "muda o tom", result: null });
+      const { approval } = await andamentoDoPedido(abaDaJuliana, pedido.id);
+      expect(approval.state).toBe("rejected");
+
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Tudo bem, não avisei.");
+      const [, continuacao] = respostas(t);
+      expect(textoDe(continuacao!)).toContain("Bruno recusou, com o motivo: muda o tom");
+      expect((await mensagens(t, anuncios.id)).some((m) => m.author.kind === "agent")).toBe(false);
+    },
+    LONGO,
+  );
+});
+
+/**
+ * Juliana escreve em `channelId` (com outro Agente além da Articuladora, a mensagem vai ao
+ * roteamento) e a Articuladora decide que ninguém precisa agir. Devolve a mensagem.
+ */
+async function semDesfecho(t: TestApp, channelId: string, body: string) {
+  t.anthropic.reply({ json: { decisao: "nenhum", agentes: [], motivo: "Ninguém precisa agir." } });
+  const mensagem = await enviar(t, channelId, body, juliana);
+  await eventually(
+    "o Desfecho sair",
+    async () =>
+      ((await (await t.as(juliana).get(`/api/conversations/${channelId}/outcomes`)).json()) as unknown[]).length > 0,
+    10_000,
+  );
+  return mensagem;
+}
+
+/** O próximo `approval.updated` do Pedido `id`. */
+async function andamentoDoPedido(aba: EventSocket, id: string) {
+  for (;;) {
+    const event = await aba.next("approval.updated", { timeoutMs: 10_000 });
+    if (event.approval.id === id) return event;
+  }
+}
+
+describe("o alcance da escrita", () => {
+  test(
+    "postar numa conversa de que o Agente não participa, ou em que o autor não pode escrever, é falha da Ferramenta com motivo, sem Pedido",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t);
+      // #vendas: público, sem o Faro. #diretoria: privado, com o Faro, sem o Bruno.
+      await canal(t, "vendas", "public");
+      const diretoria = await canal(t, "diretoria", "private");
+      const faro = ((await (await t.as(juliana).get("/api/agents")).json()) as AgentDto[]).find(
+        (a) => a.name === "Faro",
+      )!;
+      await t.as(juliana).post(`/api/channels/${diretoria.id}/agents`, { agentId: faro.id });
+      const aba = await t.socket(bruno);
+
+      t.anthropic.reply(
+        {
+          toolUse: [{ id: "toolu_1", name: "postar_mensagem", input: { conversa: "#vendas", texto: "Oi, vendas." } }],
+        },
+        {
+          toolUse: [
+            { id: "toolu_2", name: "postar_mensagem", input: { conversa: "#diretoria", texto: "Oi, diretoria." } },
+          ],
+        },
+        { text: "Não consegui postar em nenhum dos dois." },
+      );
+      const origem = await enviar(t, geral.id, "@Faro avisa vendas e o outro Canal");
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Não consegui postar em nenhum dos dois.");
+
+      const [, segunda, terceira] = respostas(t);
+      expect(toolResults(segunda!.body)[0]).toMatchObject({
+        tool_use_id: "toolu_1",
+        is_error: true,
+        content: "A Ferramenta postar mensagem falhou: o Agente não participa dessa conversa.",
+      });
+      expect(toolResults(terceira!.body)[0]).toMatchObject({
+        tool_use_id: "toolu_2",
+        is_error: true,
+        content: "A Ferramenta postar mensagem falhou: a conversa não existe ou quem escreveu não pode escrever nela.",
+      });
+      expect(await pedidos(t, geral.id)).toEqual([]);
+      // O Andamento mostrou as duas falhas, sem o nome de #diretoria.
+      const falhas = aba
+        .received()
+        .flatMap((e) => (e.type === "execution.updated" ? e.execution.tools : []))
+        .filter((c) => c.state === "failed");
+      expect(falhas.map((c) => c.reason)).toContain("o Agente não participa dessa conversa");
+      expect(JSON.stringify(aba.received())).not.toContain("diretoria");
+    },
+    LONGO,
+  );
+
+  test(
+    "se o autor perdeu o acesso durante a espera, a ação aprovada falha com motivo e a continuação recebe a falha",
+    async () => {
+      const t = await testApp();
+      const { faro, geral } = await workspace(t);
+      const diretoria = await canal(t, "diretoria", "private");
+      await t.as(juliana).post(`/api/channels/${diretoria.id}/agents`, { agentId: faro.id });
+      const brunoMe = (await (await t.as(bruno).get("/api/me")).json()) as { id: string };
+      await t.as(juliana).post(`/api/channels/${diretoria.id}/participants`, { memberId: brunoMe.id });
+
+      t.anthropic.reply(
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#diretoria", texto: "Fechamos o contrato." } }] },
+        { text: "Não deu para postar na diretoria." },
+      );
+      const origem = await enviar(t, geral.id, "@Faro avisa a diretoria que fechamos");
+      const pedido = await pedidoPendente(t, geral.id);
+      expect(pedido.summary).toBe("Postar em #diretoria: “Fechamos o contrato.”");
+
+      // Bruno sai do Workspace e volta: quem volta não herda o Canal privado.
+      expect((await t.as(juliana).delete(`/api/members/${brunoMe.id}`)).status).toBe(204);
+      await t.addMember(bruno, { by: juliana });
+
+      const aprovado = await aprovar(t, pedido);
+      expect(aprovado.status).toBe(200);
+      expect(await aprovado.json()).toMatchObject({
+        state: "approved",
+        result: null,
+        failure: "a conversa não existe ou quem escreveu não pode escrever nela",
+      });
+      expect((await mensagens(t, diretoria.id)).some((m) => m.author.kind === "agent")).toBe(false);
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Não deu para postar na diretoria.");
+      expect(textoDe(respostas(t)[1]!)).toContain(
+        "Bruno aprovou, mas a ação falhou: a conversa não existe ou quem escreveu não pode escrever nela",
+      );
+    },
+    LONGO,
+  );
+});
+
+describe("responder em Thread e duas escritas", () => {
+  test(
+    "duas escritas numa resposta geram dois Pedidos, um depois do outro, cada um decidido à parte",
+    async () => {
+      const t = await testApp();
+      const { geral, anuncios } = await workspace(t);
+      const raiz = await semDesfecho(t, anuncios.id, "Quem vai no evento de sexta?");
+
+      t.anthropic.reply(
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "Evento confirmado." } }] },
+        { toolUse: [{ name: "responder_thread", input: { mensagem: raiz.id, texto: "Eu vou, e o Bruno também." } }] },
+        { text: "Postei o aviso; a resposta na Thread ficou de fora." },
+      );
+      const origem = await enviar(t, geral.id, "@Faro confirma o evento e responde a Juliana");
+
+      const primeiro = await pedidoPendente(t, geral.id, 1);
+      expect(await pedidos(t, geral.id)).toHaveLength(1);
+      expect((await aprovar(t, primeiro)).status).toBe(200);
+
+      const segundo = await pedidoPendente(t, geral.id, 2);
+      expect(segundo.id).not.toBe(primeiro.id);
+      expect(segundo).toMatchObject({
+        tool: "responder_thread",
+        toolTitle: "responder em Thread",
+        summary:
+          "Responder na Thread de Juliana em #anuncios (“Quem vai no evento de sexta?”): “Eu vou, e o Bruno também.”",
+      });
+      expect((await recusar(t, segundo)).status).toBe(200);
+
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Postei o aviso; a resposta na Thread ficou de fora.");
+      const ultima = textoDe(respostas(t)[2]!);
+      expect(ultima).toContain("Bruno aprovou, e o Shearim fez: mensagem postada em #anuncios");
+      expect(ultima).toContain("Bruno recusou, sem dar motivo");
+      expect((await pedidos(t, geral.id)).map((p) => p.state)).toEqual(["approved", "rejected"]);
+      const doAnuncios = await mensagens(t, anuncios.id);
+      expect(doAnuncios.filter((m) => m.author.kind === "agent").map((m) => m.body)).toEqual(["Evento confirmado."]);
+    },
+    LONGO,
+  );
+
+  test(
+    "aprovada, a resposta na Thread sai na Thread da mensagem, como o Agente",
+    async () => {
+      const t = await testApp();
+      const { faro, geral, anuncios } = await workspace(t);
+      const raiz = await semDesfecho(t, anuncios.id, "Quem vai no evento de sexta?");
+
+      t.anthropic.reply(
+        { toolUse: [{ name: "responder_thread", input: { mensagem: raiz.id, texto: "O Bruno vai." } }] },
+        { text: "Respondi na Thread." },
+      );
+      const origem = await enviar(t, geral.id, "@Faro diz para a Juliana que eu vou");
+      const pedido = await pedidoPendente(t, geral.id);
+      expect(await (await aprovar(t, pedido)).json()).toMatchObject({
+        result: "resposta postada na Thread em #anuncios",
+      });
+      expect((await mensagens(t, anuncios.id)).at(-1)).toMatchObject({
+        body: "O Bruno vai.",
+        threadRootId: raiz.id,
+        author: { kind: "agent", id: faro.id },
+      });
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Respondi na Thread.");
+    },
+    LONGO,
+  );
+});

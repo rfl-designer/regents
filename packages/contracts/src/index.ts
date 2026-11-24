@@ -582,10 +582,24 @@ export interface WorkspaceContextDto {
  * `queued` esperando a vez, `running` com o passo em `step`, `retrying` (falhou uma vez, com o
  * motivo, e volta sozinha em `retryAt`), `done` com a resposta em `replyMessageId`, `failed` com
  * o motivo (depois da nova tentativa; o autor pode "Tentar de novo"), `not_acting` ("Agentes não
- * agem", com o motivo; não é falha) e `cancelled` (sem motivo: "cancelada por quem escreveu"; com
- * motivo, cancelada pelo Shearim, ex. "quem escreveu saiu do Workspace").
+ * agem", com o motivo; não é falha), `cancelled` (sem motivo: "cancelada por quem escreveu"; com
+ * motivo, cancelada pelo Shearim, ex. "quem escreveu saiu do Workspace") e `awaiting_approval`
+ * (o Pedido de aprovação espera o autor).
  */
-export type ExecutionState = "queued" | "running" | "retrying" | "done" | "failed" | "not_acting" | "cancelled";
+export type ExecutionState =
+  | "queued"
+  | "running"
+  | "retrying"
+  | "done"
+  | "failed"
+  | "not_acting"
+  | "cancelled"
+  /**
+   * O Agente pediu uma escrita (ADR 0011): a execução criou o Pedido de aprovação e terminou, sem
+   * ocupar vaga, "esperando aprovação de <autor>". Na decisão, vira `done` e uma execução de
+   * continuação entra na fila para terminar a resposta.
+   */
+  | "awaiting_approval";
 /** Os estados em que a execução ainda não terminou: o autor pode cancelar. */
 export const OPEN_STATES: readonly ExecutionState[] = ["queued", "running", "retrying"];
 
@@ -672,6 +686,51 @@ export interface ExecutionDto {
  * - `not_linked`: ele não ligou uma Conta ("Agentes não agem: você não ligou uma Conta e …").
  */
 export type YourAccountDto = { state: "limited"; until: string } | { state: "needs_relink" } | { state: "not_linked" };
+
+// ---------- Pedido de aprovação (ADR 0011) ----------
+
+/**
+ * Em que pé está um Pedido de aprovação: `pending` (o autor decide), `approved` (o Shearim fez a
+ * escrita, ou ela falhou: `failure`), `rejected` (com o motivo opcional), `expired` (24 h sem
+ * decisão) ou `cancelled` (a mensagem foi cancelada).
+ */
+export type ApprovalState = "pending" | "approved" | "rejected" | "expired" | "cancelled";
+
+/**
+ * Um Pedido de aprovação: a escrita que um Agente pediu durante uma resposta, à vista de todos que
+ * veem a conversa, ancorada sob a mensagem de origem. Só o autor (`author`) aprova ou recusa, sem
+ * editar. Item de `GET /api/conversations/:id/approvals` e de `approval.created`/`approval.updated`.
+ */
+export interface ApprovalRequestDto {
+  id: string;
+  channelId: string;
+  originMessageId: string;
+  /** A execução que pediu a escrita. */
+  executionId: string;
+  agent: { id: string; displayName: string; photo: string | null };
+  /** O autor da mensagem de origem: o único que decide. */
+  author: { id: string; displayName: string };
+  /** A Ferramenta de escrita (id e nome em pt-BR). */
+  tool: string;
+  toolTitle: string;
+  /** Exatamente o que vai ser feito, em pt-BR ("Postar em #anuncios: “…”"). */
+  summary: string;
+  state: ApprovalState;
+  /** Na recusa: o motivo que o autor deu, ou nulo. */
+  rejectReason: string | null;
+  /** Na aprovação: o resultado da ação ("mensagem postada em #anuncios"). */
+  result: string | null;
+  /** Na aprovação: o motivo de a ação ter falhado (ex. o autor perdeu o acesso), ou nulo. */
+  failure: string | null;
+  createdAt: string;
+  expiresAt: string;
+  decidedAt: string | null;
+}
+
+/** Corpo de `POST /api/conversations/:id/approvals/:approvalId/reject`. */
+export interface RejectApprovalInput {
+  reason?: string;
+}
 
 // ---------- Desfecho (ADR 0004) ----------
 
@@ -904,6 +963,9 @@ export type ServerEvent =
   | { type: "execution.updated"; execution: ExecutionDto }
   /** A Articuladora deu o Desfecho de uma mensagem, para quem vê a conversa. */
   | { type: "outcome.created"; outcome: OutcomeDto }
+  /** Um Pedido de aprovação novo, ou que mudou de estado: para quem vê a conversa. */
+  | { type: "approval.created"; approval: ApprovalRequestDto }
+  | { type: "approval.updated"; approval: ApprovalRequestDto }
   /**
    * As não-lidas do Membro mudaram (chegou mensagem numa conversa dele, ou ele leu algo em
    * qualquer aba ou aparelho). Vai só para as conexões do próprio Membro.

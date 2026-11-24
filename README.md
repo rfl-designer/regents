@@ -431,6 +431,14 @@ await chamada.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, c
 - **Andamento:** enquanto uma roda, `step: "tool"` e o `label` dela ("listando os Agentes") no último item de `ExecutionDto.tools`; a vigia fica parada (vale o prazo da Ferramenta) e recomeça no fim. A falha aparece como "⚠ <Ferramenta> falhou: <motivo>".
 - **Nos testes:** `t.anthropic.reply({ toolUse: [{ name: "listar_agentes" }] })` pede a Ferramenta e `toolResults(req.body)` lê o que voltou; `testApp({ tools: { definitions, timeoutMs } })` junta uma Ferramenta que trava ou falha. No e2e, `[listar agentes]` no texto.
 
+### Pedido de aprovação (#50, ADR 0011)
+
+Uma Ferramenta de escrita (`WriteTool`, `access: "write"`) não roda durante a resposta: `prepare` confere a entrada e o alcance e devolve a ação exata e o resumo (falha com `ToolFailure` é falha da Ferramenta, sem Pedido); a porta cria o Pedido (`approval_requests`, com o hash da ação) e a execução termina em `awaiting_approval`, abortada com o motivo `"approval"` (o texto parcial sai fora; não ocupa vaga nem a vez). Na decisão do autor, `executions.continueAfter` encerra a que esperava e põe na fila a continuação (`approvalRequestId`), que recebe no contexto a cadeia de Pedidos com o resultado, a falha ou a recusa e o motivo.
+
+- **Escritas do Workspace** (`tools/workspace-writes.ts`): `postar_mensagem { conversa, texto }` e `responder_thread { mensagem, texto }`. Alcance: o Agente participa da conversa e o autor pode escrever nela (conferido no `prepare` e de novo no `perform`). A mensagem sai pelo `createAgentPoster` (`src/agent-posts.ts`): do Agente, sem Desfecho e sem acionar Agente.
+- **Rotas:** `GET /api/conversations/:id/approvals` (quem vê a conversa), `POST .../approvals/:approvalId/approve` e `.../reject` `{ reason? }` (só o autor: `403 not_author`; já decidido: `409 not_pending`). Eventos `approval.created` e `approval.updated` para quem vê a conversa.
+- **No PWA:** o cartão "Pedido de aprovação de <Agente>" sob a mensagem de origem; "Aprovar" e "Recusar" só para o autor. No e2e, `[postar]` no texto faz o Agente com "postar mensagem" pedir para postar no #geral.
+
 ### A Articuladora e o Desfecho (#22, ADR 0004)
 
 - **Ela existe em todo Workspace:** a Sophya nasce na migração `0012` (a linha em `agents` com `builtin: true`, `@sophya` ou com sufixo) e entra em todo Canal, público ou privado (`addArticuladora` na criação do Canal; os de antes, pela migração), nunca nas DMs entre pessoas. `AgentDto.builtin` a marca. A descrição e as instruções dela vêm do código (`src/articuladora.ts`); o Admin muda nome, foto e modelo (o orçamento é do #28). Nos testes, ela já está lá: `GET /api/agents` a devolve primeiro e todo `ChannelDto.participants` a traz.
