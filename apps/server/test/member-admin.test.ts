@@ -10,7 +10,7 @@ import {
   type MessageDto,
 } from "@shearim/contracts";
 import { FAKE_LOGIN_CODE } from "./fake-claude";
-import { type EventSocket, type TestApp, testApp } from "./harness";
+import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
 const bruno = { id: "1002", login: "bruno@exemplo.com", name: "Bruno" };
@@ -324,7 +324,10 @@ describe("Os Agentes e quem saiu", () => {
     await t.as(juliana).delete(`/api/members/${ids.bruno.id}`);
 
     await t.as(carla).post(`/api/channels/${geral.id}/messages`, { body: "@Faro quando sai a proposta?" });
-    const [chamada] = await t.anthropic.waitForRequests(1);
+    // As mensagens sem Menção passam pelo roteamento da Sophya (com `output_config`); a do Faro, não.
+    const chamada = await eventually("o Faro ser chamado", async () =>
+      t.anthropic.requests.find((r) => !r.body.output_config),
+    );
 
     const system = String(chamada!.body.system);
     const pessoasNoContexto = system.slice(system.indexOf("Pessoas:"), system.indexOf("Agentes:"));

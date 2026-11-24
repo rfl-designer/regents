@@ -1,8 +1,10 @@
 import { and, asc, desc, eq, inArray, lt } from "drizzle-orm";
 import type { Agent } from "./agents";
+import { withBuiltinText } from "./articuladora";
 import { type Db, schema } from "./db/client";
 import { isActive } from "./members";
 import type { ModelMessage } from "./model/port";
+import { workspaceMapFor } from "./routing";
 import { readWorkspaceContext } from "./workspace-context";
 
 const { messages, members, agents, channels, channelParticipants, channelAgents } = schema;
@@ -16,10 +18,14 @@ export interface ModelContext {
 /**
  * Por que o Agente foi chamado: entra no preâmbulo ("sabe quem chamou").
  * `mention`: uma Menção, em Canal ou DM. `dm`: o Agente de uma DM com Agente, que responde a
- * cada mensagem. SEAM do #22: a resposta da Articuladora e o delegado entram aqui como
- * outros tipos (`{ kind: "delegated"; by: string; cover: string }`, com a frase do que cobrir).
+ * cada mensagem. `reply`: a Articuladora decidiu responder ela mesma, pelo `reason`.
+ * `delegated`: a Articuladora (`by`) passou a mensagem para ele, com a frase do que cobrir.
  */
-export type Call = { kind: "mention" } | { kind: "dm" };
+export type Call =
+  | { kind: "mention" }
+  | { kind: "dm" }
+  | { kind: "reply"; reason: string }
+  | { kind: "delegated"; by: string; cover: string };
 
 /**
  * Montagem de contexto (Spec, módulo 5). Lido na hora em que a execução começa (inclusive numa
@@ -38,10 +44,11 @@ export type Call = { kind: "mention" } | { kind: "dm" };
  */
 export async function buildContext(
   db: Db,
-  agent: Agent,
+  row: Agent,
   originMessageId: string,
   call: Call = { kind: "mention" },
 ): Promise<ModelContext> {
+  const agent = withBuiltinText(row);
   const [origin] = await db.select().from(messages).where(eq(messages.id, originMessageId));
   if (!origin) throw new Error(`buildContext: a mensagem ${originMessageId} não existe`);
   const [conversation] = await db.select().from(channels).where(eq(channels.id, origin.channelId));
@@ -61,18 +68,28 @@ export async function buildContext(
     .where(eq(channelAgents.channelId, conversation!.id));
   const agentIds = new Set([agent.id, ...inChannel.map((a) => a.id), ...recent.flatMap((m) => m.agentId ?? [])]);
   const team = await db
-    .select({ id: agents.id, name: agents.name, description: agents.description })
+    .select({ id: agents.id, name: agents.name, description: agents.description, builtin: agents.builtin })
     .from(agents)
     .where(inArray(agents.id, [...agentIds]))
-    .orderBy(asc(agents.createdAt), asc(agents.name));
+    // A Articuladora primeiro: a hora dela é a da migração, não a do relógio do Workspace.
+    .orderBy(desc(agents.builtin), asc(agents.createdAt), asc(agents.name))
+    .then((rows) => rows.map((a) => withBuiltinText({ ...a, instructions: "" })));
 
   const caller = recent.at(-1)!;
   const where =
     conversation!.kind === "public" || conversation!.kind === "private" ? `no Canal #${conversation!.name}` : "numa DM";
-  const why =
-    call.kind === "mention"
-      ? `${caller.author} chamou você com uma Menção ${where}.`
-      : `Você está numa DM com ${caller.author}: você responde a cada mensagem.`;
+  const why = {
+    mention: () => `${caller.author} chamou você com uma Menção ${where}.`,
+    dm: () => `Você está numa DM com ${caller.author}: você responde a cada mensagem.`,
+    reply: () =>
+      call.kind === "reply"
+        ? `Você decidiu responder você mesma à mensagem de ${caller.author} ${where}. Por quê: ${call.reason}`
+        : "",
+    delegated: () =>
+      call.kind === "delegated"
+        ? `${call.by}, a Articuladora, passou para você a mensagem de ${caller.author} ${where}. Cubra isto: ${call.cover}`
+        : "",
+  }[call.kind]();
 
   const preamble = [
     `Você é ${agent.name}, um Agente do Shearim, um chat de time em que pessoas e Agentes conversam juntos.`,
@@ -97,6 +114,7 @@ export async function buildContext(
     section("Suas instruções", agent.instructions),
     section("Instruções do Canal", conversation!.instructions),
     section("Quem é quem", whoIsWho),
+    ...(await articuladoraMap(db, agent, origin, conversation!)),
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -117,6 +135,19 @@ export async function buildContext(
   };
 }
 
+/**
+ * A Articuladora conhece o Workspace todo como quem escreveu o vê (ADR 0004): os outros
+ * Agentes e os Canais que o autor pode ver, para sugerir em texto quem chamar.
+ */
+async function articuladoraMap(db: Db, agent: Agent, origin: Origin, conversation: { id: string; kind: string }) {
+  if (!agent.builtin || !origin.authorMemberId) return [];
+  const map = await workspaceMapFor(db, origin.authorMemberId, conversation.id);
+  return [
+    section("Outros Agentes do Workspace", map.agents.join("\n")),
+    section("Canais que quem escreveu pode ver", map.channels),
+  ];
+}
+
 function section(title: string, body: string) {
   const text = body.trim();
   return text ? `## ${title}\n\n${text}` : "";
@@ -128,7 +159,7 @@ type Origin = typeof messages.$inferSelect;
  * As N mensagens anteriores à de origem, mais ela, em ordem de gravação, com o autor.
  * SEAM do #29 (Threads): numa Thread, a raiz entra sempre, seguida das N últimas da Thread.
  */
-async function recentMessages(db: Db, origin: Origin, n: number) {
+export async function recentMessages(db: Db, origin: Origin, n: number) {
   const select = () =>
     db
       .select({

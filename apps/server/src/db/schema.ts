@@ -7,6 +7,7 @@ import {
   foreignKey,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   primaryKey,
@@ -122,11 +123,19 @@ export const agents = pgTable(
     instructions: text().notNull().default(""),
     model: text().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull(),
+    /**
+     * A marca de embutida: a Articuladora (ADR 0004), uma só, criada pela migração `0012`.
+     * A descrição e as instruções dela vêm do código (`articuladora.ts`), não destas colunas.
+     */
+    builtin: boolean().notNull().default(false),
   },
-  (t) => [uniqueIndex("agents_name_lower_unique").on(sql`lower(${t.name})`)],
+  (t) => [
+    uniqueIndex("agents_name_lower_unique").on(sql`lower(${t.name})`),
+    uniqueIndex("agents_one_builtin").on(t.builtin).where(sql`${t.builtin}`),
+  ],
 );
 
-/** Agentes num Canal: a quem a Articuladora (#22) pode delegar ali. */
+/** Agentes num Canal: a quem a Articuladora pode delegar ali. Ela própria está em todo Canal. */
 export const channelAgents = pgTable(
   "channel_agents",
   {
@@ -208,13 +217,16 @@ export const executionState = pgEnum("execution_state", [
   "not_acting",
   "cancelled",
 ]);
-/** `mention`: um Agente mencionado. `dm`: o Agente de uma DM com Agente, a cada mensagem. */
-export const executionKind = pgEnum("execution_kind", ["mention", "dm"]);
+/**
+ * `mention`: um Agente mencionado. `dm`: o Agente de uma DM com Agente, a cada mensagem.
+ * `route`: o roteamento da Articuladora (o passo "decidindo"), que dá o Desfecho. `reply`: a
+ * Articuladora responde ela mesma. `delegated`: um Agente do Canal a quem ela delegou.
+ */
+export const executionKind = pgEnum("execution_kind", ["mention", "dm", "route", "reply", "delegated"]);
 
 /**
  * A fila de execuções (Spec, módulo 6): cada chamada a modelo por causa de uma mensagem.
- * Sobrevive ao reinício. Hoje há a Menção e a resposta na DM com Agente (`kind`); o roteamento, a resposta da
- * Articuladora e os delegados (#22) entram como outros tipos.
+ * Sobrevive ao reinício. O tipo diz por que o Agente foi chamado (`kind`).
  */
 export const executions = pgTable(
   "executions",
@@ -255,6 +267,31 @@ export const executions = pgTable(
     finishedAt: timestamp({ withTimezone: true }),
   },
   (t) => [index().on(t.state, t.arrivedAt, t.seq), index().on(t.channelId, t.state)],
+);
+
+export const outcomeDecision = pgEnum("outcome_decision", ["reply", "delegate", "none"]);
+
+/**
+ * O Desfecho (ADR 0004) que a Articuladora deu a uma mensagem de pessoa num Canal com outros
+ * Agentes: responder, delegar (até 2 Agentes do Canal, cada um com a frase do que cobrir) ou
+ * nenhum, sempre com o motivo de uma frase. Um por mensagem. A Menção não passa por aqui.
+ */
+export const outcomes = pgTable(
+  "outcomes",
+  {
+    messageId: uuid()
+      .primaryKey()
+      .references(() => messages.id),
+    channelId: uuid()
+      .notNull()
+      .references(() => channels.id),
+    decision: outcomeDecision().notNull(),
+    reason: text().notNull(),
+    /** Os delegados, na ordem da Articuladora: `[{ agentId, cover }]` (vazio fora de `delegate`). */
+    delegates: jsonb().$type<{ agentId: string; cover: string }[]>().notNull().default([]),
+    decidedAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [index().on(t.channelId)],
 );
 
 /**

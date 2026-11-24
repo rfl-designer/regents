@@ -47,7 +47,7 @@ describe("Identificador de Menção: um espaço só para Membros e Agentes", () 
   test("o Membro não pode editar o seu para o identificador de um Agente", async () => {
     const t = await testApp();
     await entrar(t, { id: "1001", name: "Juliana" });
-    await criarAgente(t, "Sophya");
+    // A Sophya, a Articuladora, vem com todo Workspace: o @sophya já é de um Agente.
 
     const res = await t.as({ id: "1001", name: "Juliana" }).patch("/api/me", { handle: "@Sophya" });
 

@@ -1,5 +1,5 @@
 {
-  "id": "88eb9872-8ed7-4513-bb50-0e4353d3cb08",
+  "id": "2800402e-66e8-47c3-a637-0a6511f4e4b1",
   "prevId": "7ee62bb1-1db3-4de7-a1aa-8f1e3a4c6385",
   "version": "7",
   "dialect": "postgresql",
@@ -145,6 +145,13 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
+        },
+        "builtin": {
+          "name": "builtin",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         }
       },
       "indexes": {
@@ -159,6 +166,22 @@
             }
           ],
           "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "agents_one_builtin": {
+          "name": "agents_one_builtin",
+          "columns": [
+            {
+              "expression": "builtin",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"agents\".\"builtin\"",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -884,12 +907,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
-        },
-        "left_at": {
-          "name": "left_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -1327,6 +1344,100 @@
       },
       "isRLSEnabled": false
     },
+    "public.outcomes": {
+      "name": "outcomes",
+      "schema": "",
+      "columns": {
+        "message_id": {
+          "name": "message_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "channel_id": {
+          "name": "channel_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "decision": {
+          "name": "decision",
+          "type": "outcome_decision",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "delegates": {
+          "name": "delegates",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "decided_at": {
+          "name": "decided_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "outcomes_channel_id_index": {
+          "name": "outcomes_channel_id_index",
+          "columns": [
+            {
+              "expression": "channel_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "outcomes_message_id_messages_id_fk": {
+          "name": "outcomes_message_id_messages_id_fk",
+          "tableFrom": "outcomes",
+          "tableTo": "messages",
+          "columnsFrom": [
+            "message_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "outcomes_channel_id_channels_id_fk": {
+          "name": "outcomes_channel_id_channels_id_fk",
+          "tableFrom": "outcomes",
+          "tableTo": "channels",
+          "columnsFrom": [
+            "channel_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.push_streaks": {
       "name": "push_streaks",
       "schema": "",
@@ -1591,7 +1702,10 @@
       "schema": "public",
       "values": [
         "mention",
-        "dm"
+        "dm",
+        "route",
+        "reply",
+        "delegated"
       ]
     },
     "public.execution_state": {
@@ -1622,6 +1736,15 @@
       "values": [
         "admin",
         "member"
+      ]
+    },
+    "public.outcome_decision": {
+      "name": "outcome_decision",
+      "schema": "public",
+      "values": [
+        "reply",
+        "delegate",
+        "none"
       ]
     }
   },

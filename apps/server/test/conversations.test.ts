@@ -24,7 +24,10 @@ describe("Conversas", () => {
         kind: "public",
         instructions: "",
         recentMessages: 30,
-        participants: [{ kind: "member", id: expect.any(String), displayName: "Juliana" }],
+        participants: [
+          { kind: "member", id: expect.any(String), displayName: "Juliana" },
+          { kind: "agent", id: expect.any(String), displayName: "Sophya", photo: null },
+        ],
       },
     ]);
   });

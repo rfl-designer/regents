@@ -25,6 +25,12 @@ async function criarAgente(t: TestApp, input: Partial<typeof faro> = {}): Promis
   return res.json();
 }
 
+/** Os Agentes criados no teste: a Articuladora, que vem com todo Workspace, fica de fora. */
+async function semArticuladora(t: TestApp, who: Person): Promise<AgentDto[]> {
+  const all: AgentDto[] = await (await t.as(who).get("/api/agents")).json();
+  return all.filter((a) => !a.builtin);
+}
+
 describe("Chave do Workspace", () => {
   test("o Admin grava a Chave, e ela nunca volta ao navegador", async () => {
     const t = await testApp();
@@ -85,7 +91,7 @@ describe("Agentes", () => {
     const res = await t.as(juliana).post("/api/agents", faro);
 
     expect(res.status).toBe(201);
-    expect(await res.json()).toEqual({ id: expect.any(String), handle: "faro", ...faro });
+    expect(await res.json()).toEqual({ id: expect.any(String), handle: "faro", builtin: false, ...faro });
   });
 
   test("o Agente ganha o identificador de Menção do nome inteiro, sem espaço nem acento", async () => {
@@ -95,8 +101,8 @@ describe("Agentes", () => {
     const agente = await criarAgente(t, { name: "Sophya Jurídico" });
 
     expect(agente.handle).toBe("sophyajuridico");
-    const [visto] = (await (await t.as(juliana).get("/api/agents")).json()) as AgentDto[];
-    expect(visto!.handle).toBe("sophyajuridico");
+    const visto = await semArticuladora(t, juliana);
+    expect(visto[0]!.handle).toBe("sophyajuridico");
   });
 
   test("todo Membro vê a descrição dos Agentes, mas as instruções são só do Admin", async () => {
@@ -104,8 +110,8 @@ describe("Agentes", () => {
     await membro(t, bruno);
     const criado = await criarAgente(t);
 
-    const visto: AgentDto[] = await (await t.as(bruno).get("/api/agents")).json();
-    const doAdmin: AgentDto[] = await (await t.as(juliana).get("/api/agents")).json();
+    const visto = await semArticuladora(t, bruno);
+    const doAdmin = await semArticuladora(t, juliana);
 
     const { instructions: _, ...publico } = criado;
     expect(visto).toEqual([publico]);
@@ -119,7 +125,7 @@ describe("Agentes", () => {
     const res = await t.as(bruno).post("/api/agents", faro);
 
     expect(res.status).toBe(403);
-    expect(await (await t.as(bruno).get("/api/agents")).json()).toEqual([]);
+    expect(await semArticuladora(t, bruno)).toEqual([]);
   });
 
   test("um Agente precisa de nome e de um modelo conhecido, e o nome não se repete", async () => {

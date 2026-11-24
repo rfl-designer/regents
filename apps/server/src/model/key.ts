@@ -41,6 +41,9 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
             messages: request.messages,
             betas: ["server-side-fallback-2026-07-01"],
             fallbacks: "default",
+            ...(request.output && {
+              output_config: { format: { type: "json_schema", schema: request.output.schema } },
+            }),
           },
           { signal },
         );
