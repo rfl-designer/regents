@@ -9,9 +9,10 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { AgentsSettings, WorkspaceKeySettings } from "./AgentsAdmin";
 import { Avatar } from "./Avatar";
-import { ApiFailure, api, Offline } from "./api";
+import { ApiFailure, api } from "./api";
 import { ChannelSettings } from "./ChannelSettings";
 import { ChannelView } from "./ChannelView";
+import { type Notice, notice, reachOf, useConnectionNotice, useOnline } from "./connection";
 import { DevicesView } from "./DevicesView";
 import { DmView } from "./DmView";
 import { EntryView } from "./EntryView";
@@ -30,16 +31,16 @@ type State =
   | { kind: "ready"; me: MeDto; channels: ChannelDto[]; dms: DmDto[] }
   /** Tem identidade da tailnet, mas ainda não é Membro: o Pedido de entrada. */
   | { kind: "entry" }
+  /** O servidor não respondeu, ou respondeu sem o tailscaled: a tela tenta de novo sozinha. */
+  | { kind: "down"; reach: "unreachable" | "identity_unavailable" }
   | { kind: "blocked"; title: string; detail: string };
 
+/** De quanto em quanto tempo a tela de sem conexão tenta carregar de novo. */
+const RELOAD_MS = 2_000;
+
 function explain(err: unknown): State {
-  if (err instanceof Offline) {
-    return {
-      kind: "blocked",
-      title: "Sem conexão com o Shearim",
-      detail: "Confira se o Tailscale está ligado neste aparelho e tente de novo.",
-    };
-  }
+  const reach = reachOf(err);
+  if (reach === "unreachable" || reach === "identity_unavailable") return { kind: "down", reach };
   // Em geral quem chega sem identidade já recebe a página estática do servidor;
   // isto cobre o PWA aberto do cache ou a identidade que some no meio da sessão.
   if (err instanceof ApiFailure && err.body?.error === "no_identity") {
@@ -113,6 +114,10 @@ export function App() {
     setState((s) => (s.kind === "ready" ? { ...s, me: change(s.me) } : s));
   }, []);
 
+  const online = useOnline();
+  const lost = useCallback((err: unknown) => setState(explain(err)), []);
+  const connection = useConnectionNotice(lost);
+
   useServerEvents((event) => {
     // A cada (re)conexão, a lista do servidor manda: pode ter mudado enquanto a conexão caiu.
     if (event.type === "ready") {
@@ -134,11 +139,23 @@ export function App() {
     if (event.type === "member.updated") {
       setMe((me) => (me.id === event.member.id ? { ...me, ...event.member } : me));
     }
-  });
+  }, state.kind === "ready");
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Sem conexão ao abrir: tenta de novo sozinho, e na hora em que a internet volta.
+  const down = state.kind === "down";
+  useEffect(() => {
+    if (!down) return;
+    const timer = setInterval(load, RELOAD_MS);
+    window.addEventListener("online", load);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("online", load);
+    };
+  }, [down, load]);
 
   // Tocar numa notificação com o Shearim já aberto: o service worker pede a conversa aqui.
   useEffect(() => {
@@ -174,6 +191,15 @@ export function App() {
 
   if (state.kind === "loading") return <main className="center">Carregando…</main>;
   if (state.kind === "entry") return <EntryView onApproved={load} />;
+  if (state.kind === "down") {
+    const { title, detail } = online ? notice(state.reach) : notice("offline");
+    return (
+      <main className="center">
+        <h1>{title}</h1>
+        <p>{detail}</p>
+      </main>
+    );
+  }
   if (state.kind === "blocked") {
     return (
       <main className="center">
@@ -191,6 +217,7 @@ export function App() {
   };
   return (
     <div className="shell">
+      <ConnectionBanner notice={connection} />
       <header className="topbar">
         <strong>Shearim</strong>
         <div className="row">
@@ -277,6 +304,22 @@ export function App() {
           <main className="center">Nenhum Canal ainda.</main>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * A faixa de conexão sobre a conversa. A região `status` fica sempre montada (vazia quando está
+ * tudo bem), para o leitor de tela anunciar quando o aviso aparece.
+ */
+function ConnectionBanner({ notice }: { notice: Notice | null }) {
+  return (
+    <div className="connection-banner" role="status" data-kind={notice?.kind}>
+      {notice && (
+        <>
+          <strong>{notice.title}</strong> <span>{notice.detail}</span>
+        </>
+      )}
     </div>
   );
 }

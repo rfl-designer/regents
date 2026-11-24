@@ -199,6 +199,8 @@ export interface EventSocket {
   next<T extends ServerEventType>(type: T, opts?: { timeoutMs?: number }): Promise<ServerEventOf<T>>;
   /** Tudo o que chegou até agora, na ordem, inclusive o que `next` já leu. */
   received(): ServerEvent[];
+  /** Resolve quando a conexão cai, com o código de fechamento que o servidor mandou (1012: vai reiniciar). */
+  readonly closed: Promise<{ code: number; reason: string }>;
   /** O `connectionId` do `ready`: é com ele que a Presença diz o que esta conexão tem à vista. */
   connectionId: string;
   close(): Promise<void>;
@@ -215,7 +217,10 @@ async function openEventSocket(url: string, headers: Record<string, string>, lab
   const all: ServerEvent[] = [];
   const unread: ServerEvent[] = [];
   const waiters: { type: ServerEventType; resolve: (e: ServerEvent) => void }[] = [];
-  let closed: Promise<void> | undefined;
+  let closing: Promise<void> | undefined;
+  const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+    ws.addEventListener("close", (e) => resolve({ code: e.code, reason: e.reason }), { once: true });
+  });
 
   const deliver = () => {
     for (const w of [...waiters]) {
@@ -254,17 +259,18 @@ async function openEventSocket(url: string, headers: Record<string, string>, lab
       });
     },
     received: () => [...all],
+    closed,
     get connectionId() {
       const ready = all.find((e) => e.type === "ready");
       return ready?.type === "ready" ? ready.connectionId : "";
     },
     close() {
-      closed ??= new Promise((resolve) => {
+      closing ??= new Promise((resolve) => {
         if (ws.readyState === WebSocket.CLOSED) return resolve();
         ws.addEventListener("close", () => resolve(), { once: true });
         ws.close();
       });
-      return closed;
+      return closing;
     },
   };
 
@@ -297,6 +303,14 @@ const UPGRADE_HEADERS = {
 };
 
 // ---------- app de teste ----------
+
+/**
+ * `server.stop(true)`, sem ficar preso: no Bun 1.3.11, depois que o servidor fecha um WebSocket
+ * (o 1012 do dreno), a promessa do `stop` nunca resolve, embora a porta já tenha fechado.
+ */
+function stopServer(s: ReturnType<typeof Bun.serve>) {
+  return Promise.race([s.stop(true), Bun.sleep(200)]);
+}
 
 export interface Client {
   get(path: string, init?: RequestInit): Promise<Response>;
@@ -409,7 +423,7 @@ export async function testApp(
       const { app, websocket } = current;
       const s = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: app.fetch, websocket });
       server = s;
-      onCleanup(() => s.stop(true));
+      onCleanup(() => stopServer(s));
     }
     return `127.0.0.1:${server.port}`;
   }
@@ -472,7 +486,7 @@ export async function testApp(
       if (server) {
         const s = server;
         server = undefined;
-        await s.stop(true);
+        await stopServer(s);
       }
       current = await boot();
     },
@@ -480,7 +494,7 @@ export async function testApp(
      * O dreno do `SIGTERM`: a fila para de pegar trabalho e espera o que está rodando até `ms`
      * (20 s do relógio injetável por padrão). O app continua respondendo; `restart()` sobe outro.
      */
-    drain: (ms?: number) => current.executions.drain(ms),
+    drain: (ms?: number) => current.drain(ms),
     /** Cliente HTTP como uma pessoa da tailnet. */
     as: (who: Person) => client(identityHeaders(who)),
     /** Cliente HTTP sem identidade (nó com tag, Funnel). */
