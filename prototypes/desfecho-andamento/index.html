@@ -1,0 +1,530 @@
+<!doctype html>
+<!--
+  PROTÓTIPO DESCARTÁVEL — ticket #5 do mapa "Shearim v1" (Como o Desfecho e o Andamento aparecem na conversa).
+  Quatro variantes do mesmo Canal, trocáveis por ?variant=A|B|C|D ou pelas setas da barra inferior (← →).
+  Nada aqui é código de produção: sem testes, sem backend, tudo em memória. Rodar: open prototypes/desfecho-andamento/index.html
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PROTÓTIPO · Desfecho e Andamento</title>
+<style>
+:root{
+  --bg:#f6f6f4; --panel:#ffffff; --ink:#1d1d1f; --muted:#6b6b72; --faint:#a3a3aa; --line:#e6e6e3;
+  --hover:#f0f0ed; --accent:#4f46e5; --warn:#b45309; --warn-bg:#fff7ed; --err:#c0262d; --err-bg:#fff1f1;
+  --ok:#15803d; --chip:#efeff2; --agent-bg:#f7f5ff;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#121214; --panel:#1b1b1f; --ink:#ececf0; --muted:#9a9aa3; --faint:#62626b; --line:#2b2b31;
+    --hover:#232328; --accent:#8b85ff; --warn:#f0a44b; --warn-bg:#2a2013; --err:#ff6b6b; --err-bg:#2c1616;
+    --ok:#4ade80; --chip:#26262c; --agent-bg:#1f1d2b;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+button{font:inherit;color:inherit;cursor:pointer}
+#banner{position:fixed;top:0;left:0;right:0;z-index:50;background:#fde047;color:#3b2f00;font-size:12px;text-align:center;padding:3px 8px}
+#stage{position:fixed;top:22px;bottom:64px;left:0;right:0;display:flex;justify-content:center;align-items:stretch}
+#app{flex:1;display:flex;background:var(--panel);overflow:hidden;position:relative}
+body.phone #stage{align-items:center}
+body.phone #app{flex:0 0 390px;height:min(800px,100%);border:1px solid var(--line);border-radius:28px;box-shadow:0 10px 40px rgba(0,0,0,.15)}
+
+/* layout do canal */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.head{padding:10px 16px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.head b{font-size:15px}
+.head small{color:var(--muted)}
+.stream{flex:1;overflow-y:auto;padding:8px 0 12px}
+.composer{border-top:1px solid var(--line);padding:10px 12px;display:flex;gap:8px}
+.composer input{flex:1;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;padding:8px 10px;font:inherit}
+.composer button{border:0;background:var(--accent);color:#fff;border-radius:8px;padding:0 14px}
+.side{width:320px;border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:var(--panel)}
+.side .head{justify-content:space-between}
+.side .body{flex:1;overflow-y:auto;padding:8px 0}
+.narrow .side{position:absolute;inset:0;width:auto;z-index:5;border:0}
+
+/* mensagem */
+.msg{display:flex;gap:10px;padding:5px 16px}
+.msg:hover{background:var(--hover)}
+.msg.flash{animation:flash 1.4s}
+@keyframes flash{from{background:color-mix(in srgb,var(--accent) 22%,transparent)}to{background:transparent}}
+.av{flex:0 0 32px;height:32px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:600;font-size:13px;position:relative}
+.av.ag{border-radius:9px}
+.av.ag::after{content:"✦";position:absolute;right:-4px;bottom:-4px;font-size:10px;background:var(--panel);color:var(--accent);border-radius:50%;width:14px;height:14px;display:grid;place-items:center}
+.av.sm{flex-basis:20px;width:20px;height:20px;font-size:10px;border-radius:50%}
+.av.sm.ag{border-radius:6px}
+.av.sm.ag::after{display:none}
+.bd{min-width:0;flex:1}
+.nm{font-weight:600}
+.tm0{color:var(--faint);font-size:12px;margin-left:6px}
+.tag{font-size:11px;color:var(--muted);background:var(--chip);border-radius:4px;padding:0 5px;margin-left:6px}
+.txt{white-space:pre-wrap;word-wrap:break-word}
+.quote{font-size:12px;color:var(--muted);border-left:2px solid var(--line);padding-left:6px;margin:1px 0 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nil{color:var(--faint);font-size:12px;margin-left:6px;cursor:help}
+.micro{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center;margin-top:2px}
+.micro.warn{color:var(--warn)}
+.paid{font-size:11.5px;color:var(--warn);margin-top:2px}
+.dots::after{content:"";animation:dots 1.2s steps(4) infinite}
+@keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+.spin{width:10px;height:10px;border:2px solid var(--faint);border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite;display:inline-block;flex:0 0 auto}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* variante A: resposta ancorada */
+.anch{margin-left:42px;border-left:2px solid var(--line);padding-left:0}
+.anch .msg{padding-left:12px}
+.ph{color:var(--muted);font-style:italic}
+.failcard{border:1px solid color-mix(in srgb,var(--err) 40%,transparent);background:var(--err-bg);border-radius:8px;padding:8px 10px;margin-top:2px}
+.failcard .why{color:var(--err)}
+.failcard .meta{font-size:12px;color:var(--muted);margin-top:2px}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:3px 10px;font-size:12.5px;margin-top:6px;margin-right:6px}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.blocked{font-size:12.5px;color:var(--warn);background:var(--warn-bg);border-radius:6px;padding:4px 8px;margin-top:3px;display:inline-block}
+
+/* variante B: chips + painel */
+.chips{display:flex;gap:4px;flex-wrap:wrap;margin-top:3px}
+.chip{font-size:11.5px;background:var(--chip);color:var(--muted);border-radius:999px;padding:1px 8px;display:inline-flex;gap:5px;align-items:center;border:0}
+.chip.on{color:var(--accent)}
+.chip.bad{background:var(--err-bg);color:var(--err)}
+.chip.warn{background:var(--warn-bg);color:var(--warn)}
+.chip.ok{color:var(--ok)}
+.item{padding:8px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+.item:hover{background:var(--hover)}
+.item .l1{display:flex;gap:6px;align-items:center;font-size:13px}
+.item .l2{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.item.bad .l1{color:var(--err)}
+.sec{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);padding:10px 14px 4px}
+.empty{color:var(--muted);padding:14px;font-size:13px}
+.strip{border-top:1px solid var(--line);background:var(--agent-bg);font-size:12.5px;padding:6px 12px;display:flex;gap:10px;align-items:center;cursor:pointer}
+.strip .bad{color:var(--err)}
+
+/* variante C: thread */
+.tsum{display:flex;gap:6px;align-items:center;margin-top:4px;padding:3px 8px 3px 4px;border-radius:6px;cursor:pointer;border:1px solid transparent;max-width:100%}
+.tsum:hover{border-color:var(--line);background:var(--panel)}
+.tsum .avs{display:flex}
+.tsum .avs .av{margin-right:-4px;border:2px solid var(--panel)}
+.tsum .s{font-size:12.5px;color:var(--accent);white-space:nowrap}
+.tsum .p{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.tsum .s.bad{color:var(--err)}
+.sys{font-size:12px;color:var(--muted);text-align:center;padding:6px 16px;display:flex;gap:6px;justify-content:center;align-items:center}
+.back{border:0;background:none;color:var(--accent);padding:0}
+
+/* variante D: líder fala */
+.agentmsg{background:var(--agent-bg)}
+.typing{font-size:12.5px;color:var(--muted);padding:4px 16px;min-height:24px;display:flex;gap:14px;flex-wrap:wrap}
+.react{display:inline-flex;gap:4px;align-items:center;font-size:11.5px;background:var(--chip);color:var(--muted);border-radius:999px;padding:0 7px;margin-top:3px}
+
+/* barra do protótipo */
+#bar{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:60;background:#111;color:#fff;border-radius:999px;padding:6px 8px;display:flex;gap:6px;align-items:center;box-shadow:0 6px 24px rgba(0,0,0,.35);font-size:13px;max-width:calc(100vw - 16px);flex-wrap:wrap;justify-content:center}
+#bar button,#bar select{background:#2a2a2e;border:0;color:#fff;border-radius:999px;padding:5px 11px;font:inherit}
+#bar .lbl{padding:0 6px;font-weight:600;white-space:nowrap}
+#bar select{max-width:190px}
+@media (max-width:640px){#bar{border-radius:16px}#stage{bottom:140px}}
+</style>
+</head>
+<body>
+<div id="banner">PROTÓTIPO descartável · ticket #5 do mapa Shearim v1 · nada aqui é produção · ← → troca a variante</div>
+<div id="stage"><div id="app"></div></div>
+<div id="bar">
+  <button id="prev" title="Variante anterior (←)">←</button>
+  <span class="lbl" id="vlabel"></span>
+  <button id="next" title="Próxima variante (→)">→</button>
+  <select id="scen">
+    <option value="">▶ Simular…</option>
+    <option value="people">Conversa entre pessoas</option>
+    <option value="burst">Rajada: 5 msgs entre pessoas</option>
+    <option value="delegate2">Pergunta → Líder delega a 2</option>
+    <option value="mention">Menção direta (@Faro)</option>
+    <option value="fail">Falha (2 min sem progresso, 2×)</option>
+    <option value="chave">Conta no limite → Chave do Workspace</option>
+    <option value="queue">Conta no limite, sem Chave → fila</option>
+    <option value="blocked">Sem Conta e sem Chave</option>
+  </select>
+  <button id="speed" title="Acelera o relógio para ver prazos de 2 min">1×</button>
+  <button id="phone" title="Alterna largura de celular">📱</button>
+</div>
+<script>
+// ---------- variantes ----------
+const VARIANTS = [
+  {key:'A', name:'Selo e bolha ancorada'},
+  {key:'B', name:'Chips + painel de Andamento'},
+  {key:'C', name:'Agentes respondem em Thread'},
+  {key:'D', name:'O Líder fala na conversa'},
+];
+function readVariant(){
+  const q = new URLSearchParams(location.search).get('variant') || location.hash.replace('#','');
+  return VARIANTS.some(v=>v.key===q) ? q : 'A';
+}
+let variant = readVariant();
+function setVariant(k){
+  variant = k; selected = null; panelOpen = false;
+  try { history.replaceState(null,'','?variant='+k); } catch(e){ location.hash = k; }
+  render(true);
+}
+
+// ---------- relógio simulado ----------
+let sim = Date.now(), last = performance.now(), speed = 1;
+const events = [];
+const after = (sec, fn) => events.push({at: sim + sec*1000, fn});
+
+// ---------- gente e Agentes ----------
+const P = { rafael:{n:'Rafael',c:'#4f7cff'}, camila:{n:'Camila',c:'#d6456f'}, bruno:{n:'Bruno',c:'#2f9e5b'}, juliana:{n:'Juliana',c:'#b07a1a'} };
+const A = { atlas:{n:'Atlas',c:'#7c5cff'}, faro:{n:'Faro',c:'#0e9f9a'}, prisma:{n:'Prisma',c:'#e07a2f'} };
+const LIDER = 'atlas';
+
+// ---------- mensagens ----------
+let seq = 0; const msgs = [];
+function human(author, minsAgo, text, o={}){
+  const t = sim - minsAgo*60000;
+  const m = {id:++seq, author, t, text, routing:null, desfecho:null, desT:t+3000, runs:[], ...o};
+  msgs.push(m); return m;
+}
+function run(m, agent, o={}){ const r = {agent, state:'done', since:m.t+3000, attempt:1, replyT:m.t+40000, ...o}; m.runs.push(r); return r; }
+
+// seed: um Canal em que pessoas conversam entre si e às vezes pedem ajuda
+const m1 = human('camila', 26, 'alguém viu o e-mail da Sophia sobre a renovação?', {desfecho:{kind:'none'}});
+human('bruno', 25, 'vi sim, respondo depois do almoço', {desfecho:{kind:'none'}});
+const m3 = human('juliana', 22, 'Um cliente diz que o boleto de novembro não chegou. Mudou alguma coisa no envio?', {desfecho:{kind:'delegate', agents:['faro']}});
+run(m3,'faro',{reply:'Mudou sim: desde o dia 10 o boleto sai pelo financeiro@, não mais pelo no-reply@. Vale pedir pro cliente olhar o spam e liberar esse remetente.'});
+const m4 = human('camila', 18, '@Prisma monta um rascunho de proposta pro Grupo Ômega, 12 licenças no plano Pro', {desfecho:{kind:'mention', agents:['prisma']}, desT:null});
+run(m4,'prisma',{reply:'Rascunho: 12 licenças Pro a R$ 89/mês, R$ 1.068/mês. No anual, 10% de desconto: R$ 11.534. Incluo o onboarding assistido?'});
+const m5 = human('bruno', 15, 'Qual SLA a gente promete pro plano Pro?', {desfecho:{kind:'self'}});
+run(m5,'atlas',{reply:'Plano Pro: primeira resposta em até 4h úteis e solução em até 2 dias úteis para incidente crítico.'});
+human('rafael', 12, 'deploy de hoje foi liso, zero erro 🎉', {desfecho:{kind:'none'}});
+human('camila', 11.5, 'boa!!', {desfecho:{kind:'none'}});
+human('juliana', 11, 'finalmente kkk', {desfecho:{kind:'none'}});
+const m8 = human('juliana', 9, 'Cliente quer desconto e ao mesmo tempo reclama de lentidão no painel. O que eu respondo?', {desfecho:{kind:'delegate', agents:['faro','prisma']}});
+run(m8,'faro',{reply:'Sobre a lentidão: o painel dele roda o relatório completo a cada abertura. O filtro de 30 dias corta a carga pela metade.'});
+run(m8,'prisma',{state:'failed', attempt:2, reason:'ficou 2 minutos sem escrever nada, nas duas tentativas', failT:m8.t+250000, replyT:null});
+const m9 = human('bruno', 6, 'Resume a reunião de ontem pra quem faltou?', {desfecho:{kind:'self'}, paid:{kind:'chave', note:'Conta de Bruno no limite até 18:00'}});
+run(m9,'atlas',{reply:'Resumo de ontem: 1) renovação da Sophia sai até sexta; 2) Juliana assume a fila de boletos; 3) revisão de preços em dezembro.'});
+const m10 = human('camila', 0.4, 'Quantas licenças a Ômega tem hoje?', {desfecho:{kind:'delegate', agents:['prisma']}});
+const r10 = run(m10,'prisma',{state:'writing', since:sim-14000, replyT:null});
+after(9, ()=>finish(r10,'Hoje são 8 licenças Pro ativas, renovação em março. Com as 12 da proposta iriam para 20.'));
+const m11 = human('rafael', 0.05, 'alguém lembra a senha do wi-fi do escritório novo?', {desT:null});
+m11.routing = {state:'deciding', since:sim-2000};
+after(3, ()=>{ m11.routing.state='done'; m11.desT=sim; m11.desfecho={kind:'none'}; });
+
+// ---------- ações ----------
+function newMsg(author, text){ const m={id:++seq, author, t:sim, text, routing:null, desfecho:null, desT:null, runs:[]}; msgs.push(m); return m; }
+function route(m, sec, then){ m.routing={state:'deciding', since:sim}; after(sec, ()=>{ m.routing.state='done'; m.desT=sim; then(); }); }
+function startRun(m, agent){ const r={agent, state:'writing', since:sim, attempt:1}; m.runs.push(r); return r; }
+function finish(r, reply){ r.state='done'; r.reply=reply; r.replyT=sim; }
+function fail(r, reason){ r.state='failed'; r.reason=reason; r.failT=sim; }
+const RETRY_REPLY = {prisma:'Sobre o desconto: dá pra oferecer 10% no anual em troca de contrato de 12 meses, sem mexer no mensal.', atlas:'Três clientes Pro passaram de 3 chamados: Ômega (5), Lumen (4) e Vértice (4).', faro:'Resposta gerada na nova tentativa.'};
+function retry(mid, agent){
+  const m = msgs.find(x=>x.id===mid); const r = m.runs.find(x=>x.agent===agent);
+  Object.assign(r, {state:'writing', since:sim, attempt:1, reason:null, failT:null, dismissed:false});
+  after(7, ()=>finish(r, RETRY_REPLY[agent]));
+  render();
+}
+function dismiss(mid, agent){ const r = msgs.find(x=>x.id===mid).runs.find(x=>x.agent===agent); r.dismissed=true; render(); }
+
+const S = {
+  people(){ const m=newMsg('camila','alguém vai no almoço de sexta?'); route(m,2,()=>m.desfecho={kind:'none'}); },
+  burst(){
+    const lines=[['bruno','eu vou'],['juliana','eu também, mas chego 12h30'],['rafael','reserva pra 4 então'],['camila','fechado, reservo no de sempre'],['bruno','👍']];
+    lines.forEach(([a,t],i)=>after(i*1.5, ()=>{ const m=newMsg(a,t); route(m,1.5,()=>m.desfecho={kind:'none'}); }));
+  },
+  delegate2(){
+    const m=newMsg('juliana','A Ômega pediu nota com CNPJ novo e quer saber se muda o preço. Como faço?');
+    route(m,3,()=>{ m.desfecho={kind:'delegate',agents:['faro','prisma']};
+      const a=startRun(m,'faro'), b=startRun(m,'prisma');
+      after(8, ()=>finish(a,'Pra nota com CNPJ novo: atualiza em Financeiro → Dados fiscais antes de emitir; a próxima já sai certa.'));
+      after(14,()=>finish(b,'O preço não muda: o contrato é por licença, não por CNPJ. Só precisa de um aditivo assinado pelo novo CNPJ.')); });
+  },
+  mention(){
+    const m=newMsg('juliana','@Faro o cliente diz que o app fecha sozinho no Android 14, já vimos isso?');
+    m.desfecho={kind:'mention',agents:['faro']}; m.desT=null; const r=startRun(m,'faro');
+    after(9, ()=>finish(r,'Já: é a versão 3.2 com o modo economia de bateria. A 3.3 corrige; enquanto isso, tirar o app da otimização de bateria resolve.'));
+  },
+  fail(){
+    const m=newMsg('bruno','Quais clientes do plano Pro abriram mais de 3 chamados este mês?');
+    route(m,3,()=>{ m.desfecho={kind:'self'}; const r=startRun(m,'atlas');
+      after(120, ()=>{ r.attempt=2; r.since=sim; });
+      after(240, ()=>fail(r,'ficou 2 minutos sem escrever nada, nas duas tentativas')); });
+  },
+  chave(){
+    const m=newMsg('rafael','Me lembra o que ficou combinado sobre o preço de dezembro?');
+    m.paid={kind:'chave', note:'Conta de Rafael no limite até 19:30'};
+    route(m,3,()=>{ m.desfecho={kind:'self'}; const r=startRun(m,'atlas');
+      after(6, ()=>finish(r,'Ficou combinado manter o preço até 31/12 e reajustar 6% em janeiro, avisando os clientes até dia 15.')); });
+  },
+  queue(){
+    const m=newMsg('camila','Gera um resumo dos chamados abertos hoje?');
+    m.routing={state:'queued', since:sim, until:hhmm(sim+42*60000), reason:'a Conta de Camila está no limite e o Workspace não tem Chave'};
+  },
+  blocked(){
+    const m=newMsg('juliana','Qual o telefone do suporte da operadora?');
+    m.desfecho={kind:'blocked', reason:'Juliana não ligou uma Conta e o Workspace não tem Chave'}; m.desT=sim;
+  },
+};
+function sendTyped(text){
+  const at = text.match(/@(\w+)/); const ag = at && Object.keys(A).find(k=>A[k].n.toLowerCase()===at[1].toLowerCase());
+  const m = newMsg('rafael', text);
+  if (ag){ m.desfecho={kind:'mention',agents:[ag]}; const r=startRun(m,ag); after(6,()=>finish(r,'(resposta simulada pelo protótipo)')); }
+  else if (text.includes('?')) route(m,3,()=>{ m.desfecho={kind:'self'}; const r=startRun(m,'atlas'); after(6,()=>finish(r,'(resposta simulada pelo protótipo)')); });
+  else route(m,2,()=>m.desfecho={kind:'none'});
+  render(true);
+}
+
+// ---------- utilidades de texto ----------
+const esc = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const hhmm = ms => new Date(ms).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+const dur = ms => { const s=Math.max(0,Math.floor(ms/1000)); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); };
+const timer = since => `<span data-since="${since}">${dur(sim-since)}</span>`;
+const list = a => a.length<2 ? (a[0]||'') : a.slice(0,-1).join(', ')+' e '+a[a.length-1];
+const agNames = ks => list(ks.map(k=>A[k].n));
+function av(who, sm){ const ag = A[who]; const x = ag||P[who]; return `<div class="av ${ag?'ag':''} ${sm?'sm':''}" style="background:${x.c}">${x.n[0]}</div>`; }
+const nm = who => (A[who]||P[who]).n;
+const short = (s,n=60) => s.length>n ? s.slice(0,n-1)+'…' : s;
+const hasAgents = m => m.routing || m.desfecho && m.desfecho.kind!=='none' || m.runs.length;
+function desfechoText(m){
+  const d = m.desfecho; if(!d) return '';
+  return ({none:()=>`${A[LIDER].n}: nenhum Agente precisa agir`,
+          self:()=>`${A[LIDER].n} respondeu`,
+          delegate:()=>`${A[LIDER].n} passou para ${agNames(d.agents)}`,
+          mention:()=>`Menção a ${agNames(d.agents)} (sem passar pelo Líder)`,
+          blocked:()=>`Agentes não agem: ${d.reason}`})[d.kind]();
+}
+function runLine(r){
+  if (r.state==='writing') return `${A[r.agent].n} escrevendo${r.attempt>1?' (2ª tentativa)':''} · ${timer(r.since)}`;
+  if (r.state==='failed') return `${A[r.agent].n} falhou: ${r.reason}`;
+  return `${A[r.agent].n} respondeu`;
+}
+const paidLine = m => m.paid ? `<div class="paid">⚠ pela Chave do Workspace · ${esc(m.paid.note)}</div>` : '';
+const nilMark = m => m.desfecho && m.desfecho.kind==='none' ? `<span class="nil" title="${desfechoText(m)}">⌀</span>` : '';
+function failCard(m, r){
+  return `<div class="failcard"><div class="why">${A[r.agent].n} não respondeu: ${esc(r.reason)}.</div>
+    <div class="meta">${P[m.author].n} recebeu um aviso no celular · ${hhmm(r.failT)}</div>
+    <button class="btn pri" data-retry="${m.id}:${r.agent}">Tentar de novo</button></div>`;
+}
+function humanRow(m, extra='', head=''){
+  return `<div class="msg" id="m${m.id}">${av(m.author)}<div class="bd">
+    <div><span class="nm">${nm(m.author)}</span><span class="tm0">${hhmm(m.t)}</span>${head}</div>
+    <div class="txt">${esc(m.text)}</div>${extra}</div></div>`;
+}
+function agentRow(agent, t, body, o={}){
+  return `<div class="msg ${o.cls||''}">${av(agent)}<div class="bd">
+    <div><span class="nm">${A[agent].n}</span>${agent===LIDER?'<span class="tag">Líder</span>':''}<span class="tm0">${t?hhmm(t):''}</span></div>
+    ${o.quote?`<div class="quote">↪ ${o.quote}</div>`:''}${body}</div></div>`;
+}
+function routingMicro(m){
+  if (!m.routing) return '';
+  if (m.routing.state==='deciding') return `<div class="micro"><span class="spin"></span>${A[LIDER].n} decidindo quem responde · ${timer(m.routing.since)}</div>`;
+  if (m.routing.state==='queued') return `<div class="micro warn">⏸ Na fila até ${m.routing.until}: ${esc(m.routing.reason)}</div>`;
+  return '';
+}
+
+// ---------- A: selo na mensagem + bolha ancorada logo abaixo ----------
+function renderA(){
+  let h = '';
+  for (const m of msgs){
+    let extra = routingMicro(m);
+    const d = m.desfecho;
+    if (d && d.kind==='delegate') extra += `<div class="micro">↳ ${desfechoText(m)}</div>`;
+    if (d && d.kind==='blocked') extra += `<div class="blocked">${esc(desfechoText(m))}</div>`;
+    extra += paidLine(m);
+    h += humanRow(m, extra, nilMark(m));
+    if (m.runs.length){
+      h += `<div class="anch">`;
+      for (const r of m.runs){
+        if (r.state==='done') h += agentRow(r.agent, r.replyT, `<div class="txt">${esc(r.reply)}</div>`);
+        else if (r.state==='writing') h += agentRow(r.agent, null, `<div class="ph"><span class="dots">escrevendo</span>${r.attempt>1?' (2ª tentativa)':''} · ${timer(r.since)}</div>`);
+        else h += agentRow(r.agent, null, failCard(m,r));
+      }
+      h += `</div>`;
+    }
+  }
+  return shell(h);
+}
+
+// ---------- B: fluxo cronológico limpo, chips na mensagem, painel de Andamento ----------
+function chipsFor(m){
+  const c = [];
+  if (m.routing && m.routing.state==='deciding') c.push(`<span class="chip on"><span class="spin"></span>${A[LIDER].n} · ${timer(m.routing.since)}</span>`);
+  if (m.routing && m.routing.state==='queued') c.push(`<span class="chip warn" title="${esc(m.routing.reason)}">⏸ fila até ${m.routing.until}</span>`);
+  const d = m.desfecho;
+  if (d && d.kind==='blocked') c.push(`<span class="chip warn" title="${esc(desfechoText(m))}">Agentes não agem</span>`);
+  if (d && d.kind==='delegate') c.push(`<span class="chip" title="${desfechoText(m)}">→ ${agNames(d.agents)}</span>`);
+  for (const r of m.runs){
+    if (r.state==='writing') c.push(`<span class="chip on"><span class="spin"></span>${A[r.agent].n} · ${timer(r.since)}</span>`);
+    else if (r.state==='failed') c.push(`<span class="chip bad">! ${A[r.agent].n} falhou</span>`);
+    else c.push(`<span class="chip ok">✓ ${A[r.agent].n}</span>`);
+  }
+  if (m.paid) c.push(`<span class="chip warn" title="${esc(m.paid.note)}">pela Chave</span>`);
+  return c.length ? `<div class="chips" data-open="${m.id}">${c.join('')}</div>` : '';
+}
+function timeline(m){ // eventos cronológicos para B e D
+  const ev = [{t:m.t, k:'human', m}];
+  for (const r of m.runs){
+    if (r.state==='done') ev.push({t:r.replyT, k:'reply', m, r});
+    if (r.state==='failed') ev.push({t:r.failT, k:'fail', m, r});
+  }
+  if (m.desfecho && m.desT) ev.push({t:m.desT, k:'desfecho', m});
+  return ev;
+}
+function panelItems(){
+  const act=[], bad=[], done=[];
+  for (const m of msgs){
+    if (m.routing && m.routing.state!=='done') act.push({m, l1: m.routing.state==='deciding' ? `<span class="spin"></span>${A[LIDER].n} decidindo · ${timer(m.routing.since)}` : `⏸ Na fila até ${m.routing.until}`, l2: m.routing.state==='queued' ? esc(m.routing.reason) : `${P[m.author].n}: ${esc(short(m.text))}`});
+    for (const r of m.runs){
+      const l2 = `${P[m.author].n}: ${esc(short(m.text))}`;
+      if (r.state==='writing') act.push({m, l1:`${av(r.agent,1)}<span>${runLine(r)}</span>`, l2});
+      else if (r.state==='failed' && !r.dismissed) bad.push({m, r, l1:`${av(r.agent,1)}<span>${A[r.agent].n} falhou</span>`, l2:`${esc(r.reason)} · ${l2}`});
+      else if (r.state==='done' && sim - r.replyT < 5*60000) done.push({m, l1:`${av(r.agent,1)}<span>${A[r.agent].n} respondeu · ${hhmm(r.replyT)}</span>`, l2});
+    }
+  }
+  return {act, bad, done};
+}
+function renderB(){
+  const ev = msgs.flatMap(timeline).filter(e=>e.k==='human'||e.k==='reply').sort((a,b)=>a.t-b.t);
+  let h = '';
+  for (const e of ev){
+    if (e.k==='human') h += humanRow(e.m, chipsFor(e.m), nilMark(e.m));
+    else h += agentRow(e.r.agent, e.t, `<div class="txt">${esc(e.r.reply)}</div>${paidLine(e.m)}`, {quote:`${P[e.m.author].n}: ${esc(short(e.m.text,70))}`});
+  }
+  const {act,bad,done} = panelItems();
+  const it = x => `<div class="item ${x.r?'bad':''}" data-goto="${x.m.id}"><div class="l1">${x.l1}</div><div class="l2">${x.l2}</div>
+      ${x.r?`<button class="btn pri" data-retry="${x.m.id}:${x.r.agent}">Tentar de novo</button><button class="btn" data-dismiss="${x.m.id}:${x.r.agent}">Dispensar</button>`:''}</div>`;
+  const body = (bad.length?`<div class="sec">Falhou</div>${bad.map(it).join('')}`:'')
+    + `<div class="sec">Em andamento</div>` + (act.length?act.map(it).join(''):`<div class="empty">Nada em andamento.</div>`)
+    + (done.length?`<div class="sec">Respondido há pouco</div>${done.map(it).join('')}`:'');
+  const narrow = isNarrow();
+  const side = (!narrow || panelOpen) ? `<div class="side"><div class="head"><b>Andamento</b>${narrow?'<button class="back" data-close>Fechar</button>':''}</div><div class="body">${body}</div></div>` : '';
+  const strip = narrow ? `<div class="strip" data-panel>${act.length?`<span class="spin"></span> ${act.length} em andamento`:'Nada em andamento'}${bad.length?` · <span class="bad">${bad.length} falhou</span>`:''}<span style="margin-left:auto;color:var(--accent)">ver</span></div>` : '';
+  return shell(h, side, strip);
+}
+
+// ---------- C: no Canal só aparece o resumo da Thread ----------
+function threadSummary(m){
+  const ags = [...new Set([...(m.desfecho&&m.desfecho.agents||[]), ...m.runs.map(r=>r.agent)])];
+  if (!ags.length) return '';
+  const done = m.runs.filter(r=>r.state==='done'), w = m.runs.filter(r=>r.state==='writing'), f = m.runs.filter(r=>r.state==='failed');
+  let s, cls='';
+  if (f.length){ s = `${agNames(f.map(r=>r.agent))} falhou`; cls='bad'; }
+  else if (w.length) s = `<span class="spin"></span> ${w.map(runLine).join(' · ')}`;
+  else s = done.length===1 ? `1 resposta` : `${done.length} respostas`;
+  const prev = done.length && !w.length && !f.length ? `${A[done[0].agent].n}: ${esc(short(done[0].reply,80))}` : (done.length?`${done.length} de ${m.runs.length} respondeu`:'');
+  return `<div class="tsum" data-thread="${m.id}"><span class="avs">${ags.map(a=>av(a,1)).join('')}</span><span class="s ${cls}">${s}</span><span class="p">${prev}</span></div>`;
+}
+function renderC(){
+  let h = '';
+  for (const m of msgs){
+    let extra = routingMicro(m);
+    if (m.desfecho && m.desfecho.kind==='blocked') extra += `<div class="blocked">${esc(desfechoText(m))}</div>`;
+    extra += threadSummary(m);
+    h += humanRow(m, extra, nilMark(m));
+  }
+  let side = '';
+  const m = msgs.find(x=>x.id===selected);
+  if (m){
+    let t = humanRow(m);
+    if (m.desfecho) t += `<div class="sys">${esc(desfechoText(m))}</div>`;
+    if (m.paid) t += `<div class="sys" style="color:var(--warn)">⚠ pela Chave do Workspace · ${esc(m.paid.note)}</div>`;
+    for (const r of m.runs){
+      if (r.state==='done') t += agentRow(r.agent, r.replyT, `<div class="txt">${esc(r.reply)}</div>`);
+      else if (r.state==='writing') t += agentRow(r.agent, null, `<div class="ph"><span class="dots">escrevendo</span>${r.attempt>1?' (2ª tentativa)':''} · ${timer(r.since)}</div>`);
+      else t += agentRow(r.agent, null, failCard(m,r));
+    }
+    side = `<div class="side"><div class="head"><b>Thread</b><button class="back" data-close>${isNarrow()?'← Voltar':'Fechar'}</button></div><div class="body">${t}</div>
+      <div class="composer"><input placeholder="Responder na Thread (protótipo: sem efeito)"></div></div>`;
+  }
+  return shell(h, side);
+}
+
+// ---------- D: o Líder fala; Andamento como "está escrevendo" acima do campo ----------
+function renderD(){
+  const ev = msgs.flatMap(timeline).sort((a,b)=>a.t-b.t);
+  let h = '';
+  for (const e of ev){
+    const m = e.m;
+    if (e.k==='human'){
+      let extra = m.desfecho && m.desfecho.kind==='none' ? `<div><span class="react" title="${desfechoText(m)}">${av(LIDER,1)} nada pra mim</span></div>` : '';
+      h += humanRow(m, extra);
+      if (m.routing && m.routing.state==='queued') h += `<div class="sys">⏸ A mensagem de ${P[m.author].n} está na fila até ${m.routing.until}: ${esc(m.routing.reason)}.</div>`;
+    } else if (e.k==='desfecho'){
+      const d = m.desfecho;
+      if (d.kind==='delegate') h += agentRow(LIDER, e.t, `<div class="txt">${P[m.author].n}, isso é com ${agNames(d.agents)}. Já passei.</div>`, {cls:'agentmsg'});
+      if (d.kind==='blocked') h += `<div class="sys">⚠ ${esc(desfechoText(m))}.</div>`;
+    } else if (e.k==='reply'){
+      h += agentRow(e.r.agent, e.t, `<div class="txt">${esc(e.r.reply)}</div>${paidLine(m)}`, {cls:'agentmsg', quote:`${P[m.author].n}: ${esc(short(m.text,70))}`});
+    } else if (e.k==='fail'){
+      h += agentRow(LIDER, e.t, `<div class="txt">${P[m.author].n}, ${e.r.agent===LIDER?'não consegui':A[e.r.agent].n+' não conseguiu'} responder: ${esc(e.r.reason)}. Te mandei um aviso.</div>
+        <button class="btn pri" data-retry="${m.id}:${e.r.agent}">Tentar de novo</button>`, {cls:'agentmsg', quote:`${P[m.author].n}: ${esc(short(m.text,70))}`});
+    }
+  }
+  const typing = [];
+  for (const m of msgs){
+    if (m.routing && m.routing.state==='deciding') typing.push(`<span><span class="dots">${A[LIDER].n} está lendo</span> ${timer(m.routing.since)}</span>`);
+    for (const r of m.runs) if (r.state==='writing') typing.push(`<span><span class="dots">${A[r.agent].n} está escrevendo</span> ${timer(r.since)}</span>`);
+  }
+  return shell(h, '', `<div class="typing">${typing.join('')}</div>`);
+}
+
+// ---------- casca comum ----------
+function shell(stream, side='', aboveComposer=''){
+  return `<div class="main"><div class="head"><b># operação</b><small>Canal público · 4 pessoas · Agentes: Atlas (Líder), Faro, Prisma</small></div>
+    <div class="stream" id="stream">${stream}</div>${aboveComposer}
+    <form class="composer" id="composer"><input id="inp" placeholder="Mensagem em #operação (use ? ou @Faro)" autocomplete="off"><button>Enviar</button></form></div>${side}`;
+}
+
+// ---------- render ----------
+let selected = null, panelOpen = false;
+const isNarrow = () => document.body.classList.contains('phone') || innerWidth < 760;
+function render(toBottom){
+  const app = document.getElementById('app');
+  const st = document.getElementById('stream');
+  const nearBottom = !st || st.scrollHeight - st.scrollTop - st.clientHeight < 80;
+  const keep = st ? st.scrollTop : 0;
+  const draft = document.getElementById('inp')?.value || '';
+  app.classList.toggle('narrow', isNarrow());
+  app.innerHTML = ({A:renderA, B:renderB, C:renderC, D:renderD})[variant]();
+  const s2 = document.getElementById('stream');
+  s2.scrollTop = (toBottom || nearBottom) ? s2.scrollHeight : keep;
+  const inp = document.getElementById('inp'); inp.value = draft;
+  const v = VARIANTS.find(x=>x.key===variant);
+  document.getElementById('vlabel').textContent = `${v.key} · ${v.name}`;
+}
+
+// ---------- eventos ----------
+document.getElementById('app').addEventListener('click', e=>{
+  const t = e.target.closest('[data-retry],[data-dismiss],[data-thread],[data-close],[data-panel],[data-goto],[data-open]');
+  if (!t) return;
+  if (t.dataset.retry){ const [id,ag]=t.dataset.retry.split(':'); retry(+id, ag); return; }
+  if (t.dataset.dismiss){ const [id,ag]=t.dataset.dismiss.split(':'); dismiss(+id, ag); return; }
+  if (t.dataset.thread){ selected = +t.dataset.thread; render(); return; }
+  if (t.hasAttribute('data-close')){ selected = null; panelOpen = false; render(); return; }
+  if (t.hasAttribute('data-panel')){ panelOpen = true; render(); return; }
+  const id = t.dataset.goto || t.dataset.open;
+  if (id){ if (isNarrow()){ panelOpen=false; render(); } const el = document.getElementById('m'+id); if (el){ el.scrollIntoView({block:'center'}); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); } }
+});
+document.getElementById('app').addEventListener('submit', e=>{
+  e.preventDefault(); const inp = document.getElementById('inp'); const v = inp.value.trim(); if (!v) return; inp.value=''; sendTyped(v);
+});
+const cycle = d => { const i = VARIANTS.findIndex(v=>v.key===variant); setVariant(VARIANTS[(i+d+VARIANTS.length)%VARIANTS.length].key); };
+document.getElementById('prev').onclick = ()=>cycle(-1);
+document.getElementById('next').onclick = ()=>cycle(1);
+addEventListener('keydown', e=>{
+  if (e.target.closest('input,textarea,select,[contenteditable]')) return;
+  if (e.key==='ArrowLeft') cycle(-1); if (e.key==='ArrowRight') cycle(1);
+});
+document.getElementById('scen').onchange = e=>{ const k=e.target.value; e.target.value=''; if (S[k]){ S[k](); render(true); } };
+document.getElementById('speed').onclick = e=>{ speed = speed===1?10:1; e.target.textContent = speed+'×'; };
+document.getElementById('phone').onclick = ()=>{ document.body.classList.toggle('phone'); selected=null; panelOpen=false; render(true); };
+addEventListener('resize', ()=>render());
+
+// ---------- laço ----------
+setInterval(()=>{
+  const now = performance.now(); sim += (now-last)*speed; last = now;
+  let fired = false;
+  events.sort((a,b)=>a.at-b.at);
+  while (events.length && events[0].at <= sim){ events.shift().fn(); fired = true; }
+  if (fired) render();
+  else document.querySelectorAll('[data-since]').forEach(el=>el.textContent = dur(sim - +el.dataset.since));
+}, 250);
+render(true);
+</script>
+</body>
+</html>
