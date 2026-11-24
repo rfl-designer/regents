@@ -6,7 +6,13 @@
  * o que se verifica é o que um cliente veria.
  */
 import { PGlite } from "@electric-sql/pglite";
-import { EVENTS_PATH, type ServerEvent, type ServerEventOf, type ServerEventType } from "@shearim/contracts";
+import {
+  EVENTS_PATH,
+  type MeDto,
+  type ServerEvent,
+  type ServerEventOf,
+  type ServerEventType,
+} from "@shearim/contracts";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { createApp } from "../src/app";
@@ -291,4 +297,26 @@ export async function testApp(opts: { clock?: FakeClock } = {}) {
     /** O ponto único de publicação de eventos do app, para testar o envio direto. */
     events,
   };
+}
+
+// ---------- Membros além do primeiro ----------
+
+/**
+ * PROVISÓRIO até o #16 (Pedido de entrada): grava o Membro direto no banco,
+ * porque ainda não há como uma segunda pessoa virar Membro pela borda.
+ * Quando o #16 chegar, troque por "pedir entrada + Admin aprova".
+ * `admin` (a primeira a chegar) vira Admin antes.
+ */
+export async function membroSemPedidoDeEntrada(t: TestApp, admin: Person, who: Person): Promise<MeDto> {
+  await t.as(admin).get("/api/me");
+  const id = crypto.randomUUID();
+  await t.db.insert(schema.members).values({
+    id,
+    tailnetUserId: who.id,
+    login: who.login ?? `${who.id}@exemplo.com`,
+    displayName: who.name ?? who.id,
+    role: "member",
+    createdAt: t.clock.now(),
+  });
+  return (await t.as(who).get("/api/me")).json();
 }

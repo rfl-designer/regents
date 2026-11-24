@@ -29,6 +29,16 @@ export interface MemberSummaryDto {
 export type ChannelKind = "public" | "private";
 
 /**
+ * `dm`: entre duas partes (duas pessoas; com o #23, uma pessoa e um Agente).
+ * `group`: DM em grupo, aberta com três pessoas ou mais. Um grupo continua grupo
+ * mesmo se ficar com menos gente (quem é removido sai das DMs em grupo, não das `dm`).
+ */
+export type DmKind = "dm" | "group";
+
+/** Toda conversa: Canal ou DM. O id de qualquer uma serve em `/api/conversations/:id/...`. */
+export type ConversationKind = ChannelKind | DmKind;
+
+/**
  * Quem participa de uma conversa. Hoje só pessoas; os Agentes (#20) entram
  * como mais um membro desta união (`kind: "agent"`).
  */
@@ -79,14 +89,38 @@ export interface UpdateChannelSettingsInput {
   recentMessages?: number;
 }
 
+/**
+ * Item de `GET /api/dms` e resposta de `POST /api/dms`. Uma DM não tem nome nem
+ * Instruções, e o N dela é fixo em 30. Só os participantes a veem (o Admin inclusive fica de fora).
+ */
+export interface DmDto {
+  id: string;
+  kind: DmKind;
+  /** Todos, inclusive quem pede a lista, em ordem de entrada (e de nome, entre quem entrou junto). */
+  participants: ParticipantDto[];
+}
+
+/**
+ * Corpo de `POST /api/dms`: abre a DM com essas pessoas (quem abre entra sozinho; pode vir na lista).
+ * Uma pessoa: `dm`; duas ou mais: `group`. Abrir de novo com as mesmas pessoas devolve a mesma
+ * DM (200); uma nova responde 201. A DM com Agente (#23) entra como mais um campo aqui.
+ */
+export interface OpenDmInput {
+  memberIds: string[];
+}
+
 export interface MessageAuthorDto {
   id: string;
   displayName: string;
 }
 
-/** Item de `GET /api/channels/:id/messages` e corpo do 201 de `POST` na mesma rota. */
+/**
+ * Item de `GET /api/conversations/:id/messages` (e de `/api/channels/:id/messages`, só para Canais)
+ * e corpo do 201 de `POST` nas mesmas rotas.
+ */
 export interface MessageDto {
   id: string;
+  /** O id da conversa: um Canal ou uma DM (o nome vem de antes das DMs). */
   channelId: string;
   body: string;
   author: MessageAuthorDto;
@@ -94,7 +128,7 @@ export interface MessageDto {
   createdAt: string;
 }
 
-/** Corpo de `POST /api/channels/:id/messages`. */
+/** Corpo de `POST /api/conversations/:id/messages` (e de `/api/channels/:id/messages`). */
 export interface SendMessageInput {
   body: string;
 }
@@ -121,7 +155,9 @@ export type ServerEvent =
    * para quem pode vê-lo. Para quem acabou de ser adicionado a um privado, é a primeira vez que o vê.
    * O cliente trata como "insere ou troca pelo `id`".
    */
-  | { type: "channel.updated"; channel: ChannelDto };
+  | { type: "channel.updated"; channel: ChannelDto }
+  /** Uma DM apareceu para os participantes dela (quem abriu também recebe). Insere ou troca pelo `id`. */
+  | { type: "dm.updated"; dm: DmDto };
 
 export type ServerEventType = ServerEvent["type"];
 export type ServerEventOf<T extends ServerEventType> = Extract<ServerEvent, { type: T }>;

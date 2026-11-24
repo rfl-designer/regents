@@ -1,31 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import type { ChannelDto, MeDto } from "@shearim/contracts";
-import { schema } from "../src/db/client";
-import { type Person, type TestApp, testApp } from "./harness";
+import {
+  membroSemPedidoDeEntrada as membroSemPedidoDeEntradaComo,
+  type Person,
+  type TestApp,
+  testApp,
+} from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
 const bruno = { id: "2002", login: "bruno@exemplo.com", name: "Bruno" };
 const carla = { id: "3003", login: "carla@exemplo.com", name: "Carla" };
 
-/**
- * PROVISÓRIO até o #16 (Pedido de entrada): grava o Membro direto no banco,
- * porque ainda não há como uma segunda pessoa virar Membro pela borda.
- * Quando o #16 chegar, troque por "pedir entrada + Admin aprova".
- * Juliana (a primeira a chegar) vira Admin antes.
- */
-async function membroSemPedidoDeEntrada(t: TestApp, who: Person): Promise<MeDto> {
-  await t.as(juliana).get("/api/me");
-  const id = crypto.randomUUID();
-  await t.db.insert(schema.members).values({
-    id,
-    tailnetUserId: who.id,
-    login: who.login ?? `${who.id}@exemplo.com`,
-    displayName: who.name ?? who.id,
-    role: "member",
-    createdAt: t.clock.now(),
-  });
-  return (await t.as(who).get("/api/me")).json();
-}
+/** PROVISÓRIO até o #16 (ver o arnês): Juliana é a primeira a chegar e vira Admin. */
+const membroSemPedidoDeEntrada = (t: TestApp, who: Person) => membroSemPedidoDeEntradaComo(t, juliana, who);
 
 async function canais(t: TestApp, who: Person): Promise<ChannelDto[]> {
   const res = await t.as(who).get("/api/channels");

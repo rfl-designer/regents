@@ -15,6 +15,13 @@
       "when": 1795514305597,
       "tag": "0001_canais-privados-e-participantes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795515116907,
+      "tag": "0002_dms",
+      "breakpoints": true
     }
   ]
 }

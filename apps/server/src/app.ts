@@ -4,6 +4,7 @@ import { websocket } from "hono/bun";
 import type { Clock } from "./clock";
 import { conversationRoutes } from "./conversations";
 import type { Db } from "./db/client";
+import { dmRoutes } from "./dms";
 import { createEventHub } from "./events";
 import type { IdentityPort } from "./identity/port";
 import { listMembers, type Member, memberFor, toMeDto } from "./members";
@@ -44,6 +45,7 @@ export function createApp(deps: AppDeps) {
   app.get("/api/members", async (c) => c.json(await listMembers(db)));
   app.get(EVENTS_PATH, eventsRoute);
   app.route("/api", conversationRoutes({ db, clock, events }));
+  app.route("/api", dmRoutes({ db, clock, events }));
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
 
