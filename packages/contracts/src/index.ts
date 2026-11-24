@@ -131,6 +131,8 @@ export type ServerEventOf<T extends ServerEventType> = Extract<ServerEvent, { ty
 export type ApiError =
   | { error: "no_identity"; reason: NoIdentityReason }
   | { error: "not_a_member" }
+  /** O tailscaled não respondeu ao `whois` (503): problema da Instalação, não de quem chegou. */
+  | { error: "identity_unavailable" }
   | { error: "not_found" }
   | { error: "not_admin" }
   | { error: "name_taken"; message: string }

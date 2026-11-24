@@ -1,0 +1,29 @@
+{
+  "Node": {
+    "ID": 5100000000000001,
+    "StableID": "nBrun0CNTRL",
+    "Name": "celular-do-bruno.tailnet-exemplo.ts.net.",
+    "User": 51234567890123,
+    "Sharer": 9007199254740993,
+    "Key": "nodekey:0000000000000000000000000000000000000000000000000000000000000003",
+    "KeyExpiry": "2027-03-01T10:00:00Z",
+    "DiscoKey": "discokey:0000000000000000000000000000000000000000000000000000000000000004",
+    "Addresses": ["100.90.80.70/32"],
+    "AllowedIPs": ["100.90.80.70/32"],
+    "Hostinfo": {
+      "Hostname": "Celular do Bruno",
+      "ShareeNode": true
+    },
+    "Created": "2026-10-02T09:00:00Z",
+    "MachineAuthorized": true,
+    "ComputedName": "celular-do-bruno",
+    "ComputedNameWithHost": "celular-do-bruno"
+  },
+  "UserProfile": {
+    "ID": 51234567890123,
+    "LoginName": "bruno@outra-tailnet.com",
+    "DisplayName": "Bruno Lima",
+    "ProfilePicURL": ""
+  },
+  "CapMap": null
+}

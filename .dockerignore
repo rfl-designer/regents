@@ -1,0 +1,17 @@
+**/node_modules
+**/dist
+.git
+.worktrees
+.data
+.e2e
+**/.e2e
+.env
+secrets
+backups
+agentes-chat
+prototypes
+docs
+deploy
+*.md
+Dockerfile
+compose.yaml

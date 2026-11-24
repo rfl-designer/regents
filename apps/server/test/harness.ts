@@ -232,11 +232,16 @@ export interface Client {
 
 export type TestApp = Awaited<ReturnType<typeof testApp>>;
 
-/** Um app novo com banco vazio e migrado, identidade falsa e relógio parado. */
-export async function testApp(opts: { clock?: FakeClock } = {}) {
+/**
+ * Um app novo com banco vazio e migrado, identidade falsa e relógio parado.
+ * `identity` troca a porta (o teste do adaptador `whois` usa a de verdade); aí `as`,
+ * `anonymous` e `socket` não servem, e a requisição leva os headers que o Serve poria
+ * (`request`/`socketWith`/`upgradeWith`).
+ */
+export async function testApp(opts: { clock?: FakeClock; identity?: IdentityPort } = {}) {
   const { db } = await testDb();
   const clock = opts.clock ?? fakeClock();
-  const { app, websocket, events } = createApp({ db, identity: fakeIdentity, clock });
+  const { app, websocket, events } = createApp({ db, identity: opts.identity ?? fakeIdentity, clock });
 
   // O WebSocket precisa de um servidor de verdade; ele só sobe quando um teste abre conexão.
   let server: ReturnType<typeof Bun.serve> | undefined;
@@ -288,6 +293,17 @@ export async function testApp(opts: { clock?: FakeClock } = {}) {
     /** Pede o upgrade do WebSocket sem abrir a conexão; para ver a recusa (`res.status`). */
     upgrade: (who: Person | { none: NoIdentityReason }) =>
       fetch(`http://${origin()}${EVENTS_PATH}`, { headers: { ...UPGRADE_HEADERS, ...identityHeaders(who) } }),
+    /** Cliente HTTP com estes headers crus (ex.: o `X-Forwarded-For` do Serve). */
+    request: (headers: Record<string, string>) => client(headers),
+    /** Como `socket`, mas o handshake leva estes headers crus. */
+    async socketWith(headers: Record<string, string>, label = "WebSocket") {
+      const socket = await openEventSocket(`ws://${origin()}${EVENTS_PATH}`, headers, label);
+      onCleanup(() => socket.close());
+      return socket;
+    },
+    /** Como `upgrade`, com headers crus. */
+    upgradeWith: (headers: Record<string, string>) =>
+      fetch(`http://${origin()}${EVENTS_PATH}`, { headers: { ...UPGRADE_HEADERS, ...headers } }),
     /** O ponto único de publicação de eventos do app, para testar o envio direto. */
     events,
   };
