@@ -8,7 +8,9 @@ import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
 import { eq } from "drizzle-orm";
+import { ROUTING_MODEL } from "../src/articuladora";
 import { schema } from "../src/db/client";
+import { ROUTING_SCHEMA } from "../src/routing";
 import type { FakeClaudeCall, FakeRun } from "./fake-claude";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
 
@@ -130,6 +132,42 @@ describe("quem paga: a Conta do autor ou a Chave", () => {
     const doMembro = await t.db.select().from(schema.members).where(eq(schema.members.tailnetUserId, juliana.id));
     const [conta] = await t.db.select().from(schema.accounts).where(eq(schema.accounts.memberId, doMembro[0]!.id));
     expect(conta!.credentialExpiresAt).toEqual(new Date("2026-12-20T09:00:00.000Z"));
+  });
+});
+
+describe("o roteamento da Articuladora pela Conta", () => {
+  test("o Desfecho sai do --json-schema do claude -p, e o delegado responde também pela Conta", async () => {
+    const t = await testApp();
+    const { geral, faro } = await comContaLigada(t);
+    const aba = await t.socket(juliana);
+    const decisao = {
+      decisao: "delegar",
+      agentes: [{ agente: "faro", cobrir: "o prazo da proposta" }],
+      motivo: "É comercial.",
+    };
+    t.claude.script({
+      runs: [
+        { kind: "steps", steps: [{ thinking: true }], end: { result: "success", text: "", structuredOutput: decisao } },
+        { kind: "steps", steps: [{ text: "Sexta, Juliana." }] },
+      ],
+    });
+
+    const origem = await enviar(t, geral.id, "Qual o prazo da proposta?");
+
+    const { outcome } = await aba.next("outcome.created", ESPERA);
+    expect(outcome).toMatchObject({
+      messageId: origem.id,
+      decision: "delegate",
+      reason: "É comercial.",
+      delegates: [{ agent: { id: faro.id }, cover: "o prazo da proposta" }],
+    });
+    expect((await respostaA(t, geral.id, origem)).body).toBe("Sexta, Juliana.");
+    const [roteamento, delegado] = execucoes(t);
+    const flag = (c: FakeClaudeCall, name: string) => c.argv[c.argv.indexOf(name) + 1];
+    expect(flag(roteamento!, "--model")).toBe(ROUTING_MODEL);
+    expect(JSON.parse(flag(roteamento!, "--json-schema")!)).toEqual(ROUTING_SCHEMA);
+    expect(delegado!.argv).not.toContain("--json-schema");
+    expect(t.anthropic.requests).toHaveLength(0);
   });
 });
 

@@ -26,10 +26,11 @@ export interface ModelRequest {
   messages: ModelMessage[];
   payer: Payer;
   /**
-   * Pede a resposta como um JSON neste JSON Schema (o Desfecho do roteamento, #22; ADR 0009).
-   * Volta em `done.structured`; sem ela, o cérebro dá `failed`. Pela Conta, vai como `--json-schema`.
+   * Saída estruturada (o roteamento da Articuladora): o texto da resposta é um JSON que segue
+   * `schema`. Pela Chave vai em `output_config.format`; pela Conta (#26), no `--json-schema`
+   * do `claude -p`, com o `structured_output` do `result` emitido como o texto (ADR 0009).
    */
-  outputSchema?: Record<string, unknown>;
+  output?: { schema: Record<string, unknown> };
 }
 
 export interface ModelUsage {
@@ -57,13 +58,10 @@ export type ModelEvent =
   | { type: "billing_failed" }
   /** Falha com motivo em pt-BR (completa "Faro não respondeu: …"). `retryable`: vale nova tentativa. */
   | { type: "failed"; reason: string; retryable: boolean }
-  /**
-   * Fim com sucesso: uso, custo em dólares, pela Conta a validade da credencial e, se o pedido
-   * trouxe `outputSchema`, a resposta estruturada.
-   */
-  | { type: "done"; usage: ModelUsage; costUsd: number; credentialExpiresAt?: Date; structured?: unknown };
+  /** Fim com sucesso: uso, custo em dólares e, pela Conta, a validade da credencial. */
+  | { type: "done"; usage: ModelUsage; costUsd: number; credentialExpiresAt?: Date };
 
-/** O motivo quando o pedido trouxe `outputSchema` e a resposta não veio no formato (ADR 0009). */
+/** O motivo quando o pedido trouxe `output` e a resposta não veio no formato (ADR 0009). */
 export const NOT_STRUCTURED_REASON = "o modelo não devolveu a decisão no formato pedido";
 
 export type TerminalModelEvent = Extract<

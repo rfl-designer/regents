@@ -100,7 +100,7 @@ export function accountBrain(opts: {
         await stopped;
       }
       if (signal.aborted) return;
-      yield reading.end();
+      yield* reading.end();
     },
   };
 }
@@ -124,7 +124,7 @@ function argsFor(request: ModelRequest): string[] {
     "--system-prompt",
     request.system,
   ];
-  if (request.outputSchema) args.push("--json-schema", JSON.stringify(request.outputSchema));
+  if (request.output) args.push("--json-schema", JSON.stringify(request.output.schema));
   return args;
 }
 
@@ -193,7 +193,12 @@ function streamReading(request: ModelRequest) {
       } catch {
         return undefined;
       }
-      if (line.type === "stream_event") return progress(line.event as Json | undefined);
+      if (line.type === "stream_event") {
+        const event = progress(line.event as Json | undefined);
+        // Com saída estruturada, a resposta é o `structured_output` do fim: o texto do caminho só
+        // conta como progresso.
+        return request.output && event?.type === "text" ? { type: "thinking" } : event;
+      }
       if (line.type === "system" && line.subtype === "api_retry") {
         return { type: "api_retry", attempt: num(line.attempt) ?? 1, max: num(line.max_retries) ?? 1 };
       }
@@ -212,21 +217,32 @@ function streamReading(request: ModelRequest) {
       return undefined;
     },
 
-    end(): TerminalModelEvent {
+    /** O fim: o evento terminal e, com saída estruturada, antes dele o `structured_output` como texto. */
+    end(): ModelEvent[] {
       if (result?.is_error === false) {
-        if (request.outputSchema && result.structured_output === undefined) {
-          return { type: "failed", reason: NOT_STRUCTURED_REASON, retryable: true };
+        let structured: ModelEvent[] = [];
+        if (request.output) {
+          if (result.structured_output === undefined) {
+            return [{ type: "failed", reason: NOT_STRUCTURED_REASON, retryable: true }];
+          }
+          structured = [{ type: "text", text: JSON.stringify(result.structured_output) }];
         }
         const usage = (result.usage ?? {}) as Json;
         const expires = str(result.credential_expires_at);
-        return {
-          type: "done",
-          usage: { inputTokens: num(usage.input_tokens) ?? 0, outputTokens: num(usage.output_tokens) ?? 0 },
-          costUsd: num(result.total_cost_usd) ?? 0,
-          ...(expires && !Number.isNaN(Date.parse(expires)) ? { credentialExpiresAt: new Date(expires) } : {}),
-          ...(request.outputSchema ? { structured: result.structured_output } : {}),
-        };
+        return [
+          ...structured,
+          {
+            type: "done",
+            usage: { inputTokens: num(usage.input_tokens) ?? 0, outputTokens: num(usage.output_tokens) ?? 0 },
+            costUsd: num(result.total_cost_usd) ?? 0,
+            ...(expires && !Number.isNaN(Date.parse(expires)) ? { credentialExpiresAt: new Date(expires) } : {}),
+          },
+        ];
       }
+      return [this.failure()];
+    },
+
+    failure(): TerminalModelEvent {
       // O limite vale mesmo sem `result` (o limite semanal pode sair 1 sem nada).
       if (limited || category === "rate_limit") return { type: "limit", resetsAt: limited?.resetsAt ?? null };
       if (category === "authentication_failed" || result?.api_error_status === 401) return { type: "auth_failed" };

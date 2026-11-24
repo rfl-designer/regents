@@ -1,20 +1,26 @@
 import type { ExecutionDto, ExecutionState, ExecutionStep } from "@shearim/contracts";
 import { and, asc, eq, inArray, isNotNull, lte, min, ne, or, type SQL, sql } from "drizzle-orm";
 import type { Agent } from "./agents";
+import { ROUTING_MODEL } from "./articuladora";
 import type { Clock } from "./clock";
-import { buildContext } from "./context";
+import { buildContext, type Call } from "./context";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
 import { findMessage } from "./messages";
-import type { ModelEvent, ModelPort, Payer, TerminalModelEvent } from "./model/port";
+import type { ModelEvent, ModelPort, ModelRequest, Payer, TerminalModelEvent } from "./model/port";
+import { outcomeOf, recordOutcome } from "./outcomes";
 import { audienceOf } from "./participation";
 import type { Reading } from "./reading";
+import { buildRouting, parseDecision, ROUTING_SCHEMA } from "./routing";
 import type { SecretBox } from "./secrets";
 import { readWorkspaceKey } from "./workspace-key";
 
 const { executions, agents, channels, messages, accounts } = schema;
 type Row = typeof executions.$inferSelect;
-/** O tipo de uma execução: `mention` (Agente mencionado) ou `dm` (o Agente de uma DM com Agente). */
+/**
+ * O tipo de uma execução: `mention` (Agente mencionado), `dm` (o Agente de uma DM com Agente),
+ * `route` (o roteamento da Articuladora), `reply` (ela responde) ou `delegated` (um delegado dela).
+ */
 export type ExecutionKind = Row["kind"];
 
 /** Vigia (ADR 0003): quanto um passo pode ficar sem progresso antes de virar falha. */
@@ -28,6 +34,7 @@ const MAX_ATTEMPTS = 2;
 
 /** O motivo da vigia, por passo ("Faro não respondeu: ficou 2 minutos sem escrever nada"). */
 const STALL_REASON: Record<ExecutionStep, string> = {
+  deciding: "ficou 2 minutos sem dar o Desfecho",
   writing: "ficou 2 minutos sem escrever nada",
 };
 const RESTART_REASON = "o servidor reiniciou";
@@ -58,7 +65,7 @@ export interface ExecutionHooks {
  *
  * Fica para depois, com o seam indicado:
  * - quem paga (a tabela completa: no limite até HH:MM, Precisa ligar de novo, fila, orçamento) (#27):
- *   `choosePayer` e a troca no meio em `run`;
+ *   `choosePayer` e a troca no meio em `byPayer`;
  * - ordem por Agente e conversa, paralelismo e tetos (#42): `claim` e o laço em `work`;
  * - incidente da Chave em `auth_failed`/`billing_failed` e o gasto por Agente (#28): `settle`;
  * - push da falha ao autor (#32): `hooks.executionFailed`.
@@ -138,7 +145,8 @@ export function createExecutions(deps: {
         .update(executions)
         .set({
           state: "running",
-          step: "writing",
+          // O roteamento é o passo "decidindo"; o resto, "escrevendo".
+          step: sql`case when ${executions.kind} = 'route' then 'deciding' else 'writing' end`,
           since: now,
           retryAt: null,
           apiRetryAttempt: null,
@@ -161,10 +169,11 @@ export function createExecutions(deps: {
   }
 
   /**
-   * Quem paga esta execução, decidido de novo a cada tentativa: a Conta ligada do autor; sem ela
-   * (ou com `skipAccount`, depois da troca no meio), a Chave; sem nenhuma, "Agentes não agem".
-   * O #27 completa a tabela (no limite até HH:MM, Precisa ligar de novo, a fila, o orçamento);
-   * `job.retriedByAuthor` diz que é o "Tentar de novo" do autor, que a Spec quer pago pela Conta dele.
+   * Quem paga esta execução, decidido de novo a cada tentativa: a Conta ligada do autor da
+   * mensagem; sem ela (ou com `skipAccount`, depois da troca no meio), a Chave; sem nenhuma,
+   * "Agentes não agem". O #27 completa a tabela (no limite até HH:MM, Precisa ligar de novo, a
+   * fila, o orçamento); `job.retriedByAuthor` diz que é o "Tentar de novo" do autor, que a Spec
+   * quer pago pela Conta dele.
    */
   async function choosePayer(
     job: Row,
@@ -180,6 +189,41 @@ export function createExecutions(deps: {
     }
     const apiKey = await readWorkspaceKey(db, secrets);
     return apiKey ? { kind: "key", apiKey } : { kind: "none", reason: "o Workspace não tem Chave" };
+  }
+
+  /**
+   * Decide quem paga e faz a chamada (`complete`). Troca no meio (Spec, módulo 6): se a Conta
+   * bate no limite ou cai (`limit`, `auth_failed`), o parcial é descartado e a chamada é refeita
+   * inteira pela Chave, à vista, na mesma tentativa. Nada quando "Agentes não agem" (já gravado)
+   * ou quando o `signal` abortou.
+   */
+  async function byPayer(job: Row, controller: AbortController, build: (payer: Payer) => Promise<ModelRequest>) {
+    let skipAccount = false;
+    for (;;) {
+      const payer = await choosePayer(job, { skipAccount });
+      if (payer.kind === "none") {
+        await settle(job, "not_acting", { reason: payer.reason });
+        return undefined;
+      }
+      await db
+        .update(executions)
+        .set({ payer: payer.kind, apiRetryAttempt: null, apiRetryMax: null })
+        .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
+      await publish(job.id);
+      const result = await complete(job, controller, await build(payer));
+      if (!result || payer.kind !== "account") return result;
+      if (result.end?.type === "limit" || result.end?.type === "auth_failed") {
+        skipAccount = true;
+        continue;
+      }
+      if (result.end?.type === "done" && result.end.credentialExpiresAt) {
+        await db
+          .update(accounts)
+          .set({ credentialExpiresAt: result.end.credentialExpiresAt })
+          .where(and(eq(accounts.memberId, payer.memberId), eq(accounts.configDir, payer.configDir)));
+      }
+      return result;
+    }
   }
 
   /**
@@ -249,77 +293,16 @@ export function createExecutions(deps: {
     if (failed) hooks?.executionFailed?.(failed);
   }
 
-  /**
-   * Uma chamada ao cérebro, com a vigia de 2 min sem progresso: junta o texto e devolve o fim
-   * (nada quando o `signal` abortou).
-   */
-  async function talk(job: Row, request: Parameters<ModelPort["run"]>[0], controller: AbortController) {
-    const watchdog = stallWatch(clock, STALL_MS, () => controller.abort("stalled" satisfies Interruption));
-    let text = "";
-    let end: TerminalModelEvent | undefined;
-    let apiRetrying = false;
-    /** "tentando de novo (n/m)" aparece, e some quando a resposta volta a andar. */
-    async function showApiRetry(retry: { attempt: number; max: number } | null) {
-      apiRetrying = retry !== null;
-      await db
-        .update(executions)
-        .set({ apiRetryAttempt: retry?.attempt ?? null, apiRetryMax: retry?.max ?? null })
-        .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
-      await publish(job.id);
-    }
-    try {
-      for await (const event of model.run(request, controller.signal)) {
-        if (isProgress(event)) watchdog.reset();
-        if (event.type === "api_retry") await showApiRetry(event);
-        else if ((event.type === "text" || event.type === "thinking") && apiRetrying) await showApiRetry(null);
-        if (event.type === "text") text += event.text;
-        else if (event.type !== "thinking" && event.type !== "api_retry") end = event;
-      }
-    } finally {
-      watchdog.cancel();
-    }
-    return { text, end };
-  }
-
   async function run(job: Row, controller: AbortController) {
-    const { signal } = controller;
     const [agent] = await db.select().from(agents).where(eq(agents.id, job.agentId));
-    const step = (job.step as ExecutionStep | null) ?? "writing";
+    if (job.kind === "route") return route(job, controller, agent!);
     let context: Awaited<ReturnType<typeof buildContext>> | undefined;
-    let skipAccount = false;
-    let text = "";
-    let end: TerminalModelEvent | undefined;
-    for (;;) {
-      const payer = await choosePayer(job, { skipAccount });
-      if (payer.kind === "none") return void (await settle(job, "not_acting", { reason: payer.reason }));
-      await db
-        .update(executions)
-        .set({ payer: payer.kind, apiRetryAttempt: null, apiRetryMax: null })
-        .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
-      await publish(job.id);
-      context ??= await buildContext(db, agent!, job.originMessageId, { kind: job.kind });
-
-      ({ text, end } = await talk(job, { model: agent!.model, ...context, payer }, controller));
-      if (signal.aborted) {
-        // Na vigia, é falha. No cancelamento, já está gravado. No reinício, continua "em andamento"
-        // até a próxima subida.
-        if ((signal.reason as Interruption) === "stalled") await fail(job, STALL_REASON[step]);
-        return;
-      }
-      // Troca no meio (Spec, módulo 6): a Conta bateu no limite ou caiu. O parcial é descartado e
-      // a resposta é refeita inteira pela Chave, à vista, na mesma tentativa.
-      if (payer.kind === "account" && (end?.type === "limit" || end?.type === "auth_failed")) {
-        skipAccount = true;
-        continue;
-      }
-      if (payer.kind === "account" && end?.type === "done" && end.credentialExpiresAt) {
-        await db
-          .update(accounts)
-          .set({ credentialExpiresAt: end.credentialExpiresAt })
-          .where(and(eq(accounts.memberId, payer.memberId), eq(accounts.configDir, payer.configDir)));
-      }
-      break;
-    }
+    const result = await byPayer(job, controller, async (payer) => {
+      context ??= await buildContext(db, agent!, job.originMessageId, await callOf(job));
+      return { model: agent!.model, ...context, payer };
+    });
+    if (!result) return;
+    const { text, end } = result;
 
     if (end?.type !== "done") return fail(job, failureReason(end), { retryable: isRetryable(end) });
     if (!text.trim()) return fail(job, "a resposta veio vazia");
@@ -349,6 +332,120 @@ export function createExecutions(deps: {
     events.publish(await audienceOf(db, channel!), { type: "message.created", message: replyDto });
     await reading.messageCreated(replyDto);
     await publish(job.id);
+  }
+
+  /**
+   * Roda um pedido sob a vigia, com o "tentando de novo (n/m)" à vista. Devolve o texto inteiro e
+   * o evento que encerrou, ou nada quando a execução foi interrompida (a vigia já registrou a falha).
+   */
+  async function complete(job: Row, controller: AbortController, request: ModelRequest) {
+    const { signal } = controller;
+    const step = (job.step as ExecutionStep | null) ?? "writing";
+    const watchdog = stallWatch(clock, STALL_MS, () => controller.abort("stalled" satisfies Interruption));
+    let text = "";
+    let end: TerminalModelEvent | undefined;
+    let apiRetrying = false;
+    /** "tentando de novo (n/m)" aparece, e some quando a resposta volta a andar. */
+    async function showApiRetry(retry: { attempt: number; max: number } | null) {
+      apiRetrying = retry !== null;
+      await db
+        .update(executions)
+        .set({ apiRetryAttempt: retry?.attempt ?? null, apiRetryMax: retry?.max ?? null })
+        .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
+      await publish(job.id);
+    }
+    try {
+      for await (const event of model.run(request, signal)) {
+        if (isProgress(event)) watchdog.reset();
+        if (event.type === "api_retry") await showApiRetry(event);
+        else if ((event.type === "text" || event.type === "thinking") && apiRetrying) await showApiRetry(null);
+        if (event.type === "text") text += event.text;
+        else if (event.type !== "thinking" && event.type !== "api_retry") end = event;
+      }
+    } finally {
+      watchdog.cancel();
+    }
+    if (signal.aborted) {
+      // Na vigia, é falha. No cancelamento, já está gravado. No reinício, continua "em andamento"
+      // até a próxima subida.
+      if ((signal.reason as Interruption) === "stalled") await fail(job, STALL_REASON[step]);
+      return undefined;
+    }
+    return { text, end };
+  }
+
+  /** Por que o Agente foi chamado (o preâmbulo do contexto). */
+  async function callOf(job: Row): Promise<Call> {
+    if (job.kind === "mention" || job.kind === "dm") return { kind: job.kind };
+    const outcome = await outcomeOf(db, job.originMessageId);
+    if (job.kind === "reply") return { kind: "reply", reason: outcome?.reason ?? "" };
+    const cover = outcome?.delegates.find((d) => d.agent.id === job.agentId)?.cover ?? "";
+    return { kind: "delegated", by: outcome?.by.displayName ?? "A Articuladora", cover };
+  }
+
+  /**
+   * O roteamento (Spec, módulo 4): a Articuladora dá o Desfecho com o modelo barato fixo, pago
+   * como qualquer execução dela. Depois de gravado e anunciado, "responder" põe na fila a
+   * resposta dela e "delegar" a de cada delegado; quem entra na fila mantém a hora de chegada.
+   */
+  async function route(job: Row, controller: AbortController, articuladora: Agent) {
+    let routing: Awaited<ReturnType<typeof buildRouting>> | undefined;
+    const result = await byPayer(job, controller, async (payer) => {
+      routing ??= await buildRouting(db, articuladora, job.originMessageId);
+      const { team: _, ...request } = routing;
+      return { model: ROUTING_MODEL, ...request, output: { schema: ROUTING_SCHEMA }, payer };
+    });
+    if (!result) return;
+    const { team } = routing!;
+    const { text, end } = result;
+    if (end?.type !== "done") return fail(job, failureReason(end), { retryable: isRetryable(end) });
+    const decided = parseDecision(text, team);
+    if (!decided) return fail(job, "a Articuladora não devolveu um Desfecho válido");
+
+    // O Desfecho e o fim do roteamento juntos: um cancelamento que chegou antes ganha.
+    const origin = { id: job.originMessageId, channelId: job.channelId };
+    const delivered = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({ state: executions.state })
+        .from(executions)
+        .where(eq(executions.id, job.id))
+        .for("update");
+      if (row?.state !== "running") return false;
+      return close(job, "done", {}, tx);
+    });
+    if (!delivered) return;
+    const outcome = await recordOutcome(db, origin, decided, clock.now());
+    const [channel] = await db.select().from(channels).where(eq(channels.id, job.channelId));
+    events.publish(await audienceOf(db, channel!), { type: "outcome.created", outcome });
+    await publish(job.id);
+    const next =
+      decided.decision === "reply"
+        ? [{ agent: articuladora, kind: "reply" as const }]
+        : decided.delegates.map((d) => ({ agent: { id: d.agentId }, kind: "delegated" as const }));
+    await insert(origin, next, job.arrivedAt);
+  }
+
+  /** Põe as chamadas na fila, chegando em `arrivedAt`, e acorda o trabalhador. */
+  async function insert(
+    origin: { id: string; channelId: string },
+    calls: readonly { agent: Pick<Agent, "id">; kind: ExecutionKind }[],
+    arrivedAt: Date,
+  ) {
+    if (calls.length === 0) return;
+    const now = clock.now();
+    const rows = calls.map(({ agent, kind }) => ({
+      id: crypto.randomUUID(),
+      kind,
+      channelId: origin.channelId,
+      originMessageId: origin.id,
+      agentId: agent.id,
+      state: "queued" as const,
+      since: now,
+      arrivedAt,
+    }));
+    await db.insert(executions).values(rows);
+    for (const r of rows) await publish(r.id);
+    wake();
   }
 
   // ---------- o trabalhador ----------
@@ -429,23 +526,7 @@ export function createExecutions(deps: {
   }
 
   return {
-    async enqueue(origin, calls) {
-      if (calls.length === 0) return;
-      const now = clock.now();
-      const rows = calls.map(({ agent, kind }) => ({
-        id: crypto.randomUUID(),
-        kind,
-        channelId: origin.channelId,
-        originMessageId: origin.id,
-        agentId: agent.id,
-        state: "queued" as const,
-        since: now,
-        arrivedAt: now,
-      }));
-      await db.insert(executions).values(rows);
-      for (const r of rows) await publish(r.id);
-      wake();
-    },
+    enqueue: (origin, calls) => insert(origin, calls, clock.now()),
 
     openIn: (channelId) => selectDtos(db, and(eq(executions.channelId, channelId), ne(executions.state, "done"))),
 
@@ -576,6 +657,7 @@ async function selectDtos(db: Db, where: SQL | undefined): Promise<ExecutionDto[
     .orderBy(asc(executions.arrivedAt), asc(executions.seq));
   return rows.map(({ e, agentName, agentPhoto }) => ({
     id: e.id,
+    kind: e.kind,
     channelId: e.channelId,
     originMessageId: e.originMessageId,
     agent: { id: e.agentId, displayName: agentName, photo: agentPhoto },

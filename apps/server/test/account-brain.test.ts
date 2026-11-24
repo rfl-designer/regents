@@ -115,22 +115,29 @@ describe("a linha de comando", () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
-  test("um pedido de saída estruturada vai como --json-schema, e a decisão volta no fim", async () => {
-    const decision = { decision: "nenhum", reason: "ninguém perguntou nada" };
-    const s = setup({ kind: "steps", steps: [], end: { result: "success", text: "", structuredOutput: decision } });
-    const schema = { type: "object", properties: { decision: { enum: ["responder", "delegar", "nenhum"] } } };
+  test("um pedido de saída estruturada vai como --json-schema, e a decisão volta como o texto", async () => {
+    const decision = { decisao: "nenhum", agentes: [], motivo: "ninguém perguntou nada" };
+    const s = setup({
+      kind: "steps",
+      steps: [{ text: "Vou decidir." }],
+      end: { result: "success", text: "", structuredOutput: decision },
+    });
+    const schema = { type: "object", properties: { decisao: { enum: ["responder", "delegar", "nenhum"] } } };
 
-    const events = await runToEnd(s, { outputSchema: schema });
+    const events = await runToEnd(s, { output: { schema } });
 
     const { argv } = lastCall(s.fake);
     expect(JSON.parse(argv[argv.indexOf("--json-schema") + 1]!)).toEqual(schema);
-    expect(events.at(-1)).toMatchObject({ type: "done", structured: decision });
+    // Só o `structured_output` vira texto; o que o modelo escreveu no caminho conta só como progresso.
+    const text = events.flatMap((e) => (e.type === "text" ? [e.text] : [])).join("");
+    expect(JSON.parse(text)).toEqual(decision);
+    expect(events.at(-1)?.type).toBe("done");
   });
 
   test("sem a decisão estruturada pedida, é falha que vale nova tentativa", async () => {
     const s = setup({ kind: "steps", steps: [{ text: "acho que nenhum" }] });
 
-    const events = await runToEnd(s, { outputSchema: { type: "object" } });
+    const events = await runToEnd(s, { output: { schema: { type: "object" } } });
 
     expect(events.at(-1)).toEqual({
       type: "failed",
