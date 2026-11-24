@@ -455,7 +455,8 @@ describe("Precisa ligar de novo", () => {
       const naFila = await andamento(daJuliana, (e) => e.held);
       expect(naFila).toMatchObject({ state: "queued", yourAccount: { state: "needs_relink" } });
       expect((await andamento(doBruno, (e) => e.held)).yourAccount).toBeNull();
-      t.clock.advance(7 * 24 * 60 * 60_000);
+      // Seis dias depois (ainda em novembro: a virada do mês também faz a fila decidir de novo).
+      t.clock.advance(6 * 24 * 60 * 60_000);
       expect((await abertas(t, geral.id))[0]).toMatchObject({ held: true });
 
       const pasta = await t.linkAccount(juliana);
