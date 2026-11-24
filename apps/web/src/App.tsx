@@ -1,11 +1,13 @@
 import { type ChannelDto, type MeDto, NO_IDENTITY_TEXT } from "@shearim/contracts";
 import { useCallback, useEffect, useState } from "react";
+import { Avatar } from "./Avatar";
 import { ApiFailure, api, Offline } from "./api";
 import { ChannelSettings } from "./ChannelSettings";
 import { ChannelView } from "./ChannelView";
 import { EntryView } from "./EntryView";
 import { JoinRequestsPanel } from "./JoinRequestsPanel";
 import { useServerEvents } from "./live";
+import { ProfileView } from "./ProfileView";
 import { Sidebar } from "./Sidebar";
 
 type State =
@@ -45,7 +47,7 @@ function upsert(list: ChannelDto[], channel: ChannelDto) {
 export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<"channel" | "settings">("channel");
+  const [view, setView] = useState<"channel" | "settings" | "profile">("channel");
 
   const load = useCallback(async () => {
     try {
@@ -61,14 +63,24 @@ export function App() {
     setState((s) => (s.kind === "ready" ? { ...s, channels: change(s.channels) } : s));
   }, []);
 
+  const setMe = useCallback((change: (me: MeDto) => MeDto) => {
+    setState((s) => (s.kind === "ready" ? { ...s, me: change(s.me) } : s));
+  }, []);
+
   useServerEvents((event) => {
     // A cada (re)conexão, a lista do servidor manda: pode ter mudado enquanto a conexão caiu.
-    if (event.type === "ready")
+    if (event.type === "ready") {
+      setMe(() => event.me);
       api.channels().then(
         (list) => setChannels(() => list),
         () => {},
       );
+    }
     if (event.type === "channel.updated") setChannels((list) => upsert(list, event.channel));
+    // O perfil editado em outra aba: o "Você está como" acompanha.
+    if (event.type === "member.updated") {
+      setMe((me) => (me.id === event.member.id ? { ...me, ...event.member } : me));
+    }
   });
 
   useEffect(() => {
@@ -95,7 +107,17 @@ export function App() {
     <div className="shell">
       <header className="topbar">
         <strong>Shearim</strong>
-        <span className="whoami">Você está como {state.me.displayName}</span>
+        <button
+          type="button"
+          className="whoami"
+          aria-current={view === "profile" ? "page" : undefined}
+          title="Meu perfil"
+          onClick={() => setView("profile")}
+        >
+          <Avatar name={state.me.displayName} src={state.me.profilePicUrl} />
+          <span>Você está como {state.me.displayName}</span>
+          <span className="handle">@{state.me.handle}</span>
+        </button>
       </header>
       {state.me.role === "admin" && <JoinRequestsPanel />}
       <div className="workspace">
@@ -111,7 +133,9 @@ export function App() {
           }}
           onOpenSettings={() => setView("settings")}
         />
-        {view === "settings" ? (
+        {view === "profile" ? (
+          <ProfileView key={state.me.id} me={state.me} onSaved={(me) => setMe(() => me)} />
+        ) : view === "settings" ? (
           <ChannelSettings />
         ) : channel ? (
           <ChannelView

@@ -49,6 +49,10 @@ apps/server/        Bun + Hono + Drizzle
   src/db/           schema.ts (Drizzle), client.ts, connect.ts (Postgres ou PGlite)
   src/identity/     porta de identidade: whois.ts (tailnet) e dev.ts
   src/join-requests.ts  Pedido de entrada (pedir, aprovar, recusar)
+  src/members.ts    Membro (com o identificador), primeira entrada, lista de Membros
+  src/profile.ts    perfil do próprio Membro (`/api/me`)
+  src/mention-handles.ts  espaço de nomes dos identificadores de Menção (Membros e Agentes)
+  src/mentions.ts   `@nome` no texto: extração, quem foi mencionado, registro
   src/no-identity-page.ts  página estática de quem chega sem identidade
   migrations/       SQL gerado pelo drizzle-kit (commitado)
   test/harness.ts   arnês: testApp(), testDb(), fakeClock(), fakeIdentity, t.addMember()
@@ -69,6 +73,7 @@ Os testes falam com o app pela borda HTTP, como um cliente faria, com a identida
 const t = await testApp();                                  // banco novo e migrado, relógio em 2026-11-24T12:00Z
 const juliana = t.as({ id: "1001", name: "Juliana" });     // id = UserProfile.ID da tailnet
 await juliana.post(`/api/channels/${id}/messages`, { body: "oi" });
+await juliana.patch("/api/me", { displayName: "Ju" });       // get, post, patch e request
 t.clock.advance(90_000);
 await t.anonymous("funnel").get("/api/me");                  // sem identidade
 ```
@@ -114,6 +119,15 @@ aba.received();                                             // tudo o que chegou
 t.events.publish({ members: [id] }, evento);                 // publicar direto no hub
 ```
 
+### Perfil e identificador de Menção (#19)
+
+- O nome e a foto vêm da tailnet na **primeira entrada** (o primeiro Admin pelo `whois`, quem foi aprovado pelo que o Pedido de entrada guardou). Depois, nada do `whois` é regravado: o nome é do Membro e a tailnet não o sobrescreve.
+- `GET /api/me` e `PATCH /api/me` (`UpdateProfileInput`: `displayName?`, `handle?`, `about?`; campo ausente fica). Nome de 1 a 80; "sobre mim" até 500, vazio apaga; identificador inválido: `400 invalid_input`; já de outro participante: `409 handle_taken`. Toda edição sai como `member.updated` (o `MemberSummaryDto`) para todo Membro, inclusive as outras abas de quem editou.
+- `MeDto` e `MemberSummaryDto` trazem `handle` (sem `@`), `profilePicUrl` e `about`.
+- **Identificador de Menção:** um espaço de nomes só para Membros e Agentes, na tabela `mention_handles` (chave = identificador; cada linha tem um dono, `member_id` ou `agent_id`). A unicidade vem do banco. Gerado da primeira palavra do nome (sem acento, minúsculo, `[a-z0-9_]`, senão o login), com sufixo quando colide (`rafael`, `rafael2`…). Quem mexe nele é só `mention-handles.ts`: `claimHandle(tx, dono, handleBase(nome))` ao criar o participante, `changeHandle` ao editar, `resolveHandles` para achar o dono.
+- **Menção:** `mentionPattern()` e `normalizeHandle()` ficam em `packages/contracts` (o servidor extrai, o PWA destaca com a mesma regra). Ao gravar uma mensagem, `recordMentions` registra em `message_mentions` as Menções a Membros que veem a conversa (num privado, citar quem está de fora não conta). `MessageDto.mentions` (`MentionDto[]`, na ordem do texto) chega na resposta, na lista e no `message.created`; a Menção é da pessoa, então sobrevive à troca de identificador. O PWA destaca a mensagem ("menciona você") para quem foi mencionado.
+- **Seam para os Agentes (#20):** ao criar um Agente, `claimHandle(tx, { kind: "agent", id }, handleBase(nome))` na mesma transação, e ligar `mention_handles.agent_id` a `agents.id` (`.references`). `mentionedIn(db, body)` devolve os donos citados, Membro ou Agente; os `kind: "agent"` são os que respondem direto. `MentionDto` e `message_mentions` ganham o lado do Agente. Os testes de `test/mention-handles.test.ts` usam um Agente só com `claimHandle`; com o #20, passam a criá-lo pela rota.
+
 ### Canais e visibilidade
 
 Um Canal público é visto por todo Membro; um privado só por quem participa. Para quem não participa de um privado (o Admin inclusive), ele não está em `GET /api/channels`, responde 404 em toda rota dele e não manda evento. A regra mora em `participation.ts`: `canSee` (HTTP) e `audienceOf` (WebSocket) são a mesma decisão vista dos dois lados; toda rota que publica evento de uma conversa passa por `audienceOf`. Quem cria um Canal participa dele; escrever num público é entrar nele.
@@ -125,7 +139,7 @@ Um Canal público é visto por todo Membro; um privado só por quem participa. P
 | `GET /api/channels/:id` | quem vê | o Canal |
 | `POST /api/channels/:id/join` | Membro | entra num público (privado: 404) |
 | `POST /api/channels/:id/participants` | quem vê | `{ memberId }`; adiciona uma pessoa |
-| `GET /api/members` | Membro | `{ id, displayName }[]`, para escolher quem adicionar |
+| `GET /api/members` | Membro | `MemberSummaryDto[]` (`id`, `displayName`, `handle`, `profilePicUrl`, `about`), para escolher quem adicionar |
 | `GET /api/channel-settings` | Admin | Instruções e N de todo Canal, sem mensagens nem participantes |
 | `PATCH /api/channel-settings/:id` | Admin | `{ instructions?, recentMessages? }` (N inteiro ≥ 0, padrão 30) |
 

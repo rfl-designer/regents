@@ -6,6 +6,9 @@
   --line: #e5e7eb;
   --accent: #1f2937;
   --error: #b91c1c;
+  --mention-bg: #fef9c3;
+  --mention-line: #ca8a04;
+  --mention-mark: #fde68a;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 15px;
 }
@@ -16,6 +19,9 @@
     --muted: #9ca3af;
     --line: #374151;
     --accent: #e5e7eb;
+    --mention-bg: #3b3415;
+    --mention-line: #facc15;
+    --mention-mark: #713f12;
   }
 }
 * {
@@ -60,8 +66,53 @@ body {
   border-bottom: 1px solid var(--line);
 }
 .whoami {
-  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
   font-size: 0.85rem;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  padding: 2px 8px 2px 2px;
+  cursor: pointer;
+}
+.whoami[aria-current="page"] {
+  background: var(--line);
+}
+.handle {
+  color: var(--muted);
+}
+.message.mentions-me {
+  background: var(--mention-bg);
+  box-shadow: inset 3px 0 0 var(--mention-line);
+  margin: 0 -16px;
+  padding: 6px 16px;
+}
+.message mark {
+  background: var(--mention-mark);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+.mention-tag {
+  font-size: 0.75rem;
+  color: var(--mention-line);
+}
+.profile label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+.handle-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.handle-input input {
+  flex: 1;
 }
 .channel {
   display: flex;
@@ -385,4 +436,9 @@ img.avatar {
   border-radius: 999px;
   border: 1px solid #b45309;
   color: #b45309;
+}
+.whoami .avatar {
+  width: 24px;
+  height: 24px;
+  font-size: 0.75rem;
 }

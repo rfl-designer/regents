@@ -1,5 +1,6 @@
 import type { JoinRequestAdminDto } from "@shearim/contracts";
 import { useCallback, useEffect, useState } from "react";
+import { Avatar } from "./Avatar";
 import { api } from "./api";
 import { useServerEvents } from "./live";
 
@@ -53,13 +54,7 @@ export function JoinRequestsPanel() {
       <ul>
         {pending.map((r) => (
           <li key={r.id} className="join-request" aria-label={`Pedido de ${r.displayName}`}>
-            {r.profilePicUrl ? (
-              <img className="avatar" src={r.profilePicUrl} alt="" />
-            ) : (
-              <div className="avatar" aria-hidden>
-                {r.displayName.slice(0, 1).toUpperCase()}
-              </div>
-            )}
+            <Avatar name={r.displayName} src={r.profilePicUrl} />
             <div className="join-request-who">
               <div>
                 <strong>{r.displayName}</strong> {r.sharee && <span className="badge">outra tailnet</span>}

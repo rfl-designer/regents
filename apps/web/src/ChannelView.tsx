@@ -1,5 +1,13 @@
-import type { ChannelDto, MeDto, MemberSummaryDto, MessageDto } from "@shearim/contracts";
-import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ChannelDto,
+  type MeDto,
+  type MemberSummaryDto,
+  type MessageDto,
+  mentionPattern,
+  normalizeHandle,
+} from "@shearim/contracts";
+import { type FormEvent, type KeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { Avatar } from "./Avatar";
 import { api } from "./api";
 import { useServerEvents } from "./live";
 
@@ -9,6 +17,19 @@ const time = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digi
 function append(prev: MessageDto[] | null, arrived: MessageDto[]) {
   const have = new Set(prev?.map((m) => m.id));
   return [...(prev ?? []), ...arrived.filter((m) => !have.has(m.id))];
+}
+
+/** O texto com o `@` de quem está vendo em destaque (o mesmo `@nome` que o servidor reconhece). */
+function highlightMe(body: string, handle: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  let last = 0;
+  for (const match of body.matchAll(mentionPattern())) {
+    if (normalizeHandle(match[1]!) !== handle) continue;
+    parts.push(body.slice(last, match.index), <mark key={match.index}>{match[0]}</mark>);
+    last = match.index + match[0].length;
+  }
+  parts.push(body.slice(last));
+  return parts;
 }
 
 interface Props {
@@ -45,6 +66,15 @@ export function ChannelView({ channel, me, onChanged }: Props) {
     if (event.type === "ready") load();
     if (event.type === "message.created" && event.message.channelId === channel.id) {
       setMessages((prev) => append(prev, [event.message]));
+    }
+    // Quem escreveu trocou o nome: as mensagens dele já mostram o novo.
+    if (event.type === "member.updated") {
+      const { id, displayName, profilePicUrl } = event.member;
+      setMessages(
+        (prev) =>
+          prev?.map((m) => (m.author.id === id ? { ...m, author: { ...m.author, displayName, profilePicUrl } } : m)) ??
+          null,
+      );
     }
   });
 
@@ -85,20 +115,22 @@ export function ChannelView({ channel, me, onChanged }: Props) {
       <ol className="messages" aria-label={`Mensagens de #${channel.name}`} aria-busy={messages === null && !loadError}>
         {loadError && <li className="notice">Não foi possível carregar as mensagens. Recarregue a página.</li>}
         {messages?.length === 0 && <li className="notice">Nenhuma mensagem ainda. Diga oi!</li>}
-        {messages?.map((m) => (
-          <li key={m.id} className="message">
-            <div className="avatar" aria-hidden>
-              {m.author.displayName.slice(0, 1).toUpperCase()}
-            </div>
-            <div>
-              <div className="meta">
-                <strong>{m.author.displayName}</strong>
-                <time dateTime={m.createdAt}>{time.format(new Date(m.createdAt))}</time>
+        {messages?.map((m) => {
+          const mentionsMe = m.mentions.some((x) => x.kind === "member" && x.id === me.id);
+          return (
+            <li key={m.id} className={mentionsMe ? "message mentions-me" : "message"}>
+              <Avatar name={m.author.displayName} src={m.author.profilePicUrl} />
+              <div>
+                <div className="meta">
+                  <strong>{m.author.displayName}</strong>
+                  <time dateTime={m.createdAt}>{time.format(new Date(m.createdAt))}</time>
+                  {mentionsMe && <span className="mention-tag">menciona você</span>}
+                </div>
+                <p className="body">{mentionsMe ? highlightMe(m.body, me.handle) : m.body}</p>
               </div>
-              <p className="body">{m.body}</p>
-            </div>
-          </li>
-        ))}
+            </li>
+          );
+        })}
         <div ref={endRef} />
       </ol>
       <form className="composer" onSubmit={send}>

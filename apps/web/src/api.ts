@@ -12,6 +12,7 @@ import type {
   MyJoinRequestDto,
   SendMessageInput,
   UpdateChannelSettingsInput,
+  UpdateProfileInput,
 } from "@shearim/contracts";
 
 /** Falha de uma chamada à API, já com o que a tela precisa para explicar. */
@@ -51,6 +52,7 @@ const post = { method: "POST" } as const;
 
 export const api = {
   me: () => call<MeDto>("/api/me"),
+  updateProfile: (input: UpdateProfileInput) => call<MeDto>("/api/me", json("PATCH", input)),
   members: () => call<MemberSummaryDto[]>("/api/members"),
   myJoinRequest: () => call<MyJoinRequestDto>("/api/join-request"),
   requestToJoin: () => call<JoinRequestDto>("/api/join-request", post),
