@@ -5,7 +5,8 @@ import type { Clock } from "./clock";
 import { conversationRoutes } from "./conversations";
 import type { Db } from "./db/client";
 import { createEventHub } from "./events";
-import type { IdentityPort } from "./identity/port";
+import type { Identity, IdentityPort } from "./identity/port";
+import { IdentityUnavailableError } from "./identity/whois";
 import { type Member, memberFor, toMeDto } from "./members";
 
 export interface AppDeps {
@@ -32,7 +33,15 @@ export function createApp(deps: AppDeps) {
 
   // Toda rota em /api (menos a saúde) exige identidade e Membro.
   app.use("/api/*", async (c, next) => {
-    const who = await identity.whoAmI(c.req.raw);
+    let who: Identity;
+    try {
+      who = await identity.whoAmI(c.req.raw);
+    } catch (err) {
+      if (!(err instanceof IdentityUnavailableError)) throw err;
+      // Falha da Instalação (tailscaled fora do ar), não "sem identidade": fica no log e na resposta.
+      console.error(`shearim: ${err.message}`);
+      return c.json({ error: "identity_unavailable" }, 503);
+    }
     if (who.kind === "none") return c.json({ error: "no_identity", reason: who.reason }, 403);
     const member = await memberFor(db, clock, who);
     if (!member) return c.json({ error: "not_a_member" }, 403);

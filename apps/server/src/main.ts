@@ -2,7 +2,9 @@
  * Entrypoint do servidor: `bun src/main.ts serve | migrate`.
  *
  * Variáveis:
- * - `SHEARIM_IDENTITY`: `dev` (cookie, só desenvolvimento). O `whois` da tailnet chega no #37.
+ * - `SHEARIM_IDENTITY`: `tailnet` (o `whois` da LocalAPI pelo socket do tailscaled; é o da
+ *   imagem Docker) ou `dev` (cookie, só desenvolvimento).
+ * - `TS_SOCKET`: socket do tailscaled (padrão `/var/run/tailscale/tailscaled.sock`, o do compose).
  * - `DATABASE_URL`: Postgres. Sem ela, PGlite em `SHEARIM_PGLITE_DIR` (padrão `.data/pglite`;
  *   `memory://` para um banco em memória que some ao parar).
  * - `HOST` (padrão `0.0.0.0`), `PORT` (padrão `3000`).
@@ -16,6 +18,8 @@ import { createApp } from "./app";
 import { systemClock } from "./clock";
 import { connect, MEMORY } from "./db/connect";
 import { createDevIdentity } from "./identity/dev";
+import type { IdentityPort } from "./identity/port";
+import { createWhoisIdentity } from "./identity/whois";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 
@@ -24,15 +28,24 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-function identityFromEnv() {
+const DEFAULT_TS_SOCKET = "/var/run/tailscale/tailscaled.sock";
+
+function identityFromEnv(): { identity: IdentityPort; routes?: Hono; describe: string } {
   const mode = process.env.SHEARIM_IDENTITY;
   if (mode === "dev") {
-    return createDevIdentity({ defaultUser: { id: "dev-1", name: "Pessoa Dev" } });
+    const dev = createDevIdentity({ defaultUser: { id: "dev-1", name: "Pessoa Dev" } });
+    return { ...dev, describe: "identidade de desenvolvimento" };
   }
-  fail(
-    `SHEARIM_IDENTITY=${mode || "(vazio)"} não é suportado ainda. Use SHEARIM_IDENTITY=dev; ` +
-      "a identidade pelo whois da tailnet chega com a Instalação (#37).",
-  );
+  if (mode === "tailnet") {
+    const socketPath = process.env.TS_SOCKET || DEFAULT_TS_SOCKET;
+    // Não exige o socket já na subida: o sidecar pode estar subindo. Sem ele, a API responde 503.
+    if (!existsSync(socketPath)) console.warn(`shearim: socket do tailscaled ainda não existe em ${socketPath}`);
+    return {
+      identity: createWhoisIdentity({ socketPath, clock: systemClock }),
+      describe: `whois da tailnet em ${socketPath}`,
+    };
+  }
+  fail(`SHEARIM_IDENTITY=${mode || "(vazio)"} não é suportado. Use "tailnet" (a Instalação) ou "dev".`);
 }
 
 /** `memory://` é um PGlite em memória, que some ao parar (o e2e usa para começar do zero). */
@@ -55,13 +68,13 @@ async function main(command: string | undefined) {
   }
   if (command !== "serve") fail(`comando desconhecido: ${command ?? "(nenhum)"}. Use "serve" ou "migrate".`);
 
-  const dev = identityFromEnv();
+  const who = identityFromEnv();
   await conn.migrate();
   const { app, websocket } = createApp({
     db: conn.db,
-    identity: dev.identity,
+    identity: who.identity,
     clock: systemClock,
-    devRoutes: dev.routes,
+    devRoutes: who.routes,
   });
 
   const root = new Hono();
@@ -80,7 +93,7 @@ async function main(command: string | undefined) {
     fetch: root.fetch,
     websocket,
   });
-  console.log(`shearim: ouvindo em http://${server.hostname}:${server.port} (${conn.describe})`);
+  console.log(`shearim: ouvindo em http://${server.hostname}:${server.port} (${conn.describe}; ${who.describe})`);
 
   const stop = async () => {
     await server.stop();
