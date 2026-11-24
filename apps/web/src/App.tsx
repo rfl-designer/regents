@@ -13,7 +13,7 @@ import {
   type UnreadDto,
   WORKSPACE_KEY_PATH,
 } from "@shearim/contracts";
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { AgentsSettings, WorkspaceKeySettings } from "./AgentsAdmin";
 import { Avatar } from "./Avatar";
 import { ApiFailure, api } from "./api";
@@ -61,20 +61,45 @@ function explain(err: unknown): State {
   return { kind: "blocked", title: "Algo deu errado", detail: "Recarregue a página para tentar de novo." };
 }
 
-type View = "channel" | "account" | "profile" | "notifications" | AdminView;
+type Screen = "account" | "profile" | "notifications" | AdminView;
+/** `channel` é a conversa aberta (Canal ou DM); as outras são telas (`SCREENS`). */
+type View = "channel" | Screen;
 
-/** As telas que têm endereço próprio: é para onde levam os pushes que não são de conversa. */
-const VIEW_PATHS: Partial<Record<View, string>> = {
-  installation: INSTALLATION_PATH,
-  members: MEMBERS_PATH,
-  key: WORKSPACE_KEY_PATH,
-  agents: AGENTS_PATH,
-  account: ACCOUNT_PATH,
+/** O que as telas recebem do App. */
+interface ScreenContext {
+  me: MeDto;
+  account: ReturnType<typeof useAccount>;
+  push: ReturnType<typeof usePush>;
+  installation: ReturnType<typeof useInstallation>;
+  setMe(change: (me: MeDto) => MeDto): void;
+}
+
+/**
+ * Cada tela que não é conversa: o endereço próprio, se tem (é para onde levam os pushes que não
+ * são de conversa), se é do Admin (fica marcada no painel dele) e o que mostra.
+ */
+const SCREENS: Record<Screen, { path?: string; admin?: true; render(ctx: ScreenContext): ReactNode }> = {
+  profile: { render: ({ me, setMe }) => <ProfileView key={me.id} me={me} onSaved={(saved) => setMe(() => saved)} /> },
+  account: { path: ACCOUNT_PATH, render: ({ account }) => <MyAccount state={account} /> },
+  notifications: { render: ({ push }) => <DevicesView push={push} /> },
+  members: { path: MEMBERS_PATH, admin: true, render: ({ me }) => <MembersSettings me={me} /> },
+  context: { admin: true, render: () => <WorkspaceContextSettings /> },
+  settings: { admin: true, render: () => <ChannelSettings /> },
+  agents: { path: AGENTS_PATH, admin: true, render: () => <AgentsSettings /> },
+  key: { path: WORKSPACE_KEY_PATH, admin: true, render: () => <WorkspaceKeySettings /> },
+  installation: {
+    path: INSTALLATION_PATH,
+    admin: true,
+    render: ({ installation }) => <InstallationSettings state={installation} />,
+  },
 };
+
+/** O endereço próprio da tela, se ela tem. */
+const pathOf = (view: View) => (view === "channel" ? undefined : SCREENS[view].path);
 
 /** A tela que um endereço pede (`/conta`, `/chave`…), ou `undefined` (uma conversa, ou a raiz). */
 function viewOfPath(pathname: string): View | undefined {
-  return (Object.entries(VIEW_PATHS) as [View, string][]).find(([, path]) => path === pathname)?.[0];
+  return (Object.keys(SCREENS) as Screen[]).find((s) => SCREENS[s].path === pathname);
 }
 
 function conversationFromUrl() {
@@ -231,17 +256,17 @@ export function App() {
   // aparelho se fecham ao abri-la.
   const pageVisible = usePageVisible();
   const ready = state.kind === "ready";
-  const dmShown = ready ? state.dms.find((d) => d.id === selectedId) : undefined;
-  const channelShown =
-    ready && !dmShown ? (state.channels.find((c) => c.id === selectedId) ?? state.channels[0]) : undefined;
-  const shownId = view === "channel" ? (dmShown?.id ?? channelShown?.id ?? null) : null;
+  // A conversa selecionada: a DM, ou o Canal (o primeiro, se nada foi escolhido).
+  const dm = ready ? state.dms.find((d) => d.id === selectedId) : undefined;
+  const channel = ready && !dm ? (state.channels.find((c) => c.id === selectedId) ?? state.channels[0]) : undefined;
+  const shownId = view === "channel" ? (dm?.id ?? channel?.id ?? null) : null;
   const watching = pageVisible ? shownId : null;
   useEffect(() => {
     setPresence(watching);
     if (watching) void closeNotificationsOf(watching);
   }, [watching]);
   useEffect(() => {
-    const path = VIEW_PATHS[view];
+    const path = pathOf(view);
     if (path) {
       if (location.pathname !== path) history.replaceState(null, "", path);
       return;
@@ -271,8 +296,6 @@ export function App() {
     );
   }
 
-  const dm = state.dms.find((d) => d.id === selectedId);
-  const channel = dm ? undefined : (state.channels.find((c) => c.id === selectedId) ?? state.channels[0]);
   const focusIn = (conversationId: string) => (focus?.conversationId === conversationId ? focus.messageId : undefined);
   const open = (id: string) => {
     setFocus(null);
@@ -334,11 +357,9 @@ export function App() {
           channels={state.channels}
           dms={state.dms}
           unread={unread}
-          selectedId={view === "channel" ? (dm?.id ?? channel?.id ?? null) : null}
+          selectedId={shownId}
           isAdmin={state.me.role === "admin"}
-          adminView={
-            view === "channel" || view === "account" || view === "profile" || view === "notifications" ? null : view
-          }
+          adminView={view !== "channel" && SCREENS[view].admin ? (view as AdminView) : null}
           onOpen={open}
           onCreated={(created) => {
             setChannels((list) => upsert(list, created));
@@ -350,24 +371,8 @@ export function App() {
           }}
           onOpenAdmin={setView}
         />
-        {view === "profile" ? (
-          <ProfileView key={state.me.id} me={state.me} onSaved={(me) => setMe(() => me)} />
-        ) : view === "account" ? (
-          <MyAccount state={account} />
-        ) : view === "members" ? (
-          <MembersSettings me={state.me} />
-        ) : view === "notifications" ? (
-          <DevicesView push={push} />
-        ) : view === "context" ? (
-          <WorkspaceContextSettings />
-        ) : view === "settings" ? (
-          <ChannelSettings />
-        ) : view === "agents" ? (
-          <AgentsSettings />
-        ) : view === "key" ? (
-          <WorkspaceKeySettings />
-        ) : view === "installation" ? (
-          <InstallationSettings state={installation} />
+        {view !== "channel" ? (
+          SCREENS[view].render({ me: state.me, account, push, installation, setMe })
         ) : dm ? (
           <DmView key={dm.id} dm={dm} me={state.me} focus={focusIn(dm.id)} />
         ) : channel ? (
