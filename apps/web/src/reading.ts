@@ -50,6 +50,11 @@ export function useReading(opts: {
   const flushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const atEnd = useRef(true);
   const anchor = useRef<{ id: string; offset: number } | null>(null);
+  /**
+   * Um salto em curso (o toque no aviso): até ele assentar, a lista que muda (o Andamento de
+   * outra mensagem, um Desfecho) mantém a mensagem do salto no meio, em vez de cortar o salto.
+   */
+  const jumping = useRef<{ id: string; until: number } | null>(null);
   const opened = useRef(false);
   const byId = useRef(new Map<string, MessageDto>());
   /** A primeira não-lida de quando a conversa abriu: `undefined` até as não-lidas chegarem. */
@@ -124,6 +129,8 @@ export function useReading(opts: {
         list.scrollTop = list.scrollHeight;
         atEnd.current = true;
       }
+    } else if (jumping.current && Date.now() < jumping.current.until) {
+      list.querySelector<HTMLElement>(`[data-message-id="${jumping.current.id}"]`)?.scrollIntoView({ block: "center" });
     } else if (atEnd.current) {
       list.scrollTop = list.scrollHeight;
     } else if (anchor.current) {
@@ -185,6 +192,8 @@ export function useReading(opts: {
     jump(id: string) {
       const el = listRef.current?.querySelector<HTMLElement>(`[data-message-id="${id}"]`);
       if (!el) return;
+      atEnd.current = false;
+      jumping.current = { id, until: Date.now() + FLASH_MS };
       el.scrollIntoView({ block: "center", behavior: "smooth" });
       setFlashId(null);
       requestAnimationFrame(() => setFlashId(id));

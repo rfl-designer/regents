@@ -15,10 +15,12 @@ import type {
   MemberSummaryDto,
   MessageDto,
   MyJoinRequestDto,
+  OutcomeDto,
   SendMessageInput,
   SubmitAccountCodeInput,
   UnreadDto,
   UnreadMessagesDto,
+  UpdateAgentInput,
   UpdateChannelSettingsInput,
   UpdateProfileInput,
   WorkspaceContextDto,
@@ -112,6 +114,10 @@ export const api = {
   /** Cancela o que a mensagem ainda tem em andamento (só quem escreveu). */
   cancelMessage: (conversationId: string, messageId: string) =>
     call<ExecutionDto[]>(`/api/conversations/${conversationId}/messages/${messageId}/cancel`, post),
+  /** Os Desfechos da Articuladora numa conversa (uma DM não tem). */
+  outcomes: (conversationId: string) => call<OutcomeDto[]>(`/api/conversations/${conversationId}/outcomes`),
+  updateAgent: (agentId: string, input: UpdateAgentInput) =>
+    call<AgentDto>(`/api/agents/${agentId}`, json("PATCH", input)),
   agents: () => call<AgentDto[]>("/api/agents"),
   createAgent: (input: CreateAgentInput) => call<AgentDto>("/api/agents", json("POST", input)),
   addAgent: (channelId: string, agentId: string) =>
