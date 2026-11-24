@@ -8,7 +8,7 @@ import type {
   MessageDto,
   SendMessageInput,
 } from "@shearim/contracts";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import type { Agent } from "./agents";
 import { addArticuladora } from "./articuladora";
@@ -23,6 +23,7 @@ import { outcomesIn } from "./outcomes";
 import { addAgent, addParticipants, audienceOf, canSee, participantsOf } from "./participation";
 import type { Push } from "./push";
 import type { Reading } from "./reading";
+import { recordFollows } from "./threads";
 
 type Env = { Variables: { member: Member } };
 /** Uma linha de `channels`: um Canal ou uma DM. */
@@ -195,18 +196,34 @@ export function conversationRoutes(deps: {
     if (typeof input?.body !== "string" || input.body.trim() === "") {
       return c.json({ error: "invalid_input", message: "A mensagem está vazia." }, 400);
     }
+    const threadRootId = input.threadRootId ?? null;
+    if (threadRootId !== null && !(await isThreadRoot(db, conversation.id, threadRootId))) {
+      return c.json({ error: "invalid_input", message: "Essa mensagem não abre Thread nesta conversa." }, 400);
+    }
     const author = c.get("member");
     const values = {
       id: crypto.randomUUID(),
       channelId: conversation.id,
       authorMemberId: author.id,
+      threadRootId,
       body: input.body,
       createdAt: clock.now(),
     };
     // A mensagem e as Menções dela são gravadas juntas, antes de qualquer outra coisa.
-    const mentions = await db.transaction(async (tx) => {
+    // Numa Thread, quem passa a segui-la também (o autor, o da raiz, os mencionados).
+    const { mentions, followed } = await db.transaction(async (tx) => {
       await tx.insert(messages).values(values);
-      return recordMentions(tx, values.id, conversation, values.body);
+      const mentions = await recordMentions(tx, values.id, conversation, values.body);
+      const followed = threadRootId
+        ? await recordFollows(tx, {
+            conversationId: conversation.id,
+            threadRootId,
+            authorMemberId: author.id,
+            mentions,
+            createdAt: values.createdAt,
+          })
+        : [];
+      return { mentions, followed };
     });
     // Escrever num Canal público é entrar nele (numa conversa fechada, quem escreve já participa).
     const joined =
@@ -223,11 +240,15 @@ export function conversationRoutes(deps: {
         leftWorkspace: false,
       },
       originMessageId: null,
+      threadRootId,
       mentions,
       createdAt: values.createdAt.toISOString(),
     };
     events.publish(await audienceOf(db, conversation), { type: "message.created", message: dto });
     if (joined && isChannel(conversation)) await publishChannel(conversation);
+    for (const { memberId, thread } of followed) {
+      events.publish({ members: [memberId] }, { type: "thread.followed", thread });
+    }
     await reading.messageCreated(dto);
     // O push sai em segundo plano (quem escreveu não espera pelos push services); o badge dele já
     // conta esta mensagem.
@@ -357,6 +378,16 @@ async function whoActs(
       .filter((a) => !dmAgents.some((o) => o.id === a.id))
       .map((agent) => ({ agent, kind: "mention" as const })),
   ];
+}
+
+/** Uma Thread pendura numa mensagem do fluxo principal da mesma conversa (não há Thread dentro de Thread). */
+async function isThreadRoot(db: Db, conversationId: string, id: unknown) {
+  if (typeof id !== "string" || !UUID.test(id)) return false;
+  const [root] = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(and(eq(messages.id, id), eq(messages.channelId, conversationId), isNull(messages.threadRootId)));
+  return Boolean(root);
 }
 
 function settingsDto(channel: Channel): ChannelSettingsDto {

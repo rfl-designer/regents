@@ -1,5 +1,5 @@
 import { normalizeHandle } from "@shearim/contracts";
-import { and, asc, eq, inArray, notInArray, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, notInArray, or } from "drizzle-orm";
 import type { Agent } from "./agents";
 import { recentMessages } from "./context";
 import { type Db, schema } from "./db/client";
@@ -129,7 +129,23 @@ async function delegatesIn(db: Db, channelId: string): Promise<TeamMember[]> {
     .orderBy(asc(channelAgents.addedAt), asc(agents.name));
 }
 
-/** O pedido de roteamento de uma mensagem de pessoa num Canal: o `system`, a conversa e quem pode receber. */
+/**
+ * Os Agentes do Canal que já falaram na Thread (na raiz ou nela): numa Thread, a Articuladora os
+ * prefere, para manter a continuidade (Spec, módulo 4).
+ */
+async function spokeInThread(db: Db, rootId: string, team: readonly TeamMember[]) {
+  const authors = await db
+    .selectDistinct({ id: messages.authorAgentId })
+    .from(messages)
+    .where(and(or(eq(messages.threadRootId, rootId), eq(messages.id, rootId)), isNotNull(messages.authorAgentId)));
+  return team.filter((a) => authors.some((r) => r.id === a.id));
+}
+
+/**
+ * O pedido de roteamento de uma mensagem de pessoa num Canal: o `system`, a conversa e quem pode
+ * receber. Numa Thread, a conversa é a raiz e a Thread (`recentMessages`), e os Agentes que já
+ * falaram ali vêm marcados como preferidos.
+ */
 export async function buildRouting(db: Db, articuladora: Agent, originMessageId: string) {
   const [origin] = await db.select().from(messages).where(eq(messages.id, originMessageId));
   if (!origin?.authorMemberId) throw new Error(`buildRouting: ${originMessageId} não é mensagem de pessoa`);
@@ -138,14 +154,23 @@ export async function buildRouting(db: Db, articuladora: Agent, originMessageId:
   const team = await delegatesIn(db, channel!.id);
   const map = await workspaceMapFor(db, origin.authorMemberId, channel!.id);
   const author = recent.at(-1)!.author;
+  const inThread = origin.threadRootId !== null;
+  const spoke = inThread ? await spokeInThread(db, origin.threadRootId!, team) : [];
 
   const contract = [
     `Você é ${articuladora.name}, a Articuladora do Shearim, um chat de time em que pessoas e Agentes conversam juntos.`,
-    `Você está no Canal #${channel!.name}. Dê o Desfecho da última mensagem, de ${author}: decida quem responde.`,
+    inThread
+      ? `Você está numa Thread do Canal #${channel!.name}, aberta pela mensagem de ${recent[0]!.author}. Dê o Desfecho da última mensagem, de ${author}: decida quem responde.`
+      : `Você está no Canal #${channel!.name}. Dê o Desfecho da última mensagem, de ${author}: decida quem responde.`,
     "- responder: você mesma responde (pergunta geral, sobre o time, ou quando um Agente de fora do Canal serviria melhor: aí você sugere esse Agente em texto na sua resposta).",
     `- delegar: passe para até ${MAX_DELEGATES} Agentes do Canal, cada um com uma frase sobre o que cobrir. Só Agentes da lista "Agentes do Canal", pelo identificador. Um Agente de fora do Canal você nunca delega.`,
     "- nenhum: nenhum Agente precisa agir (conversa entre pessoas, recado, cumprimento, assunto encerrado).",
     "Na dúvida entre responder e nenhum, fique com nenhum.",
+    ...(inThread
+      ? [
+          'Prefira, entre os Agentes do Canal, os que já falaram nesta Thread (a lista "Já falaram nesta Thread"), para manter a continuidade.',
+        ]
+      : []),
     "O motivo é uma frase curta, em português do Brasil.",
   ].join("\n");
 
@@ -153,6 +178,7 @@ export async function buildRouting(db: Db, articuladora: Agent, originMessageId:
     contract,
     section("Instruções do Canal", channel!.instructions),
     section("Agentes do Canal", team.map((a) => `- ${agentLine(a)}`).join("\n")),
+    section("Já falaram nesta Thread", spoke.map((a) => `- @${a.handle} (${a.name})`).join("\n")),
     section("Outros Agentes do Workspace", map.agents.join("\n")),
     section(`Canais que ${author} pode ver`, map.channels),
   ]
@@ -166,7 +192,9 @@ export async function buildRouting(db: Db, articuladora: Agent, originMessageId:
       {
         role: "user" as const,
         content: [
-          "Mensagens recentes do Canal, da mais antiga para a mais nova:",
+          inThread
+            ? "A mensagem que abriu a Thread e as mais recentes dela, da mais antiga para a mais nova:"
+            : "Mensagens recentes do Canal, da mais antiga para a mais nova:",
           transcript,
           `Dê o Desfecho da última mensagem, de ${author}.`,
         ].join("\n\n"),

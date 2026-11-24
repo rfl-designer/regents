@@ -187,8 +187,8 @@ function optional<T>(v: string | null, f: (v: string) => T): T | undefined {
 
 // ---------- WebSocket de eventos, como um cliente ----------
 
-/** Quanto `next` espera por padrão. Curto: um evento que vai chegar chega em milissegundos. */
-const EVENT_TIMEOUT_MS = 1_000;
+/** Quanto `next` espera por padrão. Folgado para a máquina carregada; provar ausência usa o evento-sentinela, não a espera. */
+const EVENT_TIMEOUT_MS = 5_000;
 
 /** Uma conexão aberta no WebSocket de eventos, com a fila do que chegou. */
 export interface EventSocket {

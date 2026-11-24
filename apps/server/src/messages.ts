@@ -13,6 +13,7 @@ function selectMessages(db: Db) {
       channelId: messages.channelId,
       body: messages.body,
       originMessageId: messages.originMessageId,
+      threadRootId: messages.threadRootId,
       createdAt: messages.createdAt,
       memberId: members.id,
       memberName: members.displayName,
@@ -44,12 +45,16 @@ function toDto(r: Row, mentions: Map<string, MessageDto["mentions"]>): MessageDt
           leftWorkspace: r.memberLeftAt !== null,
         },
     originMessageId: r.originMessageId,
+    threadRootId: r.threadRootId,
     mentions: mentions.get(r.id) ?? [],
     createdAt: r.createdAt.toISOString(),
   };
 }
 
-/** As mensagens de uma conversa, em ordem de gravação (as respostas ancoradas inclusive). */
+/**
+ * As mensagens de uma conversa, em ordem de gravação: as respostas ancoradas e as mensagens de
+ * Thread inclusive (`threadRootId` diz de qual Thread; o cliente as separa do fluxo principal).
+ */
 export async function listMessages(db: Db, channelId: string): Promise<MessageDto[]> {
   const rows = await selectMessages(db).where(eq(messages.channelId, channelId)).orderBy(asc(messages.seq));
   const mentions = await mentionsOf(

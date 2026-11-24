@@ -164,11 +164,17 @@ export const messages = pgTable(
     authorAgentId: uuid().references(() => agents.id),
     /** Na resposta ancorada de um Agente: a mensagem que a gerou. */
     originMessageId: uuid().references((): AnyPgColumn => messages.id),
+    /**
+     * Numa Thread: a mensagem-raiz (do fluxo principal da mesma conversa) em que ela pendura.
+     * Nulo no fluxo principal. A resposta ancorada a uma mensagem de Thread fica na mesma Thread.
+     */
+    threadRootId: uuid().references((): AnyPgColumn => messages.id),
     body: text().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull(),
   },
   (t) => [
     index().on(t.channelId, t.seq),
+    index().on(t.threadRootId, t.seq),
     check("messages_um_autor", sql`num_nonnulls(${t.authorMemberId}, ${t.authorAgentId}) = 1`),
   ],
 );
@@ -241,6 +247,12 @@ export const executions = pgTable(
     originMessageId: uuid()
       .notNull()
       .references(() => messages.id),
+    /**
+     * A Thread da mensagem de origem (a raiz), ou nulo no fluxo principal. A "conversa para a
+     * ordem" (Spec, módulo 6, Ordem; #42) é o par `(channel_id, thread_root_id)`: o fluxo
+     * principal e cada Thread contam como conversas separadas para a série por Agente.
+     */
+    threadRootId: uuid().references(() => messages.id),
     agentId: uuid()
       .notNull()
       .references(() => agents.id),
@@ -318,6 +330,30 @@ export const messageMentions = pgTable(
     index().on(t.memberId),
     check("message_mentions_one_owner", sql`num_nonnulls(${t.memberId}, ${t.agentId}) = 1`),
   ],
+);
+
+/**
+ * Threads seguidas (Spec, módulo 3): quem acompanha cada Thread e é avisado dela. Segue sozinho
+ * quem escreveu a raiz, quem respondeu na Thread e quem foi mencionado nela (ou na raiz), a
+ * partir da mensagem que o fez seguir (`since`). Agentes não seguem. Seguir à mão, e deixar de
+ * seguir, ficam fora da v1.
+ */
+export const threadFollows = pgTable(
+  "thread_follows",
+  {
+    memberId: uuid()
+      .notNull()
+      .references(() => members.id),
+    rootMessageId: uuid()
+      .notNull()
+      .references(() => messages.id),
+    /** A conversa da Thread (a mesma da raiz). */
+    conversationId: uuid()
+      .notNull()
+      .references(() => channels.id),
+    since: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.memberId, t.rootMessageId] }), index().on(t.rootMessageId)],
 );
 
 export const joinRequestStatus = pgEnum("join_request_status", ["pending", "approved", "refused"]);

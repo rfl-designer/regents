@@ -278,6 +278,7 @@ function marcador(): MessageDto {
     body: "marcador",
     author: { kind: "member", id: crypto.randomUUID(), displayName: "x", profilePicUrl: null, leftWorkspace: false },
     originMessageId: null,
+    threadRootId: null,
     mentions: [],
     createdAt: "2026-11-24T12:00:00.000Z",
   };
