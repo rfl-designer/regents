@@ -442,7 +442,10 @@ export interface ExecutionDto {
   retryAt: string | null;
   /** A API está sendo tentada de novo agora: "tentando de novo (n/m)". Some quando o texto volta. */
   apiRetry: { attempt: number; max: number } | null;
-  /** Quem paga a execução em andamento. Só a Chave por enquanto (a Conta é do #26). */
+  /**
+   * `key` quando quem paga é a Chave do Workspace ("pela Chave do Workspace", inclusive depois da
+   * troca no meio). Nulo pela Conta do autor (o estado da Conta é só dele) e antes de decidir.
+   */
   payer: "key" | null;
   /**
    * Motivo da falha (em `retrying` e `failed`), de "Agentes não agem" ou do cancelamento que não foi

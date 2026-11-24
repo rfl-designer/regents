@@ -9,10 +9,10 @@
  *
  * Fora daqui por enquanto: religar e validade (#35), pushes (#34).
  */
-import { mkdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, mkdir, readdir, rm, rmdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import type { AccountDto, AccountLinkingDto, AccountStatusDto, SubmitAccountCodeInput } from "@shearim/contracts";
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, isNotNull, ne, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
@@ -35,7 +35,19 @@ export interface AccountsConfig {
   claudeBin: string;
   /** Pasta-raiz das Contas, num volume fora do backup. */
   root: string;
+  /**
+   * Os prazos do encerramento de um `claude -p` (`SIGINT`, espera, `SIGTERM`, espera, `SIGKILL`).
+   * Padrão: 10 s e 5 s. Os testes injetam limites curtos.
+   */
+  stopGrace?: { sigintMs: number; sigtermMs: number };
 }
+
+/** O lock que o Claude Code cria (`mkdir`) na pasta da Conta enquanto renova o login. */
+const REFRESH_LOCK = ".oauth_refresh.lock";
+/** O próprio Claude Code considera o lock velho depois de 60 s sem atualização. */
+const STALE_LOCK_MS = 60_000;
+/** As pastas de Conta são `<raiz>/<id do Membro>/<uuid do login>`; o resto da raiz não é nosso. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Quanto a tela espera pelo código colado (Spec, história 34). */
 export const LOGIN_WAIT_MS = 10 * 60_000;
@@ -317,6 +329,28 @@ export function createAccounts(deps: { db: Db; clock: Clock; events: EventHub; c
     return dto(memberId);
   }
 
+  /**
+   * Na subida (Spec, módulo 6): apaga as pastas de login que ficaram para trás (um login pela
+   * metade quando o servidor parou, ou uma pasta antiga) e, em cada pasta de Conta, o
+   * `.oauth_refresh.lock` órfão, só se estiver vazio e tiver mais de 60 s.
+   */
+  async function recover() {
+    const linked = await db.select({ dir: accounts.configDir }).from(accounts).where(isNotNull(accounts.configDir));
+    const inUse = new Set(linked.map((r) => resolve(r.dir!)));
+    for (const flow of flows.values()) inUse.add(resolve(flow.dir));
+    const dirs = async (path: string) =>
+      (await readdir(path, { withFileTypes: true }).catch(() => [])).filter(
+        (e) => e.isDirectory() && UUID.test(e.name),
+      );
+    for (const member of await dirs(config.root)) {
+      for (const login of await dirs(join(config.root, member.name))) {
+        const dir = resolve(config.root, member.name, login.name);
+        if (!inUse.has(dir)) await rm(dir, { recursive: true, force: true });
+      }
+    }
+    for (const dir of inUse) await removeStaleLock(join(dir, REFRESH_LOCK));
+  }
+
   const routes = new Hono<Env>();
   const reply = (c: { json: (body: unknown, status?: 200 | 202 | 409) => Response }, r: Result, status: 200 | 202) =>
     r.ok ? c.json(r.account, status) : c.json({ error: "conflict", message: r.message }, 409);
@@ -345,6 +379,7 @@ export function createAccounts(deps: { db: Db; clock: Clock; events: EventHub; c
     unlink,
     /** Encerra a ligação em andamento, se houver (processo morto, pasta nova apagada). Não mexe na Conta ligada. */
     cancel,
+    recover,
     /** Encerra os processos do `claude` em andamento (testes e parada do servidor). */
     async close() {
       closed = true;
@@ -356,4 +391,19 @@ export function createAccounts(deps: { db: Db; clock: Clock; events: EventHub; c
       await Promise.all(pending.map((flow) => rm(flow.dir, { recursive: true, force: true })));
     },
   };
+}
+
+/**
+ * Apaga o lock se for uma pasta vazia com mais de 60 s. A idade é a do relógio do sistema, o
+ * mesmo do `mtime` que o Claude Code grava (o relógio injetável não vale para o disco). O
+ * `rmdir` só apaga pasta vazia: se alguém pôs algo dentro no meio-tempo, ela fica.
+ */
+async function removeStaleLock(lock: string) {
+  try {
+    const info = await lstat(lock);
+    if (!info.isDirectory() || Date.now() - info.mtimeMs <= STALE_LOCK_MS) return;
+    await rmdir(lock);
+  } catch {
+    // não existe, não está vazio ou já foi apagado: fica como está
+  }
 }

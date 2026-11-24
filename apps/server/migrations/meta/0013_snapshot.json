@@ -1,5 +1,5 @@
 {
-  "id": "f2668f56-1552-4334-914d-a1c3ef3e2184",
+  "id": "d3fdf09e-b7c8-4b33-aa3d-ea9417ecaa9f",
   "prevId": "2800402e-66e8-47c3-a637-0a6511f4e4b1",
   "version": "7",
   "dialect": "postgresql",
@@ -47,6 +47,12 @@
         },
         "login_expires_at": {
           "name": "login_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "credential_expires_at": {
+          "name": "credential_expires_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -907,12 +913,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
-        },
-        "left_at": {
-          "name": "left_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
