@@ -2,6 +2,7 @@ import { AGENT_MODELS, type AgentDto, type AgentModel, type WorkspaceKeyDto } fr
 import { type FormEvent, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
 import { ApiFailure, api } from "./api";
+import { dateTimeShort } from "./format";
 import { INCIDENT_TEXT, usd } from "./KeyBanners";
 import { useServerEvents } from "./live";
 
@@ -10,8 +11,6 @@ const MODEL_LABEL: Record<AgentModel, string> = {
   "claude-sonnet-5-5": "Claude Sonnet 5.5",
   "claude-haiku-5-5": "Claude Haiku 5.5",
 };
-
-const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
 
 /** O orçamento no campo do formulário: vazio é sem teto. */
 const budgetField = (v: number | null | undefined) => (v === null || v === undefined ? "" : String(v));
@@ -68,7 +67,7 @@ export function WorkspaceKeySettings() {
           {status === null
             ? "Carregando…"
             : status.configured
-              ? `Chave gravada${status.updatedAt ? ` em ${dateTime.format(new Date(status.updatedAt))}` : ""}.`
+              ? `Chave gravada${status.updatedAt ? ` em ${dateTimeShort(status.updatedAt)}` : ""}.`
               : "Nenhuma Chave gravada."}
         </p>
         {status?.incident && (

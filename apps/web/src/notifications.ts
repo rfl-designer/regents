@@ -302,16 +302,5 @@ export function useInstallStep() {
   return { show, skip };
 }
 
-/** "20/11", no fuso do aparelho. */
-export function dayMonth(iso: string) {
-  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" }).format(new Date(iso));
-}
-
-/** "20/11 às 14:05", no fuso do aparelho. */
-export function dayMonthTime(iso: string) {
-  const time = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
-  return `${dayMonth(iso)} às ${time}`;
-}
-
 /** Como a tela chama um aparelho. */
 export const deviceName = (d: DeviceDto) => d.label ?? "Aparelho sem nome";

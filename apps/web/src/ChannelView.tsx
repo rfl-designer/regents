@@ -7,6 +7,7 @@ import {
   type MessageDto,
   mentionPattern,
   normalizeHandle,
+  OPEN_STATES,
   type OutcomeDto,
   type YourAccountDto,
 } from "@shearim/contracts";
@@ -23,16 +24,14 @@ import {
 } from "react";
 import { Avatar } from "./Avatar";
 import { api } from "./api";
+import { hourMinute, weekdayShort } from "./format";
 import { useServerEvents } from "./live";
 import { downLabel, upLabel, useReading } from "./reading";
-
-const time = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
-const weekday = new Intl.DateTimeFormat("pt-BR", { weekday: "short" });
 
 /** "15:45" hoje; "qui., 15:45" em outro dia (Spec, história 78). */
 function untilLabel(iso: string, now = new Date()) {
   const at = new Date(iso);
-  return at.toDateString() === now.toDateString() ? time.format(at) : `${weekday.format(at)}, ${time.format(at)}`;
+  return at.toDateString() === now.toDateString() ? hourMinute(at) : `${weekdayShort(at)}, ${hourMinute(at)}`;
 }
 
 /** O que a Conta do próprio autor explica ("sua Conta no limite até 18:00"). Só ele recebe `yourAccount`. */
@@ -264,7 +263,7 @@ export function Conversation({
       deciding.set(e.originMessageId, e);
     } else pending.set(e.originMessageId, [...(pending.get(e.originMessageId) ?? []), e]);
   }
-  const now = useNow(Object.values(executions).some((e) => OPEN.includes(e.state)));
+  const now = useNow(Object.values(executions).some((e) => OPEN_STATES.includes(e.state)));
   const ctx: GroupContext = {
     me,
     conversationId,
@@ -403,7 +402,7 @@ function MessageGroups({
     const answers = (replies.get(m.id) ?? []).filter((r) => ids.has(r.id));
     const running = pending.get(m.id) ?? [];
     const mine = m.author.kind === "member" && m.author.id === me.id;
-    const cancellable = mine && running.some((e) => OPEN.includes(e.state));
+    const cancellable = mine && running.some((e) => OPEN_STATES.includes(e.state));
     const cancel = () => api.cancelMessage(conversationId, m.id).then((list) => list.forEach(showExecution));
     // "⚠ pela Chave do Workspace" fica sob a mensagem; o autor vê também o porquê, enquanto a
     // resposta sai (no Andamento) e depois dela (na própria resposta).
@@ -656,7 +655,7 @@ function MessageRow({
           {m.author.kind === "member" && m.author.leftWorkspace && (
             <span className="left-workspace">saiu do Workspace</span>
           )}
-          <time dateTime={m.createdAt}>{time.format(new Date(m.createdAt))}</time>
+          <time dateTime={m.createdAt}>{hourMinute(m.createdAt)}</time>
           {outcome?.decision === "none" && <NoneMark outcome={outcome} />}
           {mentionsMe && <span className="mention-tag">menciona você</span>}
         </div>
@@ -674,9 +673,6 @@ function MessageRow({
     </article>
   );
 }
-
-/** O que ainda não terminou: tem cronômetro e o autor pode cancelar. */
-const OPEN: ExecutionDto["state"][] = ["queued", "running", "retrying"];
 
 /**
  * "Nenhum Agente precisa agir": só um `⌀` discreto ao lado da hora. O motivo aparece ao passar o

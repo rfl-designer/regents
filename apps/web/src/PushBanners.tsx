@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { dayMonth, type EnableOutcome, type PushState, useInstallStep } from "./notifications";
+import { dayMonth } from "./format";
+import { type EnableOutcome, type PushState, useInstallStep } from "./notifications";
 
 /**
  * As faixas de push parado (história 101): este aparelho sem push, com "Ligar" (ou, com a

@@ -1,9 +1,9 @@
 import type { AgentBudgetDto, KeyIncidentDto } from "@shearim/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { dateTimeShort } from "./format";
 import { useServerEvents } from "./live";
 
-const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
 export const usd = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "USD" });
 
 /** O que a faixa do incidente diz, por tipo. */
@@ -67,8 +67,8 @@ export function KeyBanners({ onOpenKey, onOpenAgents }: { onOpenKey(): void; onO
       {incident && (
         <section className="offer" aria-label="Incidente da Chave">
           <p role="alert">
-            <strong>{INCIDENT_TEXT[incident.kind].title}</strong> desde {dateTime.format(new Date(incident.openedAt))}.
-            Quem não tem Conta ligada fica sem resposta. {INCIDENT_TEXT[incident.kind].whatToDo}
+            <strong>{INCIDENT_TEXT[incident.kind].title}</strong> desde {dateTimeShort(incident.openedAt)}. Quem não tem
+            Conta ligada fica sem resposta. {INCIDENT_TEXT[incident.kind].whatToDo}
           </p>
           <div className="actions">
             <button type="button" onClick={onOpenKey}>

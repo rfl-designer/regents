@@ -528,6 +528,8 @@ export interface WorkspaceContextDto {
  * motivo, cancelada pelo Shearim, ex. "quem escreveu saiu do Workspace").
  */
 export type ExecutionState = "queued" | "running" | "retrying" | "done" | "failed" | "not_acting" | "cancelled";
+/** Os estados em que a execução ainda não terminou: o autor pode cancelar. */
+export const OPEN_STATES: readonly ExecutionState[] = ["queued", "running", "retrying"];
 
 /**
  * O passo de uma execução em andamento. `writing` é a bolha "escrevendo"; `deciding` é o

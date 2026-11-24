@@ -2,9 +2,8 @@ import type { JoinRequestAdminDto } from "@shearim/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
 import { api } from "./api";
+import { dayMonth } from "./format";
 import { useServerEvents } from "./live";
-
-const day = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" });
 
 function upsert(list: JoinRequestAdminDto[], r: JoinRequestAdminDto) {
   return list.some((x) => x.id === r.id) ? list : [...list, r];
@@ -66,7 +65,7 @@ export function JoinRequestsPanel() {
                   {r.previousRefusals === 1
                     ? "Já teve 1 pedido recusado"
                     : `Já teve ${r.previousRefusals} pedidos recusados`}
-                  {r.lastRefusedAt && ` (o último em ${day.format(new Date(r.lastRefusedAt))})`}
+                  {r.lastRefusedAt && ` (o último em ${dayMonth(r.lastRefusedAt)})`}
                 </div>
               )}
               {failed === r.id && (

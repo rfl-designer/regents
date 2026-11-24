@@ -1,10 +1,8 @@
 import type { AccountDto, AccountValidityDto } from "@shearim/contracts";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ApiFailure, api } from "./api";
+import { dayMonth, hourMinute } from "./format";
 import { useServerEvents } from "./live";
-
-const hour = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
-const day = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" });
 
 /** A validade do login da Conta, quando ela pede atenção (faltam 3 dias ou menos, ou já passou). */
 export function expiringValidity(account: AccountDto | null): AccountValidityDto | null {
@@ -15,9 +13,7 @@ export function expiringValidity(account: AccountDto | null): AccountValidityDto
 
 /** "vale até 21/12" ou, passada a data, "pode vencer a qualquer momento". */
 function validityLabel(validity: AccountValidityDto) {
-  return validity.state === "any_time"
-    ? "pode vencer a qualquer momento"
-    : `vale até ${day.format(new Date(validity.until))}`;
+  return validity.state === "any_time" ? "pode vencer a qualquer momento" : `vale até ${dayMonth(validity.until)}`;
 }
 
 /** O que acontece depois do vencimento (história 39). */
@@ -144,7 +140,7 @@ export function MyAccount({ state }: { state: AccountState }) {
           <>
             <strong>
               {account.status.state === "limited"
-                ? `No limite até ${hour.format(new Date(account.status.until))}`
+                ? `No limite até ${hourMinute(account.status.until)}`
                 : account.status.state === "needs_relink"
                   ? "Precisa ligar de novo"
                   : "Ligada"}
@@ -161,7 +157,7 @@ export function MyAccount({ state }: { state: AccountState }) {
         <p className="hint expiring-hint" role="status">
           {expiring.state === "any_time"
             ? "O login da sua Conta do Claude pode vencer a qualquer momento."
-            : `O login da sua Conta do Claude pode vencer a partir de ${day.format(new Date(expiring.until))}.`}{" "}
+            : `O login da sua Conta do Claude pode vencer a partir de ${dayMonth(expiring.until)}.`}{" "}
           Ligue de novo para não interromper. Quando ele vencer, {afterwardsText(expiring)}.
         </p>
       )}
@@ -233,7 +229,7 @@ export function MyAccount({ state }: { state: AccountState }) {
               </button>
             </div>
           </form>
-          <p className="hint">O código vale até {hour.format(new Date(linking.expiresAt))}.</p>
+          <p className="hint">O código vale até {hourMinute(linking.expiresAt)}.</p>
         </section>
       )}
 

@@ -7,17 +7,11 @@ import {
 } from "@shearim/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { dayMonthHour, fullDay } from "./format";
 import { useServerEvents } from "./live";
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
-const dayTime = new Intl.DateTimeFormat("pt-BR", {
-  day: "2-digit",
-  month: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-const fullDay = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
 
 /** "há 5 h", "há 2 dias", "há menos de 1 h". */
 export function ago(iso: string, now = Date.now()) {
@@ -54,7 +48,7 @@ export function useInstallation(enabled: boolean) {
 }
 
 function alertText(alert: InstallationAlertDto) {
-  if (alert.kind === "backup_failed") return `O backup de ${dayTime.format(new Date(alert.at))} falhou: ${alert.error}`;
+  if (alert.kind === "backup_failed") return `O backup de ${dayMonthHour(alert.at)} falhou: ${alert.error}`;
   return alert.lastGoodAt
     ? `Faz mais de ${BACKUP_STALE_HOURS} h sem um backup bom (o último foi ${ago(alert.lastGoodAt)}).`
     : `Faz mais de ${BACKUP_STALE_HOURS} h sem um backup bom: ainda não houve nenhum.`;
@@ -83,8 +77,8 @@ function nodeKeyText(key: NodeKeyDto) {
   if (key.kind === "unknown") return `Não deu para saber: ${key.reason}.`;
   const at = new Date(key.expiresAt);
   const days = Math.ceil((at.getTime() - Date.now()) / DAY_MS);
-  if (days <= 0) return `Venceu em ${fullDay.format(at)}: a Instalação saiu da tailnet.`;
-  return `Vence em ${fullDay.format(at)} (daqui a ${days === 1 ? "1 dia" : `${days} dias`}). Renove no painel do Tailscale, em Machines.`;
+  if (days <= 0) return `Venceu em ${fullDay(at)}: a Instalação saiu da tailnet.`;
+  return `Vence em ${fullDay(at)} (daqui a ${days === 1 ? "1 dia" : `${days} dias`}). Renove no painel do Tailscale, em Machines.`;
 }
 
 /** A seção Instalação: a versão, o último backup e o vencimento da chave do nó. */
@@ -114,7 +108,7 @@ export function InstallationSettings({ state }: { state: ReturnType<typeof useIn
           {backup.last ? (
             <>
               {backup.last.ok ? "Bom" : "Falhou"}, {ago(backup.last.at)}{" "}
-              <span className="muted">({dayTime.format(new Date(backup.last.at))})</span>
+              <span className="muted">({dayMonthHour(backup.last.at)})</span>
               {backup.last.ok && backup.last.file && <div className="muted">{backup.last.file} em ./backups</div>}
               {!backup.last.ok && (
                 <div className="muted">

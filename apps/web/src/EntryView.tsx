@@ -1,12 +1,12 @@
 import type { MyJoinRequestDto } from "@shearim/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { dayMonthTime } from "./format";
 
 /** De quanto em quanto tempo quem espera confere se um Admin já decidiu. */
 const POLL_MS = 3_000;
 
-const when = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-const formatWhen = (iso: string) => when.format(new Date(iso)).replace(", ", " às ");
+const formatWhen = dayMonthTime;
 
 /**
  * Tela de quem tem identidade da tailnet mas ainda não é Membro: pedir para entrar,

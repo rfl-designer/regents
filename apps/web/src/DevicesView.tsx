@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { dayMonth, dayMonthTime, deviceName, type EnableOutcome, type PushState } from "./notifications";
+import { dayMonth, dayMonthTime } from "./format";
+import { deviceName, type EnableOutcome, type PushState } from "./notifications";
 
 /**
  * Notificações (história 102): os aparelhos do Membro com o estado e o último push entregue, e

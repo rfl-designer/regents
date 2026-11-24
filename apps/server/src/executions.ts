@@ -1,4 +1,10 @@
-import type { ExecutionDto, ExecutionState, ExecutionStep, YourAccountDto } from "@shearim/contracts";
+import {
+  type ExecutionDto,
+  type ExecutionState,
+  type ExecutionStep,
+  OPEN_STATES,
+  type YourAccountDto,
+} from "@shearim/contracts";
 import { type AnyColumn, and, asc, desc, eq, gt, inArray, lte, min, ne, or, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { type AccountStanding, accountStanding } from "./accounts";
@@ -82,8 +88,6 @@ const RESTART_REASON = "o servidor reiniciou";
 
 /** Por que uma execução em andamento foi interrompida (o `reason` do `AbortSignal`). */
 type Interruption = "stalled" | "cancelled" | "shutdown";
-/** Os estados em que a execução ainda não terminou: o autor pode cancelar. */
-const OPEN_STATES: ExecutionState[] = ["queued", "running", "retrying"];
 
 /**
  * O que as execuções pedem às Contas: marcar o que a execução pela Conta viu, para que as
@@ -617,7 +621,7 @@ export function createExecutions(deps: {
     const cancelled = await db
       .update(executions)
       .set({ ...leaving("cancelled", clock.now()), reason, authorReason: null, held: false, heldUntil: null })
-      .where(and(where, inArray(executions.state, OPEN_STATES)))
+      .where(and(where, inArray(executions.state, [...OPEN_STATES])))
       .returning({ id: executions.id });
     for (const { id } of cancelled) {
       waiting.delete(id);
