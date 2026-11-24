@@ -1,12 +1,16 @@
 import type {
   ApiError,
+  ApproveJoinRequestDto,
   ChannelDto,
   ChannelSettingsDto,
   CreateChannelInput,
   DmDto,
+  JoinRequestAdminDto,
+  JoinRequestDto,
   MeDto,
   MemberSummaryDto,
   MessageDto,
+  MyJoinRequestDto,
   SendMessageInput,
   UpdateChannelSettingsInput,
 } from "@shearim/contracts";
@@ -44,9 +48,16 @@ const json = (method: string, body?: unknown): RequestInit => ({
   body: body === undefined ? undefined : JSON.stringify(body),
 });
 
+const post = { method: "POST" } as const;
+
 export const api = {
   me: () => call<MeDto>("/api/me"),
   members: () => call<MemberSummaryDto[]>("/api/members"),
+  myJoinRequest: () => call<MyJoinRequestDto>("/api/join-request"),
+  requestToJoin: () => call<JoinRequestDto>("/api/join-request", post),
+  joinRequests: () => call<JoinRequestAdminDto[]>("/api/join-requests"),
+  approve: (id: string) => call<ApproveJoinRequestDto>(`/api/join-requests/${id}/approve`, post),
+  refuse: (id: string) => call<JoinRequestAdminDto>(`/api/join-requests/${id}/refuse`, post),
   channels: () => call<ChannelDto[]>("/api/channels"),
   channel: (channelId: string) => call<ChannelDto>(`/api/channels/${channelId}`),
   createChannel: (input: CreateChannelInput) => call<ChannelDto>("/api/channels", json("POST", input)),

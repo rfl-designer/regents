@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ChannelDto, DmDto, MeDto, MessageDto } from "@shearim/contracts";
-import { membroSemPedidoDeEntrada, type Person, type TestApp, testApp } from "./harness";
+import { type Person, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
 const bruno = { id: "2002", login: "bruno@exemplo.com", name: "Bruno" };
@@ -10,7 +10,7 @@ const davi = { id: "4004", login: "davi@exemplo.com", name: "Davi" };
 /** Juliana vira Admin; as outras pessoas, Membros. Devolve o `MeDto` de cada uma, pelo nome. */
 async function workspace(t: TestApp, ...people: Person[]) {
   const me: Record<string, MeDto> = { Juliana: await (await t.as(juliana).get("/api/me")).json() };
-  for (const p of people) me[p.name!] = await membroSemPedidoDeEntrada(t, juliana, p);
+  for (const p of people) me[p.name!] = await t.addMember(p, { by: juliana });
   return me;
 }
 

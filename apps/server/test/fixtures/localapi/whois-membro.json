@@ -1,0 +1,31 @@
+{
+  "Node": {
+    "ID": 6421474981568900,
+    "StableID": "nJuli4n4CNTRL",
+    "Name": "notebook-da-juliana.tailnet-exemplo.ts.net.",
+    "User": 9007199254740993,
+    "Key": "nodekey:0000000000000000000000000000000000000000000000000000000000000001",
+    "KeyExpiry": "2027-05-19T13:58:20Z",
+    "DiscoKey": "discokey:0000000000000000000000000000000000000000000000000000000000000002",
+    "Addresses": ["100.101.102.103/32", "fd7a:115c:a1e0::1/128"],
+    "AllowedIPs": ["100.101.102.103/32", "fd7a:115c:a1e0::1/128"],
+    "Endpoints": ["192.0.2.10:41641"],
+    "Hostinfo": {
+      "Hostname": "Notebook da Juliana",
+      "Services": [{ "Proto": "peerapi4", "Port": 49298 }]
+    },
+    "Created": "2026-11-20T13:58:20.285197213Z",
+    "MachineAuthorized": true,
+    "CapMap": { "https": [], "tailnet-display-name": ["tailnet-exemplo"] },
+    "ComputedName": "notebook-da-juliana",
+    "ComputedNameWithHost": "notebook-da-juliana",
+    "StableTailnetID": "TExempl0CNTRL"
+  },
+  "UserProfile": {
+    "ID": 9007199254740993,
+    "LoginName": "juliana@exemplo.com",
+    "DisplayName": "Juliana Souza",
+    "ProfilePicURL": "https://exemplo.com/juliana.png"
+  },
+  "CapMap": null
+}

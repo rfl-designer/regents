@@ -1,5 +1,5 @@
 {
-  "id": "f2d98c08-31c2-4d07-94ac-0a185b9e394a",
+  "id": "8c2014c3-a143-4aec-a02c-ec3599e29916",
   "prevId": "1252e8bd-3b1b-47c4-8040-42f94a532d23",
   "version": "7",
   "dialect": "postgresql",
@@ -100,7 +100,7 @@
           "name": "name",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "kind": {
           "name": "kind",
@@ -143,12 +143,139 @@
         }
       },
       "policies": {},
-      "checkConstraints": {
-        "channels_name_only_in_channels": {
-          "name": "channels_name_only_in_channels",
-          "value": "(\"channels\".\"kind\" in ('public', 'private')) = (\"channels\".\"name\" is not null)"
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.join_requests": {
+      "name": "join_requests",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "tailnet_user_id": {
+          "name": "tailnet_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "login": {
+          "name": "login",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "profile_pic_url": {
+          "name": "profile_pic_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "device": {
+          "name": "device",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sharee": {
+          "name": "sharee",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "join_request_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "decided_at": {
+          "name": "decided_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decided_by_member_id": {
+          "name": "decided_by_member_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         }
       },
+      "indexes": {
+        "join_requests_one_pending": {
+          "name": "join_requests_one_pending",
+          "columns": [
+            {
+              "expression": "tailnet_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"join_requests\".\"status\" = 'pending'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "join_requests_tailnet_user_id_created_at_index": {
+          "name": "join_requests_tailnet_user_id_created_at_index",
+          "columns": [
+            {
+              "expression": "tailnet_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "join_requests_decided_by_member_id_members_id_fk": {
+          "name": "join_requests_decided_by_member_id_members_id_fk",
+          "tableFrom": "join_requests",
+          "tableTo": "members",
+          "columnsFrom": [
+            "decided_by_member_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.members": {
@@ -325,9 +452,16 @@
       "schema": "public",
       "values": [
         "public",
-        "private",
-        "dm",
-        "group"
+        "private"
+      ]
+    },
+    "public.join_request_status": {
+      "name": "join_request_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "approved",
+        "refused"
       ]
     },
     "public.member_role": {
