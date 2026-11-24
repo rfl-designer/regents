@@ -333,3 +333,24 @@ describe("Os Agentes e quem saiu", () => {
     expect(JSON.stringify(chamada!.body.messages)).toContain("Bruno (pessoa): a proposta sai sexta");
   });
 });
+
+describe("O push de quem foi removido", () => {
+  test("para: nem a DM a dois que continua nem uma Menção chegam aos aparelhos dele", async () => {
+    const t = await testApp();
+    const ids = await workspace(t);
+    const dm: DmDto = await (await t.as(carla).post("/api/dms", { memberIds: [ids.bruno.id] })).json();
+    const comJuliana: DmDto = await (await t.as(carla).post("/api/dms", { memberIds: [ids.juliana.id] })).json();
+    const [geral] = (await (await t.as(juliana).get("/api/channels")).json()) as ChannelDto[];
+    const doBruno = await t.pushDevice(bruno);
+    const daJuliana = await t.pushDevice(juliana);
+    await t.as(juliana).delete(`/api/members/${ids.bruno.id}`);
+
+    await t.as(carla).post(`/api/conversations/${dm.id}/messages`, { body: "Bruno, ainda está aí?" });
+    await t.as(carla).post(`/api/channels/${geral!.id}/messages`, { body: `@${ids.bruno.handle} oi` });
+    await t.as(carla).post(`/api/conversations/${comJuliana.id}/messages`, { body: "O Bruno saiu?" });
+
+    // Os pushes saem em fila: quando o da Juliana chega, os anteriores já teriam chegado.
+    expect((await daJuliana.next()).payload.notification.body).toBe("O Bruno saiu?");
+    expect(t.push.deliveries.filter((d) => d.endpoint === doBruno.subscription.endpoint)).toEqual([]);
+  });
+});

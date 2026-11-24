@@ -10,6 +10,7 @@ import type { EventHub } from "./events";
 import type { Executions } from "./executions";
 import { isActive, type Member, memberById, toMemberDto } from "./members";
 import { audienceOf } from "./participation";
+import type { Push } from "./push";
 
 type Env = { Variables: { member: Member } };
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -35,8 +36,9 @@ export function memberAdminRoutes(deps: {
   events: EventHub;
   executions: Pick<Executions, "cancelAuthoredBy">;
   accounts: Pick<ReturnType<typeof createAccounts>, "cancel" | "unlink">;
+  push: Pick<Push, "forget">;
 }) {
-  const { db, clock, events, executions, accounts } = deps;
+  const { db, clock, events, executions, accounts, push } = deps;
   const routes = new Hono<Env>();
 
   routes.use("/members/:id", async (c, next) => {
@@ -92,7 +94,9 @@ export function memberAdminRoutes(deps: {
     if (result.kind === "not_found") return c.json({ error: "not_found" }, 404);
     if (result.kind === "last_admin") return c.json({ error: "last_admin", message: LAST_ADMIN_MESSAGE }, 409);
 
-    // Daqui em diante o HTTP já o recusa; as conexões abertas recebem o aviso e fecham.
+    // Daqui em diante o HTTP já o recusa; os aparelhos dele param de receber push, e as conexões
+    // abertas recebem o aviso e fecham.
+    await push.forget(id);
     events.publish("everyone", { type: "member.removed", memberId: id });
     events.disconnect(id, MEMBER_REMOVED_CLOSE_CODE, "removido do Workspace");
     // Quem fica nas conversas de que ele saiu vê a troca.
