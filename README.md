@@ -147,12 +147,12 @@ Toda mudança num Canal (criado, alguém entrou, Instruções ou N) sai como `ch
 
 ### DMs e conversas
 
-Uma DM é uma conversa fechada sem nome, fora dos Canais: `dm` (duas pessoas; com o #23, pessoa e Agente) ou `group` (três ou mais). Ela mora na mesma tabela dos Canais (`channels.kind`), sem nome, com Instruções vazias e N fixo em 30; por isso o mesmo id serve para mensagens, participantes, eventos (`canSee`/`audienceOf` valem igual) e, daqui para frente, Threads, não-lido e push. As rotas de Canal e as Instruções dos Canais não conhecem DMs (404).
+Uma DM é uma conversa fechada sem nome, fora dos Canais: `dm` (duas pessoas, ou uma pessoa e um Agente) ou `group` (três ou mais). Ela mora na mesma tabela dos Canais (`channels.kind`), sem nome, com Instruções vazias e N fixo em 30; por isso o mesmo id serve para mensagens, participantes, eventos (`canSee`/`audienceOf` valem igual) e, daqui para frente, Threads, não-lido e push. As rotas de Canal e as Instruções dos Canais não conhecem DMs (404).
 
 | Rota | Quem | O quê |
 |---|---|---|
 | `GET /api/dms` | Membro | as DMs de que ele participa (`DmDto`: `id`, `kind`, participantes) |
-| `POST /api/dms` | Membro | `{ memberIds }` (as outras pessoas). Com exatamente as mesmas pessoas e o mesmo tipo, devolve a que existe (200); senão, abre uma (201) |
+| `POST /api/dms` | Membro | `{ memberIds }` (as outras pessoas) ou `{ agentId }` (a DM de quem abre com esse Agente). Com exatamente os mesmos participantes (pessoas e Agente) e o mesmo tipo, devolve a que existe (200); senão, abre uma (201) |
 | `GET /api/conversations/:id/messages` | quem vê | mensagens de qualquer conversa (Canal ou DM) |
 | `POST /api/conversations/:id/messages` | quem vê | `{ body }`; `/api/channels/:id/messages` continua, só para Canais |
 
@@ -186,7 +186,7 @@ t.claude.callsOf("auth login")[0]!.env.CLAUDE_CONFIG_DIR;     // o que cada star
 | `POST /api/channels/:id/agents` | quem vê | `{ agentId }`: o Agente vira participante `kind: "agent"` |
 | `GET /api/conversations/:id/executions` | quem vê | o Andamento do que ainda não virou resposta (também em `/api/channels/:id/executions`) |
 
-Uma mensagem de pessoa num Canal com `@Nome` de um Agente (qualquer Agente do Workspace, sem diferença de maiúsculas nem acentos; em DM é do #23) é gravada e anunciada; depois, uma execução por Agente mencionado entra na fila (tabela `executions`). O trabalhador (`executions.start()`, um por processo, uma execução por vez) paga pela Chave, chama a porta de modelo e grava a resposta com `originMessageId` (a resposta ancorada). O Andamento sai como `execution.updated` (`queued` → `running`/`writing` → `done`, `failed` com `reason`, ou `not_acting` sem Chave); a resposta sai antes como `message.created`. Ao subir, o que estava `running` volta para a fila.
+Uma mensagem de pessoa com `@Nome` de um Agente (qualquer Agente do Workspace, sem diferença de maiúsculas nem acentos), num Canal ou numa DM, é gravada e anunciada; depois, uma execução por Agente mencionado entra na fila (tabela `executions`, `kind: "mention"`). Numa DM com Agente, ele responde a cada mensagem, mencionado ou não (`kind: "dm"`, uma vez só mesmo se mencionado); numa DM entre pessoas ou em grupo, Agente só entra por Menção e não vira participante. DMs não têm Desfecho. Quem decide quem age é `whoActs` em `conversations.ts`; a resposta de um Agente não passa por lá, então uma Menção escrita por Agente não dispara nada. O trabalhador (`executions.start()`, um por processo, uma execução por vez) paga pela Chave, chama a porta de modelo e grava a resposta com `originMessageId` (a resposta ancorada). O Andamento sai como `execution.updated` (`queued` → `running`/`writing` → `done`, `failed` com `reason`, ou `not_acting` sem Chave); a resposta sai antes como `message.created`. Ao subir, o que estava `running` volta para a fila.
 
 Nos testes, `testApp()` já traz a Messages API falsa em `t.anthropic` (o app usa ela pela Chave) e a fila rodando:
 

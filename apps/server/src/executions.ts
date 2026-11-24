@@ -13,6 +13,8 @@ import { readWorkspaceKey } from "./workspace-key";
 
 const { executions, agents, channels, messages } = schema;
 type Row = typeof executions.$inferSelect;
+/** O tipo de uma execução: `mention` (Agente mencionado) ou `dm` (o Agente de uma DM com Agente). */
+export type ExecutionKind = Row["kind"];
 
 /**
  * Execuções (Spec, módulo 6), no mínimo do #20: a fila fica no Postgres e sobrevive ao
@@ -26,8 +28,11 @@ type Row = typeof executions.$inferSelect;
  * - incidente da Chave em `auth_failed`/`billing_failed` e o gasto por Agente (#28): `finish`.
  */
 export interface Executions {
-  /** Põe na fila uma execução por Agente mencionado. Chame depois de gravar a mensagem. */
-  enqueueMentions(origin: { id: string; channelId: string }, mentioned: Agent[]): Promise<void>;
+  /**
+   * Põe na fila uma execução por chamada (Agente mencionado, Agente da DM), na ordem dada.
+   * Chame depois de gravar a mensagem.
+   */
+  enqueue(origin: { id: string; channelId: string }, calls: { agent: Agent; kind: ExecutionKind }[]): Promise<void>;
   /** O Andamento das execuções de um Canal que ainda não viraram resposta. */
   openIn(channelId: string): Promise<ExecutionDto[]>;
   /** Começa a pegar trabalho. Ao subir, o que estava em andamento volta para a fila. */
@@ -197,24 +202,26 @@ export function createExecutions(deps: {
     }
   }
 
+  const enqueue: Executions["enqueue"] = async (origin, calls) => {
+    if (calls.length === 0) return;
+    const now = clock.now();
+    const rows = calls.map(({ agent, kind }) => ({
+      id: crypto.randomUUID(),
+      kind,
+      channelId: origin.channelId,
+      originMessageId: origin.id,
+      agentId: agent.id,
+      state: "queued" as const,
+      since: now,
+      arrivedAt: now,
+    }));
+    await db.insert(executions).values(rows);
+    for (const r of rows) await publish(r.id);
+    wake();
+  };
+
   return {
-    async enqueueMentions(origin, mentioned) {
-      if (mentioned.length === 0) return;
-      const now = clock.now();
-      const rows = mentioned.map((agent) => ({
-        id: crypto.randomUUID(),
-        kind: "mention" as const,
-        channelId: origin.channelId,
-        originMessageId: origin.id,
-        agentId: agent.id,
-        state: "queued" as const,
-        since: now,
-        arrivedAt: now,
-      }));
-      await db.insert(executions).values(rows);
-      for (const r of rows) await publish(r.id);
-      wake();
-    },
+    enqueue,
 
     openIn: (channelId) => selectDtos(db, and(eq(executions.channelId, channelId), ne(executions.state, "done"))),
 

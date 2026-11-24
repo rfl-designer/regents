@@ -76,6 +76,8 @@ export const api = {
   dms: () => call<DmDto[]>("/api/dms"),
   /** Abre a DM com essas pessoas, ou devolve a que já existe com elas. */
   openDm: (memberIds: string[]) => call<DmDto>("/api/dms", json("POST", { memberIds })),
+  /** Abre a DM de quem chama com esse Agente, ou devolve a que já existe. */
+  openAgentDm: (agentId: string) => call<DmDto>("/api/dms", json("POST", { memberIds: [], agentId })),
   /** Mensagens de qualquer conversa (Canal ou DM). */
   messages: (conversationId: string) => call<MessageDto[]>(`/api/conversations/${conversationId}/messages`),
   send: (conversationId: string, input: SendMessageInput) =>
