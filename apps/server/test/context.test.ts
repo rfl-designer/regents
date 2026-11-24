@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, MessageDto, WorkspaceContextDto } from "@shearim/contracts";
-import { type Person, type TestApp, testApp } from "./harness";
+import type { AgentDto, ChannelDto, ExecutionDto, MessageDto, WorkspaceContextDto } from "@shearim/contracts";
+import { eventually, type Person, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
 const bruno = { id: "1002", login: "bruno@exemplo.com", name: "Bruno" };
@@ -214,6 +214,12 @@ describe("Montagem de contexto", () => {
     await t.as(juliana).put("/api/workspace-context", { context: "Contexto novo." });
     await ajustarCanal(t, geral.id, { instructions: "Instruções novas." });
     await t.restart();
+    // Ao subir, ela vira "o servidor reiniciou" e sai de novo sozinha 10 s depois (#24).
+    await eventually("a execução esperar a nova tentativa", async () => {
+      const lista: ExecutionDto[] = await (await t.as(juliana).get(`/api/channels/${geral.id}/executions`)).json();
+      return lista[0]?.state === "retrying";
+    });
+    t.clock.advance(10_000);
 
     const depois = await contextoDaChamada(t, 2);
     expect(antes.system).toContain("Contexto antigo.");

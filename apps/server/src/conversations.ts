@@ -8,7 +8,7 @@ import type {
   MessageDto,
   SendMessageInput,
 } from "@shearim/contracts";
-import { asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import type { Agent } from "./agents";
 import type { Clock } from "./clock";
@@ -166,6 +166,21 @@ export function conversationRoutes(deps: {
     return c.json(await executions.openIn(conversation.id));
   }
 
+  /** A mensagem `:messageId` da conversa, se quem chama a escreveu (cancelar é só do autor). */
+  async function ownMessage(c: Context<Env>, conversation: ConversationRow | undefined) {
+    const notFound = c.json({ error: "not_found" }, 404);
+    if (!conversation) return notFound;
+    const id = c.req.param("messageId") ?? "";
+    if (!UUID.test(id)) return notFound;
+    const [message] = await db
+      .select({ id: messages.id, authorMemberId: messages.authorMemberId })
+      .from(messages)
+      .where(and(eq(messages.id, id), eq(messages.channelId, conversation.id)));
+    if (!message) return notFound;
+    if (message.authorMemberId !== c.get("member").id) return c.json({ error: "not_author" }, 403);
+    return message;
+  }
+
   async function sendMessage(c: Context<Env>, conversation: ConversationRow | undefined) {
     if (!conversation) return c.json({ error: "not_found" }, 404);
     const input = (await c.req.json().catch(() => null)) as Partial<SendMessageInput> | null;
@@ -223,6 +238,28 @@ export function conversationRoutes(deps: {
   routes.get("/channels/:id/messages", async (c) => listMessages(c, await visibleChannel(c)));
   routes.post("/channels/:id/messages", async (c) => sendMessage(c, await visibleChannel(c)));
   routes.get("/conversations/:id/executions", async (c) => listExecutions(c, await visibleConversation(c)));
+  routes.post("/conversations/:id/executions/:executionId/retry", async (c) => {
+    const conversation = await visibleConversation(c);
+    const id = c.req.param("executionId");
+    if (!conversation || !UUID.test(id)) return c.json({ error: "not_found" }, 404);
+    const [execution] = await db
+      .select({ id: schema.executions.id, authorMemberId: messages.authorMemberId })
+      .from(schema.executions)
+      .innerJoin(messages, eq(messages.id, schema.executions.originMessageId))
+      .where(and(eq(schema.executions.id, id), eq(schema.executions.channelId, conversation.id)));
+    if (!execution) return c.json({ error: "not_found" }, 404);
+    if (execution.authorMemberId !== c.get("member").id) return c.json({ error: "not_author" }, 403);
+    const queued = await executions.retry(execution.id);
+    if (!queued) return c.json({ error: "not_failed" }, 409);
+    return c.json(queued);
+  });
+  routes.post("/conversations/:id/messages/:messageId/cancel", async (c) => {
+    const origin = await ownMessage(c, await visibleConversation(c));
+    if (origin instanceof Response) return origin;
+    const cancelled = await executions.cancel(origin.id);
+    if (cancelled.length === 0) return c.json({ error: "nothing_to_cancel" }, 409);
+    return c.json(cancelled);
+  });
   routes.get("/channels/:id/executions", async (c) => listExecutions(c, await visibleChannel(c)));
 
   // ---------- Instruções do Canal e N: só o Admin, em qualquer Canal, sem as mensagens ----------

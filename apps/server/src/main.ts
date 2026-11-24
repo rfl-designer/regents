@@ -141,15 +141,21 @@ async function main(command: string | undefined) {
   });
   console.log(`shearim: ouvindo em http://${server.hostname}:${server.port} (${conn.describe}; ${who.describe})`);
 
-  const stop = async () => {
-    await executions.stop();
+  // SIGTERM (o `docker compose stop`, com 30 s de folga): dreno, até 20 s para o que está rodando
+  // terminar. SIGINT (Ctrl-C no dev): para na hora. O que não terminou vira "o servidor
+  // reiniciou" na próxima subida, com a nova tentativa automática.
+  let stopping = false;
+  const stop = (drain: boolean) => async () => {
+    if (stopping) return;
+    stopping = true;
+    await (drain ? executions.drain() : executions.stop());
     await server.stop();
     await close();
     await conn.close();
     process.exit(0);
   };
-  process.on("SIGINT", stop);
-  process.on("SIGTERM", stop);
+  process.on("SIGINT", stop(false));
+  process.on("SIGTERM", stop(true));
 }
 
 await main(process.argv[2]);

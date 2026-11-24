@@ -8,13 +8,13 @@ import { conversationRoutes } from "./conversations";
 import type { Db } from "./db/client";
 import { dmRoutes } from "./dms";
 import { createEventHub } from "./events";
-import { createExecutions } from "./executions";
+import { createExecutions, type ExecutionHooks } from "./executions";
 import type { Identity, IdentityPort } from "./identity/port";
 import { IdentityUnavailableError } from "./identity/whois";
 import { type JoinRequestHooks, joinRequestAdminRoutes, myJoinRequestRoutes, type TailnetUser } from "./join-requests";
 import { listMembers, type Member, memberFor } from "./members";
 import { keyBrain } from "./model/key";
-import { createModelPort } from "./model/port";
+import { createModelPort, type ModelBrain } from "./model/port";
 import { noIdentityPage } from "./no-identity-page";
 import { createPresence } from "./presence";
 import { profileRoutes } from "./profile";
@@ -34,10 +34,15 @@ export interface AppDeps {
   secrets: SecretBox;
   /** Onde fica a Messages API (padrão: a da Anthropic). Os testes apontam para a falsa. */
   anthropicBaseUrl?: string;
+  /**
+   * Troca o cérebro da Chave (padrão: a Messages API em `anthropicBaseUrl`). Só para os testes
+   * do que a Messages API falsa não sabe dizer (o `api_retry` do Claude Code, o progresso no meio).
+   */
+  keyBrain?: ModelBrain;
   /** Rotas só de desenvolvimento (`/dev/*`), vindas do adaptador de identidade de dev. */
   devRoutes?: Hono;
-  /** Ganchos de domínio (ex.: push aos Admins a cada Pedido de entrada, #34). */
-  hooks?: JoinRequestHooks;
+  /** Ganchos de domínio (ex.: push aos Admins a cada Pedido de entrada, #34; push da falha ao autor, #32). */
+  hooks?: JoinRequestHooks & ExecutionHooks;
   /** O `sub` do VAPID e, nos testes, o agente HTTPS do coletor de push. */
   push: PushConfig;
 }
@@ -55,9 +60,9 @@ export function createApp(deps: AppDeps) {
   const app = new Hono<Env>();
   const { hub: events, route: eventsRoute } = createEventHub();
   const accounts = createAccounts({ db, clock, events, config: deps.accounts });
-  const model = createModelPort({ key: keyBrain({ baseURL: deps.anthropicBaseUrl }) });
+  const model = createModelPort({ key: deps.keyBrain ?? keyBrain({ baseURL: deps.anthropicBaseUrl }) });
   const reading = createReading({ db, clock, events });
-  const executions = createExecutions({ db, clock, events, model, secrets, reading });
+  const executions = createExecutions({ db, clock, events, model, secrets, hooks, reading });
   // A Presença avisa o push quando uma conversa fica à vista; o push pergunta a ela antes de mandar.
   const presence = createPresence({ db, events, onOpened: (m, conv) => push.conversationOpened(m, conv) });
   const push = createPush({

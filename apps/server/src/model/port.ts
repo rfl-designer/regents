@@ -60,7 +60,15 @@ export type TerminalModelEvent = Extract<
   { type: "done" | "failed" | "auth_failed" | "billing_failed" | "limit" }
 >;
 
-/** Um cérebro: roda um pedido e emite eventos até o fim ou até o `signal` abortar. */
+/**
+ * Um cérebro: roda um pedido e emite eventos até o fim ou até o `signal` abortar.
+ *
+ * O `signal` é o caminho único de encerramento (Spec, módulo 6, Encerramento): a vigia, o
+ * cancelamento pelo autor e o reinício abortam por ele, com o motivo em `signal.reason`
+ * (`"stalled" | "cancelled" | "shutdown"`). Ao abortar, o cérebro encerra o que abriu (pela Conta,
+ * #26: `SIGINT`, 10 s, `SIGTERM`, 5 s, `SIGKILL` no `claude -p`) e só então termina o fluxo, sem
+ * evento terminal. Processo que morre sozinho é falha na hora: `failed` com `retryable: true`.
+ */
 export interface ModelBrain {
   run(request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelEvent>;
 }

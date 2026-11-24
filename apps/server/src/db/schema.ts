@@ -194,7 +194,15 @@ export const workspaceSettings = pgTable(
   (t) => [check("workspace_settings_uma_linha", sql`${t.id} = 1`)],
 );
 
-export const executionState = pgEnum("execution_state", ["queued", "running", "done", "failed", "not_acting"]);
+export const executionState = pgEnum("execution_state", [
+  "queued",
+  "running",
+  "retrying",
+  "done",
+  "failed",
+  "not_acting",
+  "cancelled",
+]);
 /** `mention`: um Agente mencionado. `dm`: o Agente de uma DM com Agente, a cada mensagem. */
 export const executionKind = pgEnum("execution_kind", ["mention", "dm"]);
 
@@ -225,8 +233,16 @@ export const executions = pgTable(
     /** Desde quando está no estado ou passo atual. */
     since: timestamp({ withTimezone: true }).notNull(),
     attempt: integer().notNull().default(0),
+    /** Em `retrying`: quando a nova tentativa automática sai. */
+    retryAt: timestamp({ withTimezone: true }),
+    /** A nova tentativa da API em curso ("tentando de novo (n/m)"), ou nulo. */
+    apiRetryAttempt: integer(),
+    apiRetryMax: integer(),
+    /** A tentativa atual veio do "Tentar de novo" do autor (a Spec quer a Conta dele pagando: #27). */
+    retriedByAuthor: boolean().notNull().default(false),
     /** Quem paga a tentativa atual: `key` (a Conta chega no #26). */
     payer: text(),
+    /** O motivo da última falha (fica durante a nova tentativa, para dizer "nas duas tentativas"). */
     reason: text(),
     /** Hora de chegada: quem troca de fila mantém a hora (Spec, Prioridade). */
     arrivedAt: timestamp({ withTimezone: true }).notNull(),

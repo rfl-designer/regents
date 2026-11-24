@@ -1,5 +1,5 @@
 {
-  "id": "a49e7f48-988c-4db8-a3d0-29ff317ee253",
+  "id": "13e9ca62-da20-4c75-8a10-be61c17800cf",
   "prevId": "1fd16766-d1c8-443d-99df-21729ccaf43c",
   "version": "7",
   "dialect": "postgresql",
@@ -384,77 +384,6 @@
       },
       "isRLSEnabled": false
     },
-    "public.devices": {
-      "name": "devices",
-      "schema": "",
-      "columns": {
-        "member_id": {
-          "name": "member_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "label": {
-          "name": "label",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "last_push_at": {
-          "name": "last_push_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "push_stopped_at": {
-          "name": "push_stopped_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "devices_member_id_members_id_fk": {
-          "name": "devices_member_id_members_id_fk",
-          "tableFrom": "devices",
-          "tableTo": "members",
-          "columnsFrom": [
-            "member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "devices_member_id_id_pk": {
-          "name": "devices_member_id_id_pk",
-          "columns": [
-            "member_id",
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.executions": {
       "name": "executions",
       "schema": "",
@@ -532,6 +461,31 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
+        },
+        "retry_at": {
+          "name": "retry_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "api_retry_attempt": {
+          "name": "api_retry_attempt",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "api_retry_max": {
+          "name": "api_retry_max",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "retried_by_author": {
+          "name": "retried_by_author",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "payer": {
           "name": "payer",
@@ -1296,195 +1250,6 @@
       },
       "isRLSEnabled": false
     },
-    "public.push_streaks": {
-      "name": "push_streaks",
-      "schema": "",
-      "columns": {
-        "member_id": {
-          "name": "member_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "conversation_id": {
-          "name": "conversation_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "count": {
-          "name": "count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "push_streaks_member_id_members_id_fk": {
-          "name": "push_streaks_member_id_members_id_fk",
-          "tableFrom": "push_streaks",
-          "tableTo": "members",
-          "columnsFrom": [
-            "member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "push_streaks_conversation_id_channels_id_fk": {
-          "name": "push_streaks_conversation_id_channels_id_fk",
-          "tableFrom": "push_streaks",
-          "tableTo": "channels",
-          "columnsFrom": [
-            "conversation_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "push_streaks_member_id_conversation_id_pk": {
-          "name": "push_streaks_member_id_conversation_id_pk",
-          "columns": [
-            "member_id",
-            "conversation_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.push_subscriptions": {
-      "name": "push_subscriptions",
-      "schema": "",
-      "columns": {
-        "endpoint": {
-          "name": "endpoint",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "member_id": {
-          "name": "member_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "device_id": {
-          "name": "device_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "p256dh": {
-          "name": "p256dh",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "auth": {
-          "name": "auth",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "origin": {
-          "name": "origin",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "push_subscriptions_member_id_device_id_devices_member_id_id_fk": {
-          "name": "push_subscriptions_member_id_device_id_devices_member_id_id_fk",
-          "tableFrom": "push_subscriptions",
-          "tableTo": "devices",
-          "columnsFrom": [
-            "member_id",
-            "device_id"
-          ],
-          "columnsTo": [
-            "member_id",
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "push_subscriptions_memberId_deviceId_unique": {
-          "name": "push_subscriptions_memberId_deviceId_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "member_id",
-            "device_id"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.vapid_keys": {
-      "name": "vapid_keys",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "default": 1
-        },
-        "public_key": {
-          "name": "public_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "private_key": {
-          "name": "private_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "vapid_keys_uma_linha": {
-          "name": "vapid_keys_uma_linha",
-          "value": "\"vapid_keys\".\"id\" = 1"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.workspace_settings": {
       "name": "workspace_settings",
       "schema": "",
@@ -1569,9 +1334,11 @@
       "values": [
         "queued",
         "running",
+        "retrying",
         "done",
         "failed",
-        "not_acting"
+        "not_acting",
+        "cancelled"
       ]
     },
     "public.join_request_status": {

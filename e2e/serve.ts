@@ -5,15 +5,31 @@
  *
  * Variáveis: as do servidor (PORT, HOST...) passam direto; `FAKE_MESSAGES_API_DELAY_MS` é a
  * espera entre pedaços da resposta (padrão 400 ms).
+ *
+ * Uma mensagem com `[falhe Nx]` no texto recebe a sobrecarga da Anthropic (529) nas N primeiras
+ * chamadas e a resposta padrão depois: `[falhe 2x]` passa pelas duas tentativas e chega ao
+ * cartão de falha com "Tentar de novo".
  */
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { startFakeMessagesApi } from "../apps/server/test/fakes/messages-api";
+import { lastUserText, startFakeMessagesApi } from "../apps/server/test/fakes/messages-api";
 
 const delayMs = Number(process.env.FAKE_MESSAGES_API_DELAY_MS ?? 400);
+const failures = new Map<string, number>();
 const anthropic = await startFakeMessagesApi({
-  defaultReply: () => ({ text: "Oi! Tudo certo por aqui: o prazo é sexta-feira.", delayMs }),
+  defaultReply: (req) => {
+    // O contexto leva as mensagens recentes num só `user`, uma por parágrafo, e fecha com
+    // "Responda à última mensagem…": a de origem é o penúltimo parágrafo.
+    const text = lastUserText(req.body).split("\n\n").at(-2) ?? "";
+    const times = Number(text.match(/\[falhe (\d+)x\]/)?.[1] ?? 0);
+    const failed = failures.get(text) ?? 0;
+    if (failed < times) {
+      failures.set(text, failed + 1);
+      return { status: 529, errorType: "overloaded_error", errorMessage: "Overloaded" };
+    }
+    return { text: "Oi! Tudo certo por aqui: o prazo é sexta-feira.", delayMs };
+  },
 });
 const secretsDir = mkdtempSync(join(tmpdir(), "shearim-e2e-secrets-"));
 const masterKeyFile = join(secretsDir, "master_key");

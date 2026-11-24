@@ -283,6 +283,8 @@ body {
   }
 }
 .failcard {
+  margin: 0;
+  min-width: 0;
   border: 1px solid color-mix(in srgb, var(--error) 40%, transparent);
   background: var(--error-bg);
   border-radius: 8px;
@@ -740,4 +742,34 @@ button.primary {
   width: 24px;
   height: 24px;
   font-size: 0.75rem;
+}
+
+/* Cartão de falha, "Tentar de novo" e cancelamento (#24). */
+.failcard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.failcard-actions .error,
+.cancel .error {
+  font-size: 0.85rem;
+  color: var(--error);
+}
+.failcard-actions button:disabled,
+.cancel button:disabled {
+  opacity: 0.5;
+}
+.cancelled {
+  margin: 4px 0;
+  font-size: 0.85rem;
+  font-style: italic;
+  color: var(--muted);
+}
+.cancel {
+  margin: 0;
+}
+.cancel button.link {
+  padding: 2px 0;
 }

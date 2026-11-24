@@ -39,11 +39,14 @@ function upsertExecution(prev: Record<string, ExecutionDto>, e: ExecutionDto) {
   return next;
 }
 
-/** `m:ss` desde `since`, contando na hora (o `since` vem do servidor). */
-function elapsed(since: string, now: number) {
-  const s = Math.max(0, Math.floor((now - new Date(since).getTime()) / 1000));
+/** `m:ss` de uma duração em milissegundos (nunca negativa). */
+function mmss(ms: number) {
+  const s = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
+
+/** `m:ss` desde `since`, contando na hora (o `since` vem do servidor). */
+const elapsed = (since: string, now: number) => mmss(now - new Date(since).getTime());
 
 /** Um relógio que bate a cada segundo enquanto há cronômetro na tela. */
 function useNow(ticking: boolean) {
@@ -202,7 +205,8 @@ export function Conversation({
   for (const e of Object.values(executions)) {
     pending.set(e.originMessageId, [...(pending.get(e.originMessageId) ?? []), e]);
   }
-  const now = useNow(Object.values(executions).some((e) => e.state === "queued" || e.state === "running"));
+  const now = useNow(Object.values(executions).some((e) => OPEN.includes(e.state)));
+  const showExecution = (e: ExecutionDto) => setExecutions((prev) => upsertExecution(prev, e));
   const find = (id: string) => messages?.find((m) => m.id === id);
   const { up, down } = reading.pills;
   const newLine = (
@@ -227,6 +231,8 @@ export function Conversation({
           {top.map((m) => {
             const answers = replies.get(m.id) ?? [];
             const running = pending.get(m.id) ?? [];
+            const mine = m.author.kind === "member" && m.author.id === me.id;
+            const cancellable = mine && running.some((e) => OPEN.includes(e.state));
             return (
               <Fragment key={m.id}>
                 {reading.divider === m.id && newLine}
@@ -244,9 +250,24 @@ export function Conversation({
                       ))}
                       {running.map((e) => (
                         <li key={e.id}>
-                          <Progress execution={e} now={now} />
+                          <Progress
+                            execution={e}
+                            now={now}
+                            onRetry={
+                              mine ? () => api.retryExecution(conversationId, e.id).then(showExecution) : undefined
+                            }
+                          />
                         </li>
                       ))}
+                      {cancellable && (
+                        <li>
+                          <CancelButton
+                            onCancel={() =>
+                              api.cancelMessage(conversationId, m.id).then((list) => list.forEach(showExecution))
+                            }
+                          />
+                        </li>
+                      )}
                     </ul>
                   )}
                 </li>
@@ -315,27 +336,51 @@ function MessageRow({ message: m, me, flash }: { message: MessageDto; me: MeDto;
   );
 }
 
+/** O que ainda não terminou: tem cronômetro e o autor pode cancelar. */
+const OPEN: ExecutionDto["state"][] = ["queued", "running", "retrying"];
+
 /**
- * O Andamento no lugar onde a resposta vai entrar: a bolha "escrevendo · 0:05", a falha com o
- * motivo, ou "Agentes não agem". ("Tentar de novo" e o push são do #24.)
+ * O Andamento no lugar onde a resposta vai entrar: a bolha "escrevendo · 0:05" (com "2ª tentativa"
+ * e "tentando de novo (n/m)"), a espera da nova tentativa automática, o cartão de falha com
+ * "Tentar de novo" (só para quem escreveu: `onRetry`), "Agentes não agem" e o cancelamento.
  */
-function Progress({ execution: e, now }: { execution: ExecutionDto; now: number }) {
+function Progress({ execution: e, now, onRetry }: { execution: ExecutionDto; now: number; onRetry?(): Promise<void> }) {
   const name = e.agent.displayName;
   if (e.state === "failed") {
     return (
       <div className="message agent">
         <Avatar name={name} agent photo={e.agent.photo} />
-        <div className="failcard">
+        <fieldset className="failcard" aria-label={`Falha de ${name}`}>
           <strong>{name}</strong>
           <p className="why">
             {name} não respondeu: {e.reason ?? "erro desconhecido"}.
           </p>
-        </div>
+          {onRetry && <RetryButton onRetry={onRetry} />}
+        </fieldset>
       </div>
     );
   }
   if (e.state === "not_acting") {
     return <p className="blocked">Agentes não agem: {e.reason}</p>;
+  }
+  if (e.state === "cancelled") {
+    return <p className="cancelled">cancelada por quem escreveu</p>;
+  }
+  if (e.state === "retrying") {
+    const wait = mmss(e.retryAt ? new Date(e.retryAt).getTime() - now : 0);
+    return (
+      <div className="message agent" role="status" aria-label={`${name} vai tentar de novo`}>
+        <Avatar name={name} agent photo={e.agent.photo} />
+        <div>
+          <div className="meta">
+            <strong>{name}</strong>
+          </div>
+          <p className="writing">
+            {name} não respondeu: {e.reason}. 2ª tentativa em {wait}
+          </p>
+        </div>
+      </div>
+    );
   }
   const retry = e.attempt > 1 ? ` (${e.attempt}ª tentativa)` : "";
   return (
@@ -346,11 +391,57 @@ function Progress({ execution: e, now }: { execution: ExecutionDto; now: number 
           <strong>{name}</strong>
         </div>
         <p className="writing">
-          <span className="dots">escrevendo</span>
+          {e.apiRetry ? (
+            `tentando de novo (${e.apiRetry.attempt}/${e.apiRetry.max})`
+          ) : (
+            <span className="dots">escrevendo</span>
+          )}
           {retry} · {elapsed(e.since, now)}
         </p>
       </div>
     </div>
+  );
+}
+
+/** Um botão que espera a chamada e mostra o erro dela, sem travar a tela. */
+function useAction(run: () => Promise<void>) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  async function act() {
+    setBusy(true);
+    setFailed(false);
+    try {
+      await run();
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return { busy, failed, act };
+}
+
+function RetryButton({ onRetry }: { onRetry(): Promise<void> }) {
+  const { busy, failed, act } = useAction(onRetry);
+  return (
+    <div className="failcard-actions">
+      <button type="button" className="primary" disabled={busy} onClick={act}>
+        Tentar de novo
+      </button>
+      {failed && <span className="error">Não deu certo. Tente de novo.</span>}
+    </div>
+  );
+}
+
+function CancelButton({ onCancel }: { onCancel(): Promise<void> }) {
+  const { busy, failed, act } = useAction(onCancel);
+  return (
+    <p className="cancel">
+      <button type="button" className="link" disabled={busy} onClick={act}>
+        Cancelar
+      </button>
+      {failed && <span className="error">Não deu para cancelar.</span>}
+    </p>
   );
 }
 
