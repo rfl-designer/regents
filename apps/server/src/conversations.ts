@@ -18,6 +18,7 @@ import type { Member } from "./members";
 import { recordMentions } from "./mentions";
 import { listMessages as listConversationMessages } from "./messages";
 import { addAgent, addParticipants, audienceOf, canSee, participantsOf } from "./participation";
+import type { Push } from "./push";
 
 type Env = { Variables: { member: Member } };
 /** Uma linha de `channels`: um Canal ou uma DM. */
@@ -38,8 +39,14 @@ const NAME_MAX = 80;
  * Uma mensagem de pessoa é gravada antes de qualquer outra coisa (inclusive das execuções
  * que as Menções dela disparam).
  */
-export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHub; executions: Executions }) {
-  const { db, clock, events, executions } = deps;
+export function conversationRoutes(deps: {
+  db: Db;
+  clock: Clock;
+  events: EventHub;
+  executions: Executions;
+  push: Pick<Push, "messageCreated">;
+}) {
+  const { db, clock, events, executions, push } = deps;
   const routes = new Hono<Env>();
 
   /** Avisa quem vê o Canal de como ele está agora. */
@@ -187,6 +194,8 @@ export function conversationRoutes(deps: { db: Db; clock: Clock; events: EventHu
     };
     events.publish(await audienceOf(db, conversation), { type: "message.created", message: dto });
     if (joined && isChannel(conversation)) await publishChannel(conversation);
+    // O push sai em segundo plano (quem escreveu não espera pelos push services).
+    push.messageCreated(dto, conversation);
     // Só depois de gravada e anunciada, a mensagem dispara os Agentes mencionados.
     // Em DM, a Menção a Agentes é do #23: por enquanto, só nos Canais.
     const agents = mentions.filter((m) => m.kind === "agent");
@@ -290,7 +299,7 @@ async function findChannel(db: Db, id: string) {
 }
 
 /** A conversa, se o Membro a vê. Uma fechada de que ele não participa é como uma que não existe. */
-async function findVisibleConversation(db: Db, member: Member, id: string) {
+export async function findVisibleConversation(db: Db, member: Pick<Member, "id">, id: string) {
   const row = await findConversation(db, id);
   return row && (await canSee(db, member.id, row)) ? row : undefined;
 }

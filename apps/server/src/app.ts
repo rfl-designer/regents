@@ -16,7 +16,9 @@ import { listMembers, type Member, memberFor } from "./members";
 import { keyBrain } from "./model/key";
 import { createModelPort } from "./model/port";
 import { noIdentityPage } from "./no-identity-page";
+import { createPresence } from "./presence";
 import { profileRoutes } from "./profile";
+import { createPush, type PushConfig } from "./push";
 import type { SecretBox } from "./secrets";
 import { workspaceContextRoutes } from "./workspace-context";
 import { workspaceKeyRoutes } from "./workspace-key";
@@ -35,6 +37,8 @@ export interface AppDeps {
   devRoutes?: Hono;
   /** Ganchos de domínio (ex.: push aos Admins a cada Pedido de entrada, #34). */
   hooks?: JoinRequestHooks;
+  /** O `sub` do VAPID e, nos testes, o agente HTTPS do coletor de push. */
+  push: PushConfig;
 }
 
 type Env = { Variables: { who: TailnetUser; member: Member } };
@@ -52,6 +56,9 @@ export function createApp(deps: AppDeps) {
   const accounts = createAccounts({ db, clock, events, config: deps.accounts });
   const model = createModelPort({ key: keyBrain({ baseURL: deps.anthropicBaseUrl }) });
   const executions = createExecutions({ db, clock, events, model, secrets });
+  // A Presença avisa o push quando uma conversa fica à vista; o push pergunta a ela antes de mandar.
+  const presence = createPresence({ db, events, onOpened: (m, conv) => push.conversationOpened(m, conv) });
+  const push = createPush({ db, clock, presence: presence.presence, config: deps.push });
 
   /** Pergunta à porta; tailscaled fora do ar é falha da Instalação, não "sem identidade": vai para o log. */
   async function whoAmI(req: Request): Promise<Identity | typeof UNAVAILABLE> {
@@ -102,7 +109,9 @@ export function createApp(deps: AppDeps) {
   app.get("/api/members", async (c) => c.json(await listMembers(db)));
   app.get(EVENTS_PATH, eventsRoute);
   app.route("/api/join-requests", joinRequestAdminRoutes({ db, clock, events, hooks }));
-  app.route("/api", conversationRoutes({ db, clock, events, executions }));
+  app.route("/api", conversationRoutes({ db, clock, events, executions, push }));
+  app.route("/api", presence.routes);
+  app.route("/api", push.routes);
   app.route("/api", dmRoutes({ db, clock, events }));
   app.route("/api", accounts.routes);
   app.route("/api", agentRoutes({ db, clock }));
@@ -116,5 +125,15 @@ export function createApp(deps: AppDeps) {
    * `executions.start()` põe a fila para andar e `stop()` a para; `close` encerra o que o app
    * deixou rodando (os processos do `claude`).
    */
-  return { app, websocket, events, executions, close: () => accounts.close() };
+  return {
+    app,
+    websocket,
+    events,
+    executions,
+    push,
+    close: async () => {
+      await accounts.close();
+      await push.idle();
+    },
+  };
 }

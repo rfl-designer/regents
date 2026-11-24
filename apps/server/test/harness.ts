@@ -26,6 +26,7 @@ import type { Identity, IdentityPort, NoIdentityReason } from "../src/identity/p
 import { secretBox } from "../src/secrets";
 import { type FakeClaude, fakeClaude } from "./fake-claude";
 import { startFakeMessagesApi } from "./fakes/messages-api";
+import { type Delivery, type FakeSubscription, type PushCollector, startPushCollector } from "./fakes/push-collector";
 
 // ---------- limpeza automática (o preload roda `runCleanups` no afterEach) ----------
 
@@ -197,6 +198,8 @@ export interface EventSocket {
   next<T extends ServerEventType>(type: T, opts?: { timeoutMs?: number }): Promise<ServerEventOf<T>>;
   /** Tudo o que chegou até agora, na ordem, inclusive o que `next` já leu. */
   received(): ServerEvent[];
+  /** O `connectionId` do `ready`: é com ele que a Presença diz o que esta conexão tem à vista. */
+  connectionId: string;
   close(): Promise<void>;
 }
 
@@ -250,6 +253,10 @@ async function openEventSocket(url: string, headers: Record<string, string>, lab
       });
     },
     received: () => [...all],
+    get connectionId() {
+      const ready = all.find((e) => e.type === "ready");
+      return ready?.type === "ready" ? ready.connectionId : "";
+    },
     close() {
       closed ??= new Promise((resolve) => {
         if (ws.readyState === WebSocket.CLOSED) return resolve();
@@ -331,6 +338,27 @@ export async function fakeMessagesApi() {
   return api;
 }
 
+/** O coletor de push (o dublê dos push services), que fecha sozinho no fim do teste. */
+export async function pushCollector() {
+  const collector = await startPushCollector();
+  onCleanup(() => collector.stop());
+  return collector;
+}
+
+/** Um aparelho de uma pessoa com o push ligado: o que o teste lê do coletor é só dele. */
+export interface PushDevice {
+  /** O id que o PWA gerou para este aparelho. */
+  deviceId: string;
+  subscription: FakeSubscription;
+  /** O próximo push que chegou a este aparelho. */
+  next(opts?: { timeoutMs?: number }): Promise<Delivery>;
+  /** A partir de agora o push service responde `status` para este aparelho (ex.: `410`). */
+  respond(status: number): void;
+}
+
+/** O `sub` do VAPID nos testes. */
+export const TEST_VAPID_CONTACT = "mailto:contato@exemplo.com";
+
 /**
  * Um app novo com banco vazio e migrado, identidade falsa, relógio parado,
  * o `fake-claude` no lugar do binário `claude`, uma pasta-raiz de Contas descartável,
@@ -346,6 +374,7 @@ export async function testApp(opts: { clock?: FakeClock; identity?: IdentityPort
   const { claude, config } = throwawayAccounts();
   const accountsRoot = config.root;
   const anthropic = await fakeMessagesApi();
+  const push = await pushCollector();
   const secrets = await secretBox(crypto.getRandomValues(new Uint8Array(32)));
 
   function boot() {
@@ -357,6 +386,7 @@ export async function testApp(opts: { clock?: FakeClock; identity?: IdentityPort
       accounts: config,
       secrets,
       anthropicBaseUrl: anthropic.url,
+      push: { contact: TEST_VAPID_CONTACT, agent: push.agent },
     });
     built.executions.start();
     return built;
@@ -410,6 +440,23 @@ export async function testApp(opts: { clock?: FakeClock; identity?: IdentityPort
     clock,
     /** A Messages API falsa que o app usa pela Chave do Workspace. */
     anthropic,
+    /** O coletor de push: tudo o que o app mandou aos push services. */
+    push: push as PushCollector,
+    /**
+     * Liga o push num aparelho dessa pessoa, como o PWA faria depois do "Ligar notificações":
+     * uma inscrição nova no coletor, entregue ao servidor por `PUT /api/push/subscriptions/:aparelho`.
+     */
+    async pushDevice(who: Person, deviceId: string = crypto.randomUUID()): Promise<PushDevice> {
+      const subscription = push.subscription();
+      const res = await this.as(who).put(`/api/push/subscriptions/${deviceId}`, subscription);
+      if (res.status !== 204) throw new Error(`pushDevice: a inscrição respondeu ${res.status}: ${await res.text()}`);
+      return {
+        deviceId,
+        subscription,
+        next: (opts) => push.next({ ...opts, endpoint: subscription.endpoint }),
+        respond: (status) => push.respond(subscription.endpoint, status),
+      };
+    },
     /**
      * Reinicia o servidor no mesmo banco: a fila para (o que estava em andamento fica sem
      * processo), as conexões de WebSocket caem e um app novo sobe com a fila rodando.
