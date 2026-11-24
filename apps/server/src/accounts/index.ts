@@ -35,8 +35,8 @@ import { Hono } from "hono";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
 import type { EventHub } from "../events";
+import { keyCoverage } from "../key-budget";
 import type { Member } from "../members";
-import { hasWorkspaceKey } from "../workspace-key";
 import {
   type AuthStatus,
   authLogout,
@@ -241,7 +241,9 @@ export function createAccounts(deps: {
   async function validityDto(r: AccountRow): Promise<AccountValidityDto | null> {
     const v = validityOf(r, clock.now());
     if (!v) return null;
-    return { until: v.until.toISOString(), state: v.state, afterwards: (await hasWorkspaceKey(db)) ? "key" : "queue" };
+    // Sem Chave utilizável para nenhum Agente, a fila; com ela para algum, a Chave (`keyCoverage`).
+    const afterwards = (await keyCoverage(db, clock.now())) === "none" ? "queue" : "key";
+    return { until: v.until.toISOString(), state: v.state, afterwards };
   }
 
   async function dto(memberId: string): Promise<AccountDto> {

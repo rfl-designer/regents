@@ -315,6 +315,48 @@ describe("pushes da Conta", () => {
   );
 
   test(
+    "com a Chave, mas o Faro sem orçamento no mês: o push da queda não promete a Chave",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t, { orcamento: 0 });
+      await t.linkAccount(bruno);
+      const doBruno = await t.pushDevice(bruno);
+      await comOGeralAVista(t, geral);
+      t.claude.script({ runs: [limiteAte(QUINZE_E_QUARENTA_E_CINCO)] });
+
+      await enviar(t, geral.id, "@Faro um");
+      const push = await doBruno.next(ESPERA);
+      expect(push.payload.notification).toMatchObject({
+        title: "Sua Conta do Claude chegou ao limite",
+        body: `Ela volta às ${horaLocal(QUINZE_E_QUARENTA_E_CINCO)}. Até lá, suas mensagens seguem pela Chave do Workspace; as para Agente sem orçamento no mês esperam na fila.`,
+      });
+    },
+    LONGO,
+  );
+
+  test(
+    "com a Chave, mas nenhum Agente com orçamento no mês: o push da queda diz que as mensagens esperam na fila",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t, { orcamento: 0 });
+      const sophya = ((await (await t.as(juliana).get("/api/agents")).json()) as AgentDto[]).find((a) => a.builtin)!;
+      await t.as(juliana).patch(`/api/agents/${sophya.id}`, { monthlyBudgetUsd: 0 });
+      await t.linkAccount(bruno);
+      const doBruno = await t.pushDevice(bruno);
+      await comOGeralAVista(t, geral);
+      t.claude.script({ runs: [loginCaiu] });
+
+      await enviar(t, geral.id, "@Faro um");
+      const push = await doBruno.next(ESPERA);
+      expect(push.payload.notification).toMatchObject({
+        title: "Sua Conta do Claude precisa ser ligada de novo",
+        body: "Suas mensagens com Agentes esperam na fila até você ligar de novo em Minha Conta.",
+      });
+    },
+    LONGO,
+  );
+
+  test(
     'outra pessoa liga a mesma assinatura: o primeiro dono recebe "Bruno também ligou a sua Conta do Claude"',
     async () => {
       const t = await testApp();

@@ -1,17 +1,25 @@
 import { ACCOUNT_PATH } from "@shearim/contracts";
 import type { AccountHooks } from "./accounts";
+import type { Clock } from "./clock";
 import type { Db } from "./db/client";
+import { keyCoverage } from "./key-budget";
 import { memberById } from "./members";
 import type { Push } from "./push";
-import { hasWorkspaceKey } from "./workspace-key";
 
 /**
  * Os pushes da Conta (Spec, módulo 12, "Gatilhos"): a queda (história 41), a assinatura repetida
  * (história 43) e o aviso de vencimento 3 dias antes (histórias 38 e 39). A Conta é só do Membro:
  * cada push vai só ao dono dela, nunca a um Admin.
+ *
+ * O que acontece com as mensagens depende da "Chave utilizável" (Spec, módulo 6), que é por Agente
+ * (o orçamento do mês): o texto só promete a Chave sem ressalva quando todo Agente tem orçamento;
+ * se algum estourou, diz que as mensagens para ele esperam na fila (`keyCoverage`).
  */
-export function accountPushes(deps: { db: Db; notify: Push["notify"] }): AccountHooks {
-  const { db, notify } = deps;
+export function accountPushes(deps: { db: Db; clock: Clock; notify: Push["notify"] }): AccountHooks {
+  const { db, clock, notify } = deps;
+  const coverage = () => keyCoverage(db, clock.now());
+  /** A ressalva de quando algum Agente estourou o orçamento do mês na Chave. */
+  const NO_BUDGET = "as para Agente sem orçamento no mês esperam na fila";
 
   const later = (what: string, work: Promise<void>) =>
     void work.catch((err) => console.error(`shearim: o push ${what} falhou`, err));
@@ -21,22 +29,27 @@ export function accountPushes(deps: { db: Db; notify: Push["notify"] }): Account
       later(
         "da queda da Conta",
         (async () => {
-          const key = await hasWorkspaceKey(db);
+          const key = await coverage();
           const n =
             drop.state === "limited"
               ? {
                   title: "Sua Conta do Claude chegou ao limite",
-                  body:
-                    `Ela volta às ${hourOf(drop.until)}. ` +
-                    (key
+                  body: `Ela volta às ${hourOf(drop.until)}. ${
+                    key === "all"
                       ? "Até lá, suas mensagens seguem pela Chave do Workspace."
-                      : "Até lá, suas mensagens com Agentes esperam na fila."),
+                      : key === "some"
+                        ? `Até lá, suas mensagens seguem pela Chave do Workspace; ${NO_BUDGET}.`
+                        : "Até lá, suas mensagens com Agentes esperam na fila."
+                  }`,
                 }
               : {
                   title: "Sua Conta do Claude precisa ser ligada de novo",
-                  body: key
-                    ? "Suas mensagens seguem pela Chave do Workspace. Ligue de novo em Minha Conta quando puder."
-                    : "Suas mensagens com Agentes esperam na fila até você ligar de novo em Minha Conta.",
+                  body:
+                    key === "all"
+                      ? "Suas mensagens seguem pela Chave do Workspace. Ligue de novo em Minha Conta quando puder."
+                      : key === "some"
+                        ? `Suas mensagens seguem pela Chave do Workspace; ${NO_BUDGET} até você ligar de novo em Minha Conta.`
+                        : "Suas mensagens com Agentes esperam na fila até você ligar de novo em Minha Conta.",
                 };
           // A mesma `tag` de toda notícia da Conta: a mais nova toma o lugar da anterior.
           notify(memberId, { ...n, path: ACCOUNT_PATH, tag: "conta", urgency: "normal" });
@@ -49,9 +62,13 @@ export function accountPushes(deps: { db: Db; notify: Push["notify"] }): Account
         "do vencimento da Conta",
         (async () => {
           // O que acontece depois do vencimento: a Chave, ou a fila até ligar de novo (história 39).
-          const then = (await hasWorkspaceKey(db))
-            ? "suas mensagens passam a seguir pela Chave do Workspace."
-            : "suas mensagens com Agentes esperam na fila até você ligar de novo.";
+          const key = await coverage();
+          const then =
+            key === "all"
+              ? "suas mensagens passam a seguir pela Chave do Workspace."
+              : key === "some"
+                ? `suas mensagens passam a seguir pela Chave do Workspace; ${NO_BUDGET} até você ligar de novo.`
+                : "suas mensagens com Agentes esperam na fila até você ligar de novo.";
           const n =
             validity.state === "soon"
               ? {

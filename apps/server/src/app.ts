@@ -95,7 +95,7 @@ export function createApp(deps: AppDeps) {
   const hooks = chain(
     {
       ...adminPushes({ db, notify }),
-      ...accountPushes({ db, notify }),
+      ...accountPushes({ db, clock, notify }),
       // A resposta de Agente e a falha de vez avisam quem escreveu (#32).
       replyCreated: (message, conversation) => push.messageCreated(message, conversation),
       executionFailed: (execution) => push.executionFailed(execution),

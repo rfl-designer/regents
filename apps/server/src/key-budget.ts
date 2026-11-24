@@ -5,6 +5,7 @@ import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
 import { isActive } from "./members";
 import type { ModelUsage } from "./model/port";
+import { hasWorkspaceKey } from "./workspace-key";
 
 const { agents, budgetOverruns, executionUsage, members, keyIncidents } = schema;
 
@@ -26,6 +27,23 @@ export async function keySpend(db: Db, month: string, agentIds?: readonly string
     )
     .groupBy(executionUsage.agentId);
   return new Map(rows.map((r) => [r.agentId, r.usd]));
+}
+
+/**
+ * O que a Chave cobre agora, para um texto que não é de um Agente só (os pushes da Conta, o "depois
+ * do vencimento" de Minha Conta): "Chave utilizável" (Spec, módulo 6) é existir Chave e o Agente
+ * ter orçamento no mês, então o texto só promete a Chave sem ressalva quando todo Agente tem.
+ * - `all`: há Chave e nenhum Agente estourou o orçamento do mês;
+ * - `some`: há Chave, mas algum Agente estourou (as mensagens para ele esperam na fila);
+ * - `none`: sem Chave, ou todo Agente estourou.
+ */
+export async function keyCoverage(db: Db, now: Date): Promise<"all" | "some" | "none"> {
+  if (!(await hasWorkspaceKey(db))) return "none";
+  const all = await db.select({ id: agents.id, budget: agents.monthlyBudgetUsd }).from(agents);
+  const spend = await keySpend(db, monthOf(now));
+  const over = all.filter((a) => a.budget !== null && (spend.get(a.id) ?? 0) >= a.budget).length;
+  if (over === 0) return "all";
+  return over === all.length ? "none" : "some";
 }
 
 /** O orçamento como o Admin o vê: estourado quando o gasto do mês chegou ao teto. */
