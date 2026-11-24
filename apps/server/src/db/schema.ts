@@ -34,6 +34,11 @@ export const members = pgTable("members", {
   about: text().notNull().default(""),
   role: memberRole().notNull(),
   createdAt: timestamp({ withTimezone: true }).notNull(),
+  /**
+   * Quando o Admin removeu o Membro ("saiu do Workspace"). Nulo enquanto ele é Membro.
+   * A linha fica: as mensagens continuam dele, e quem volta pelo Pedido de entrada é o mesmo Membro.
+   */
+  leftAt: timestamp({ withTimezone: true }),
 });
 
 /**

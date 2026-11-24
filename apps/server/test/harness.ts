@@ -197,6 +197,11 @@ export interface EventSocket {
   next<T extends ServerEventType>(type: T, opts?: { timeoutMs?: number }): Promise<ServerEventOf<T>>;
   /** Tudo o que chegou até agora, na ordem, inclusive o que `next` já leu. */
   received(): ServerEvent[];
+  /**
+   * Espera o servidor fechar a conexão (ex.: o Membro foi removido) e devolve o código e o motivo.
+   * Falha depois de `timeoutMs` se ela continuar aberta.
+   */
+  closed(opts?: { timeoutMs?: number }): Promise<{ code: number; reason: string }>;
   close(): Promise<void>;
 }
 
@@ -212,6 +217,9 @@ async function openEventSocket(url: string, headers: Record<string, string>, lab
   const unread: ServerEvent[] = [];
   const waiters: { type: ServerEventType; resolve: (e: ServerEvent) => void }[] = [];
   let closed: Promise<void> | undefined;
+  const serverClosed = new Promise<{ code: number; reason: string }>((resolve) => {
+    ws.addEventListener("close", (e) => resolve({ code: e.code, reason: e.reason }), { once: true });
+  });
 
   const deliver = () => {
     for (const w of [...waiters]) {
@@ -250,6 +258,17 @@ async function openEventSocket(url: string, headers: Record<string, string>, lab
       });
     },
     received: () => [...all],
+    closed(opts = {}) {
+      const timeoutMs = opts.timeoutMs ?? EVENT_TIMEOUT_MS;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label}: a conexão continuou aberta por ${timeoutMs} ms`)),
+          timeoutMs,
+        );
+      });
+      return Promise.race([serverClosed, timeout]).finally(() => clearTimeout(timer));
+    },
     close() {
       closed ??= new Promise((resolve) => {
         if (ws.readyState === WebSocket.CLOSED) return resolve();
@@ -278,6 +297,15 @@ async function openEventSocket(url: string, headers: Record<string, string>, lab
     ws.addEventListener("close", onClose);
   });
   return socket;
+}
+
+/**
+ * Para o `Bun.serve` do teste na hora. Sem `await`: no Bun 1.3.11, depois que o servidor fecha
+ * um WebSocket (o Membro removido), a promessa de `stop` nunca resolve, embora a porta e as
+ * conexões fechem na hora.
+ */
+function stopServer(s: ReturnType<typeof Bun.serve>) {
+  void s.stop(true);
 }
 
 /** Os headers de um upgrade de WebSocket, para pedir um sem abrir a conexão. */
@@ -377,7 +405,7 @@ export async function testApp(
       const { app, websocket } = current;
       const s = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: app.fetch, websocket });
       server = s;
-      onCleanup(() => s.stop(true));
+      onCleanup(() => stopServer(s));
     }
     return `127.0.0.1:${server.port}`;
   }
@@ -423,7 +451,7 @@ export async function testApp(
       if (server) {
         const s = server;
         server = undefined;
-        await s.stop(true);
+        stopServer(s);
       }
       current = boot();
     },

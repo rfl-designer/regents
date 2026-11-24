@@ -16,11 +16,14 @@ export type Audience = "everyone" | { members: readonly string[] };
 /** O ponto único por onde o servidor empurra eventos às conexões de WebSocket. */
 export interface EventHub {
   publish(to: Audience, event: ServerEvent): void;
+  /** Fecha todas as conexões do Membro (ex.: removido do Workspace), com esse código e motivo. */
+  disconnect(memberId: string, code: number, reason: string): void;
 }
 
 interface Connection {
   memberId: string;
   send(data: string): void;
+  close(code: number, reason: string): void;
 }
 
 export function createEventHub() {
@@ -31,6 +34,13 @@ export function createEventHub() {
       const data = JSON.stringify(event);
       const members = to === "everyone" ? undefined : new Set(to.members);
       for (const c of connections) if (!members || members.has(c.memberId)) c.send(data);
+    },
+    disconnect(memberId, code, reason) {
+      for (const c of [...connections]) {
+        if (c.memberId !== memberId) continue;
+        connections.delete(c);
+        c.close(code, reason);
+      }
     },
   };
 
@@ -43,7 +53,11 @@ export function createEventHub() {
     let connection: Connection | undefined;
     return {
       onOpen(_event, ws) {
-        connection = { memberId: member.id, send: (data) => ws.send(data) };
+        connection = {
+          memberId: member.id,
+          send: (data) => ws.send(data),
+          close: (code, reason) => ws.close(code, reason),
+        };
         connections.add(connection);
         ws.send(JSON.stringify({ type: "ready", me: toMeDto(member) } satisfies ServerEvent));
       },

@@ -17,6 +17,7 @@ function selectMessages(db: Db) {
       memberId: members.id,
       memberName: members.displayName,
       memberPic: members.profilePicUrl,
+      memberLeftAt: members.leftAt,
       agentId: agents.id,
       agentName: agents.name,
       agentPhoto: agents.photo,
@@ -35,7 +36,13 @@ function toDto(r: Row, mentions: Map<string, MessageDto["mentions"]>): MessageDt
     body: r.body,
     author: r.agentId
       ? { kind: "agent", id: r.agentId, displayName: r.agentName!, photo: r.agentPhoto }
-      : { kind: "member", id: r.memberId!, displayName: r.memberName!, profilePicUrl: r.memberPic },
+      : {
+          kind: "member",
+          id: r.memberId!,
+          displayName: r.memberName!,
+          profilePicUrl: r.memberPic,
+          leftWorkspace: r.memberLeftAt !== null,
+        },
     originMessageId: r.originMessageId,
     mentions: mentions.get(r.id) ?? [],
     createdAt: r.createdAt.toISOString(),

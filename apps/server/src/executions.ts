@@ -80,6 +80,11 @@ export interface Executions {
    */
   cancel(originMessageId: string): Promise<ExecutionDto[]>;
   /**
+   * Cancela, pelo Shearim, tudo o que as mensagens desse Membro ainda têm aberto (o Admin o
+   * removeu), com o motivo à vista de quem vê a conversa. Devolve as canceladas.
+   */
+  cancelAuthoredBy(memberId: string, reason: string): Promise<ExecutionDto[]>;
+  /**
    * "Tentar de novo" de uma falha: refaz só esta execução (o passo que falhou), do começo, com
    * o contexto relido e o pagador decidido de novo (marcada como do autor, para o #27). Devolve
    * o Andamento na fila, ou nada se ela não está em falha. A conferência do autor fica com quem chama.
@@ -307,6 +312,40 @@ export function createExecutions(deps: {
     await publish(job.id);
   }
 
+  /**
+   * Cancela, em qualquer passo, as execuções abertas que atendem a `where`: a que está rodando é
+   * interrompida. `reason` nulo é o cancelamento por quem escreveu; com motivo, foi o Shearim.
+   */
+  async function cancelWhere(where: SQL, reason: string | null): Promise<ExecutionDto[]> {
+    const now = clock.now();
+    const cancelled = await db
+      .update(executions)
+      .set({
+        state: "cancelled",
+        step: null,
+        since: now,
+        finishedAt: now,
+        retryAt: null,
+        apiRetryAttempt: null,
+        apiRetryMax: null,
+        reason,
+      })
+      .where(and(where, inArray(executions.state, OPEN_STATES)))
+      .returning({ id: executions.id });
+    for (const { id } of cancelled) {
+      running.get(id)?.abort("cancelled" satisfies Interruption);
+      await publish(id);
+    }
+    if (cancelled.length === 0) return [];
+    return selectDtos(
+      db,
+      inArray(
+        executions.id,
+        cancelled.map((c) => c.id),
+      ),
+    );
+  }
+
   // ---------- o trabalhador ----------
 
   let loop: Promise<void> | undefined;
@@ -405,35 +444,16 @@ export function createExecutions(deps: {
 
     openIn: (channelId) => selectDtos(db, and(eq(executions.channelId, channelId), ne(executions.state, "done"))),
 
-    async cancel(originMessageId) {
-      const now = clock.now();
-      const cancelled = await db
-        .update(executions)
-        .set({
-          state: "cancelled",
-          step: null,
-          since: now,
-          finishedAt: now,
-          retryAt: null,
-          apiRetryAttempt: null,
-          apiRetryMax: null,
-          reason: null,
-        })
-        .where(and(eq(executions.originMessageId, originMessageId), inArray(executions.state, OPEN_STATES)))
-        .returning({ id: executions.id });
-      for (const { id } of cancelled) {
-        running.get(id)?.abort("cancelled" satisfies Interruption);
-        await publish(id);
-      }
-      if (cancelled.length === 0) return [];
-      return selectDtos(
-        db,
+    cancel: (originMessageId) => cancelWhere(eq(executions.originMessageId, originMessageId), null),
+
+    cancelAuthoredBy: (memberId, reason) =>
+      cancelWhere(
         inArray(
-          executions.id,
-          cancelled.map((c) => c.id),
+          executions.originMessageId,
+          db.select({ id: messages.id }).from(messages).where(eq(messages.authorMemberId, memberId)),
         ),
-      );
-    },
+        reason,
+      ),
 
     async retry(executionId) {
       const now = clock.now();
@@ -521,7 +541,7 @@ function failureReason(end: TerminalModelEvent | undefined) {
 }
 
 /** Estados em que o motivo aparece. */
-const WITH_REASON: readonly ExecutionState[] = ["retrying", "failed", "not_acting"];
+const WITH_REASON: readonly ExecutionState[] = ["retrying", "failed", "not_acting", "cancelled"];
 
 async function selectDtos(db: Db, where: SQL | undefined): Promise<ExecutionDto[]> {
   const rows = await db

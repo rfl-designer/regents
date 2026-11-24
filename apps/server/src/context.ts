@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, lt } from "drizzle-orm";
 import type { Agent } from "./agents";
 import { type Db, schema } from "./db/client";
+import { isActive } from "./members";
 import type { ModelMessage } from "./model/port";
 import { readWorkspaceContext } from "./workspace-context";
 
@@ -50,7 +51,8 @@ export async function buildContext(
     .select({ id: members.id, name: members.displayName, about: members.about })
     .from(channelParticipants)
     .innerJoin(members, eq(members.id, channelParticipants.memberId))
-    .where(eq(channelParticipants.channelId, conversation!.id))
+    // Quem saiu do Workspace não é mais alguém a quem recorrer (as mensagens dele seguem nas recentes).
+    .where(and(eq(channelParticipants.channelId, conversation!.id), isActive))
     .orderBy(asc(members.displayName), asc(members.id));
   // Os Agentes da conversa, o próprio e quem falou nas mensagens que entram (chamado por Menção).
   const inChannel = await db

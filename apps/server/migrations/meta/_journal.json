@@ -78,6 +78,13 @@
       "when": 1795518173119,
       "tag": "0010_vigia-falha-e-cancelamento",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795519190136,
+      "tag": "0011_saida-do-membro",
+      "breakpoints": true
     }
   ]
 }

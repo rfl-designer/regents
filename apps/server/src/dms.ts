@@ -5,11 +5,11 @@ import type { Clock } from "./clock";
 import { type ConversationRow, isUuid } from "./conversations";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
-import type { Member } from "./members";
+import { isActive, type Member } from "./members";
 import { addAgent, addParticipants, audienceOf, participantsOf } from "./participation";
 
 type Env = { Variables: { member: Member } };
-type Dm = ConversationRow & { kind: DmKind };
+export type Dm = ConversationRow & { kind: DmKind };
 
 const { channels, channelParticipants, channelAgents, members, agents } = schema;
 
@@ -72,7 +72,10 @@ export function dmRoutes(deps: { db: Db; clock: Clock; events: EventHub }) {
     }
     const found =
       others.length > 0 && others.every(isUuid)
-        ? await db.select({ id: members.id }).from(members).where(inArray(members.id, others))
+        ? await db
+            .select({ id: members.id })
+            .from(members)
+            .where(and(inArray(members.id, others), isActive))
         : [];
     if (found.length !== others.length) {
       return c.json({ error: "invalid_input", message: "Alguém ali não é Membro do Workspace." }, 400);
@@ -150,6 +153,6 @@ function dmDto(dm: Dm, participants: DmDto["participants"]): DmDto {
   return { id: dm.id, kind: dm.kind, participants };
 }
 
-async function toDmDto(db: Db, dm: Dm) {
+export async function toDmDto(db: Db, dm: Dm) {
   return dmDto(dm, (await participantsOf(db, [dm.id])).get(dm.id) ?? []);
 }

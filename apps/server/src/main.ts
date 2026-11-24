@@ -37,6 +37,8 @@ function fail(message: string): never {
 }
 
 const DEFAULT_TS_SOCKET = "/var/run/tailscale/tailscaled.sock";
+/** Quanto a parada espera as requisições em curso terminarem, depois do dreno. */
+const SERVER_STOP_MS = 2_000;
 
 function identityFromEnv(): { identity: IdentityPort; routes?: Hono; describe: string } {
   const mode = process.env.SHEARIM_IDENTITY;
@@ -139,7 +141,9 @@ async function main(command: string | undefined) {
     if (stopping) return;
     stopping = true;
     await (drain ? executions.drain() : executions.stop());
-    await server.stop();
+    // No Bun 1.3.11, a promessa de `stop` nunca resolve depois que o servidor fechou um WebSocket
+    // (as conexões de um Membro removido): o servidor para de aceitar na hora, e a espera tem teto.
+    await Promise.race([server.stop(), Bun.sleep(SERVER_STOP_MS)]);
     await close();
     await conn.close();
     process.exit(0);
