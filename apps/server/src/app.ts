@@ -30,6 +30,7 @@ import { createPush, type PushConfig } from "./push";
 import { createReading, unreadOf } from "./reading";
 import type { SecretBox } from "./secrets";
 import { threadRoutes } from "./threads";
+import { createMcpEndpoint } from "./tools/mcp";
 import { createToolPort, type ToolDefinition } from "./tools/port";
 import { agentToolRoutes } from "./tools/routes";
 import { WORKSPACE_TOOLS } from "./tools/workspace";
@@ -120,9 +121,16 @@ export function createApp(deps: AppDeps) {
   const accounts = createAccounts({ db, clock, events, config: deps.accounts, hooks });
   // Pela Conta, um `claude -p` por execução (ADR 0006); os processos vivos morrem no `close`.
   const runs = processTracker();
+  // As Ferramentas pela Conta: o `claude -p` as lista e chama neste endpoint, só no loopback.
+  const mcp = createMcpEndpoint();
   const model = createModelPort({
     key: deps.keyBrain ?? keyBrain({ baseURL: deps.anthropicBaseUrl }),
-    account: accountBrain({ claudeBin: deps.accounts.claudeBin, procs: runs, stopGrace: deps.accounts.stopGrace }),
+    account: accountBrain({
+      claudeBin: deps.accounts.claudeBin,
+      procs: runs,
+      stopGrace: deps.accounts.stopGrace,
+      mcp,
+    }),
   });
   const reading = createReading({ db, clock, events });
   const ledger = createKeyLedger({ db, clock, events, hooks });
@@ -258,6 +266,7 @@ export function createApp(deps: AppDeps) {
       await accounts.close();
       // Depois do `executions.stop()` não sobra nenhum; isto é só a rede de segurança.
       await runs.killAll();
+      await mcp.stop();
       await push.idle();
     },
   };

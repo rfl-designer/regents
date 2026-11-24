@@ -12,6 +12,8 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
   DEFAULT_FAKE_ACCOUNT,
   FAKE_ACCESS_TOKEN,
@@ -21,6 +23,7 @@ import {
   type FakeClaudeScript,
   type FakeClaudeSignal,
   type FakeEnd,
+  type FakeMcpEntry,
   type FakeRun,
 } from "./script";
 
@@ -251,18 +254,111 @@ function successEnd(end: Extract<FakeEnd, { result: "success" }>, text: string):
 let blockIndex = 0;
 const ev = (event: Record<string, unknown>) => line({ type: "stream_event", event });
 
+// ---------- o cliente MCP (`{ tool }`) ----------
+
+const logMcp = (entry: Omit<FakeMcpEntry, "pid">) =>
+  appendFileSync(join(home!, "mcp.jsonl"), `${JSON.stringify({ pid: process.pid, ...entry })}\n`);
+
+/** O servidor do `--mcp-config` (JSON ou caminho de arquivo, como no real); o primeiro, se vários. */
+function mcpServer() {
+  const raw = argv.includes("--mcp-config") ? argv[argv.indexOf("--mcp-config") + 1] : undefined;
+  if (!raw) return undefined;
+  const config = JSON.parse(raw.trim().startsWith("{") ? raw : readFileSync(raw, "utf8")) as {
+    mcpServers: Record<string, { type?: string; url: string; headers?: Record<string, string> }>;
+  };
+  const [name, server] = Object.entries(config.mcpServers)[0] ?? [];
+  return name && server ? { name, ...server } : undefined;
+}
+
+let mcp: { name: string; client: Client; tools: string[] } | undefined;
+
+/** Conecta e lista na primeira chamada, como o Claude Code faz ao subir. */
+async function mcpClient() {
+  if (mcp) return mcp;
+  const server = mcpServer();
+  if (!server) throw new Error("sem --mcp-config");
+  const client = new Client({ name: "fake-claude", version: "0" });
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(server.url), { requestInit: { headers: server.headers ?? {} } }),
+  );
+  const { tools } = await client.listTools();
+  mcp = { name: server.name, client, tools: tools.map((t) => t.name) };
+  logMcp({ listed: mcp.tools });
+  return mcp;
+}
+
+let lastToolResult = "";
+
+/**
+ * O `tool_use`, a chamada pelo MCP e o `tool_result`, como no `stream-json` do Claude Code
+ * (medido no 2.1.331, `docs/research/claude-code-como-motor.md`, item 10): o `tool_use` com o nome
+ * `mcp__<servidor>__<Ferramenta>` e `caller: { type: "direct" }`; o `tool_result` numa linha
+ * `user`, com o conteúdo em blocos no sucesso e em texto com `is_error: true` na falha; e o turno
+ * seguinte começa com outro `message_start`.
+ */
+async function toolStep(step: { name: string; input?: Record<string, unknown> }) {
+  const input = step.input ?? {};
+  let conn: Awaited<ReturnType<typeof mcpClient>>;
+  try {
+    conn = await mcpClient();
+  } catch (err) {
+    logMcp({ refused: String(err) });
+    lastToolResult = "";
+    return;
+  }
+  const id = `toolu_fake_${blockIndex}`;
+  const index = blockIndex++;
+  const name = `mcp__${conn.name}__${step.name}`;
+  const caller = { type: "direct" };
+  ev({ type: "content_block_start", index, content_block: { type: "tool_use", id, name, input: {}, caller } });
+  ev({ type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: JSON.stringify(input) } });
+  ev({ type: "content_block_stop", index });
+  ev({ type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 1 } });
+  ev({ type: "message_stop" });
+  line({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name, input, caller }] } });
+  let result: { content: string; isError: boolean };
+  try {
+    const called = await conn.client.callTool({ name: step.name, arguments: input });
+    const content = (called.content as { type: string; text?: string }[])
+      .map((c) => (c.type === "text" ? (c.text ?? "") : ""))
+      .join("");
+    result = { content, isError: called.isError === true };
+  } catch (err) {
+    logMcp({ refused: String(err) });
+    result = { content: String(err), isError: true };
+  }
+  logMcp({ called: step.name, input, result });
+  lastToolResult = result.content;
+  line({
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        result.isError
+          ? { type: "tool_result", content: result.content, is_error: true, tool_use_id: id }
+          : { tool_use_id: id, type: "tool_result", content: [{ type: "text", text: result.content }] },
+      ],
+    },
+  });
+  // O turno seguinte do modelo.
+  ev({ type: "message_start", message: { id: "msg_fake_2", role: "assistant", model: modelArg(), content: [] } });
+}
+
 async function steps(run: Extract<FakeRun, { kind: "steps" }>): Promise<number> {
   ev({ type: "message_start", message: { id: "msg_fake", role: "assistant", model: modelArg(), content: [] } });
   let text = "";
   for (const step of run.steps) {
     if ("text" in step) {
       const index = blockIndex++;
+      const body = step.text.replaceAll("{resultado}", lastToolResult);
       ev({ type: "content_block_start", index, content_block: { type: "text", text: "" } });
-      for (const piece of step.text.match(/.{1,8}/gs) ?? []) {
+      for (const piece of body.match(/.{1,8}/gs) ?? []) {
         ev({ type: "content_block_delta", index, delta: { type: "text_delta", text: piece } });
       }
       ev({ type: "content_block_stop", index });
-      text += step.text;
+      text += body;
+    } else if ("tool" in step) {
+      await toolStep(step.tool);
     } else if ("thinking" in step) {
       const index = blockIndex++;
       ev({ type: "content_block_start", index, content_block: { type: "thinking", thinking: "" } });
