@@ -1,0 +1,153 @@
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #111827;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --accent: #1f2937;
+  --error: #b91c1c;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 15px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111827;
+    --fg: #f3f4f6;
+    --muted: #9ca3af;
+    --line: #374151;
+    --accent: #e5e7eb;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+body {
+  background: var(--bg);
+  color: var(--fg);
+}
+.center {
+  display: grid;
+  place-content: center;
+  text-align: center;
+  height: 100%;
+  padding: 16px;
+}
+.center h1 {
+  font-size: 1.3rem;
+  margin: 0 0 8px;
+}
+.center p {
+  color: var(--muted);
+  max-width: 32rem;
+}
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: calc(env(safe-area-inset-top) + 10px) 16px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.whoami {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.channel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.channel-name {
+  font-size: 1rem;
+  margin: 0;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.messages {
+  list-style: none;
+  margin: 0;
+  padding: 8px 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+.message {
+  display: flex;
+  gap: 10px;
+  padding: 6px 0;
+}
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-content: center;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+.meta {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.meta time {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.body {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.notice {
+  color: var(--muted);
+  padding: 12px 0;
+}
+.composer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 16px calc(env(safe-area-inset-bottom) + 10px);
+  border-top: 1px solid var(--line);
+}
+.composer textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+}
+.composer button {
+  font: inherit;
+  padding: 0 16px;
+  border-radius: 8px;
+  border: 0;
+  background: var(--accent);
+  color: var(--bg);
+}
+.composer button:disabled {
+  opacity: 0.5;
+}
+.error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--error);
+  font-size: 0.85rem;
+}
