@@ -1,4 +1,4 @@
-import type { ChannelDto, DmDto, MeDto, MemberSummaryDto, UnreadDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, DmDto, MeDto, MemberSummaryDto, UnreadDto } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { ApiFailure, api } from "./api";
 import { dmTitle } from "./DmView";
@@ -186,9 +186,13 @@ function NewChannel({ onCancel, onCreated }: { onCancel(): void; onCreated(chann
   );
 }
 
-/** Escolher com quem conversar: uma pessoa abre uma DM; várias, uma DM em grupo. */
+/**
+ * Escolher com quem conversar: uma pessoa abre uma DM; várias, uma DM em grupo.
+ * Um Agente abre na hora a DM com ele (só você e ele).
+ */
 function NewDm({ me, onCancel, onOpened }: { me: MeDto; onCancel(): void; onOpened(dm: DmDto): void }) {
   const [members, setMembers] = useState<MemberSummaryDto[] | null>(null);
+  const [agents, setAgents] = useState<AgentDto[] | null>(null);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -200,6 +204,10 @@ function NewDm({ me, onCancel, onOpened }: { me: MeDto; onCancel(): void; onOpen
     );
   }, [me.id]);
 
+  useEffect(() => {
+    api.agents().then(setAgents, () => setError("Não foi possível carregar os Agentes. Tente de novo."));
+  }, []);
+
   function toggle(id: string) {
     setChosen((prev) => {
       const next = new Set(prev);
@@ -208,19 +216,23 @@ function NewDm({ me, onCancel, onOpened }: { me: MeDto; onCancel(): void; onOpen
     });
   }
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (chosen.size === 0 || busy) return;
+  async function open(request: () => Promise<DmDto>) {
     setBusy(true);
     setError(null);
     try {
-      onOpened(await api.openDm([...chosen]));
+      onOpened(await request());
     } catch (err) {
       const body = err instanceof ApiFailure ? err.body : null;
       setError(body && "message" in body ? body.message : "Não foi possível abrir a DM. Tente de novo.");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (chosen.size === 0 || busy) return;
+    await open(() => api.openDm([...chosen]));
   }
 
   return (
@@ -231,6 +243,18 @@ function NewDm({ me, onCancel, onOpened }: { me: MeDto; onCancel(): void; onOpen
           <input type="checkbox" checked={chosen.has(m.id)} onChange={() => toggle(m.id)} /> {m.displayName}
         </label>
       ))}
+      {agents && agents.length > 0 && <p className="hint">Ou converse com um Agente:</p>}
+      {agents && agents.length > 0 && (
+        <ul className="dm-agents" aria-label="Conversar com um Agente">
+          {agents.map((a) => (
+            <li key={a.id}>
+              <button type="button" className="link" disabled={busy} onClick={() => open(() => api.openAgentDm(a.id))}>
+                {a.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {error && (
         <p className="error" role="alert">
           {error}

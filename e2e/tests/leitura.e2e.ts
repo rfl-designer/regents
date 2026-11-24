@@ -3,6 +3,12 @@ import type { AgentDto, ChannelDto, MessageDto } from "@shearim/contracts";
 import { expect } from "e2e";
 import { addMember, as, type DevPerson, newPerson } from "../support/people";
 
+/**
+ * Quanto esperar a resposta do Agente. A fila de execuções é uma só e serial (#42 traz o
+ * paralelismo): no e2e, ela espera as respostas dos outros testes.
+ */
+const RESPOSTA_MS = 60_000;
+
 /** Quantas mensagens o Bruno manda para a origem sumir lá em cima. */
 const ENCHIMENTO = 30;
 
@@ -60,7 +66,7 @@ describe("leitura", () => {
     await post(api.bruno, `/api/conversations/${canal.id}/messages`, { body: `@${agente} qual o prazo?` });
     await mensagens.getByText(await encher(api.bruno, canal.id)).waitFor();
     const aviso = screen.getByRole("button", `↑ ${agente} respondeu ${bruno.name}`);
-    await aviso.waitFor({ timeout: 20_000 });
+    await aviso.waitFor({ timeout: RESPOSTA_MS });
 
     await aviso.tap();
 
@@ -85,7 +91,7 @@ describe("leitura", () => {
           ((await api.eu(`/api/conversations/${canal.id}/messages`)) as MessageDto[]).some(
             (m) => m.originMessageId === pergunta.id,
           ),
-        { timeout: 20_000 },
+        { timeout: RESPOSTA_MS },
       )
       .toBe(true);
     await app.open("/");

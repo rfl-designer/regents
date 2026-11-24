@@ -1,5 +1,5 @@
 {
-  "id": "537cecc1-f306-47e5-a8ad-e2af4d269789",
+  "id": "80a47fe2-0517-44f3-8d18-212b6bcf103a",
   "prevId": "82f8d846-6ab7-4802-ba86-e7e163be0167",
   "version": "7",
   "dialect": "postgresql",
@@ -1007,72 +1007,6 @@
       },
       "isRLSEnabled": false
     },
-    "public.message_reads": {
-      "name": "message_reads",
-      "schema": "",
-      "columns": {
-        "member_id": {
-          "name": "member_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "message_id": {
-          "name": "message_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "read_at": {
-          "name": "read_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "message_reads_member_id_members_id_fk": {
-          "name": "message_reads_member_id_members_id_fk",
-          "tableFrom": "message_reads",
-          "tableTo": "members",
-          "columnsFrom": [
-            "member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "message_reads_message_id_messages_id_fk": {
-          "name": "message_reads_message_id_messages_id_fk",
-          "tableFrom": "message_reads",
-          "tableTo": "messages",
-          "columnsFrom": [
-            "message_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "message_reads_member_id_message_id_pk": {
-          "name": "message_reads_member_id_message_id_pk",
-          "columns": [
-            "member_id",
-            "message_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.messages": {
       "name": "messages",
       "schema": "",
@@ -1299,7 +1233,8 @@
       "name": "execution_kind",
       "schema": "public",
       "values": [
-        "mention"
+        "mention",
+        "dm"
       ]
     },
     "public.execution_state": {

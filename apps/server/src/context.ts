@@ -14,10 +14,11 @@ export interface ModelContext {
 
 /**
  * Por que o Agente foi chamado: entra no preâmbulo ("sabe quem chamou").
- * Hoje só a Menção. SEAM do #22: a resposta da Articuladora e o delegado entram aqui como
+ * `mention`: uma Menção, em Canal ou DM. `dm`: o Agente de uma DM com Agente, que responde a
+ * cada mensagem. SEAM do #22: a resposta da Articuladora e o delegado entram aqui como
  * outros tipos (`{ kind: "delegated"; by: string; cover: string }`, com a frase do que cobrir).
  */
-export type Call = { kind: "mention" };
+export type Call = { kind: "mention" } | { kind: "dm" };
 
 /**
  * Montagem de contexto (Spec, módulo 5). Lido na hora em que a execução começa (inclusive numa
@@ -66,7 +67,10 @@ export async function buildContext(
   const caller = recent.at(-1)!;
   const where =
     conversation!.kind === "public" || conversation!.kind === "private" ? `no Canal #${conversation!.name}` : "numa DM";
-  const why = call.kind === "mention" ? `${caller.author} chamou você com uma Menção ${where}.` : "";
+  const why =
+    call.kind === "mention"
+      ? `${caller.author} chamou você com uma Menção ${where}.`
+      : `Você está numa DM com ${caller.author}: você responde a cada mensagem.`;
 
   const preamble = [
     `Você é ${agent.name}, um Agente do Shearim, um chat de time em que pessoas e Agentes conversam juntos.`,
