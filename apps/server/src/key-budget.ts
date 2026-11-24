@@ -3,6 +3,7 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
+import { isActive } from "./members";
 import type { ModelUsage } from "./model/port";
 
 const { agents, budgetOverruns, executionUsage, members, keyIncidents } = schema;
@@ -79,7 +80,10 @@ export function createKeyLedger(deps: { db: Db; clock: Clock; events: EventHub; 
   const { db, clock, events, hooks } = deps;
 
   async function adminAudience() {
-    const admins = await db.select({ id: members.id }).from(members).where(eq(members.role, "admin"));
+    const admins = await db
+      .select({ id: members.id })
+      .from(members)
+      .where(and(eq(members.role, "admin"), isActive));
     return { members: admins.map((a) => a.id) };
   }
 

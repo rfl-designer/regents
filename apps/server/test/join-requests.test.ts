@@ -29,6 +29,7 @@ describe("Pedido de entrada", () => {
         createdAt: "2026-11-24T12:00:00.000Z",
         decidedAt: null,
       },
+      removedAt: null,
     });
     expect((await t.as(bruno).get("/api/channels")).status).toBe(403);
     expect((await t.upgrade(bruno)).status).toBe(403);
@@ -275,7 +276,7 @@ function marcador(): MessageDto {
     id: crypto.randomUUID(),
     channelId: crypto.randomUUID(),
     body: "marcador",
-    author: { kind: "member", id: crypto.randomUUID(), displayName: "x", profilePicUrl: null },
+    author: { kind: "member", id: crypto.randomUUID(), displayName: "x", profilePicUrl: null, leftWorkspace: false },
     originMessageId: null,
     threadRootId: null,
     mentions: [],

@@ -12,8 +12,10 @@ import { createEventHub } from "./events";
 import { createExecutions, type ExecutionHooks } from "./executions";
 import type { Identity, IdentityPort } from "./identity/port";
 import { IdentityUnavailableError } from "./identity/whois";
+import { createInstallation, type InstallationConfig } from "./installation/status";
 import { type JoinRequestHooks, joinRequestAdminRoutes, myJoinRequestRoutes, type TailnetUser } from "./join-requests";
 import { createKeyLedger, type KeyHooks } from "./key-budget";
+import { memberAdminRoutes } from "./member-admin";
 import { listMembers, type Member, memberFor } from "./members";
 import { accountBrain } from "./model/account";
 import { keyBrain } from "./model/key";
@@ -52,6 +54,8 @@ export interface AppDeps {
   hooks?: JoinRequestHooks & ExecutionHooks & KeyHooks;
   /** O `sub` do VAPID e, nos testes, o agente HTTPS do coletor de push. */
   push: PushConfig;
+  /** A versão que está rodando e de onde vem o vencimento da chave do nó (seção Instalação). */
+  installation?: InstallationConfig;
 }
 
 type Env = { Variables: { who: TailnetUser; member: Member } };
@@ -93,6 +97,8 @@ export function createApp(deps: AppDeps) {
     config: deps.push,
     badgeOf: async (memberId) => (await unreadOf(db, memberId)).total,
   });
+
+  const installation = createInstallation({ db, clock, events, push, config: deps.installation });
 
   /** Pergunta à porta; tailscaled fora do ar é falha da Instalação, não "sem identidade": vai para o log. */
   async function whoAmI(req: Request): Promise<Identity | typeof UNAVAILABLE> {
@@ -141,6 +147,7 @@ export function createApp(deps: AppDeps) {
 
   app.route("/api/me", profileRoutes({ db, clock, events }));
   app.get("/api/members", async (c) => c.json(await listMembers(db)));
+  app.route("/api", memberAdminRoutes({ db, clock, events, executions, accounts, push }));
   app.get(EVENTS_PATH, eventsRoute);
   app.route("/api/join-requests", joinRequestAdminRoutes({ db, clock, events, hooks }));
   app.route("/api", conversationRoutes({ db, clock, events, executions, reading, push }));
@@ -156,6 +163,7 @@ export function createApp(deps: AppDeps) {
     workspaceKeyRoutes({ db, clock, secrets, onChanged: () => void executions.reconsider().catch(() => {}) }),
   );
   app.route("/api", workspaceContextRoutes({ db }));
+  app.route("/api", installation.routes);
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
 
@@ -181,12 +189,17 @@ export function createApp(deps: AppDeps) {
       return executions.stop();
     },
     push,
-    /** A subida: limpa as pastas de Conta (pastas de login órfãs, lock de renovação) e põe a fila para andar. */
+    /**
+     * A subida: limpa as pastas de Conta (pastas de login órfãs, lock de renovação), põe a fila para
+     * andar e, com `installation.watch`, a verificação do backup e da chave do nó.
+     */
     async start() {
       await accounts.recover();
       executions.start();
+      if (deps.installation?.watch) installation.start();
     },
     close: async () => {
+      await installation.stop();
       await accounts.close();
       // Depois do `executions.stop()` não sobra nenhum; isto é só a rede de segurança.
       await runs.killAll();

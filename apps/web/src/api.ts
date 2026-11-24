@@ -11,9 +11,11 @@ import type {
   DmDto,
   ExecutionDto,
   FollowedThreadDto,
+  InstallationDto,
   JoinRequestAdminDto,
   JoinRequestDto,
   MeDto,
+  MemberRole,
   MemberSummaryDto,
   MessageDto,
   MyJoinRequestDto,
@@ -76,8 +78,14 @@ export const api = {
   removeDevice: (id: string) => call<void>(`/api/devices/${id}`, { method: "DELETE" }),
   setPresence: (input: SetPresenceInput) => call<void>("/api/presence", json("PUT", input)),
   me: () => call<MeDto>("/api/me"),
+  installation: () => call<InstallationDto>("/api/installation"),
   updateProfile: (input: UpdateProfileInput) => call<MeDto>("/api/me", json("PATCH", input)),
   members: () => call<MemberSummaryDto[]>("/api/members"),
+  /** Só Admin: torna Admin ou rebaixa (o último Admin não: 409 `last_admin`). */
+  setMemberRole: (memberId: string, role: MemberRole) =>
+    call<MemberSummaryDto>(`/api/members/${memberId}`, json("PATCH", { role })),
+  /** Só Admin: remove o Membro do Workspace. */
+  removeMember: (memberId: string) => call<void>(`/api/members/${memberId}`, { method: "DELETE" }),
   myJoinRequest: () => call<MyJoinRequestDto>("/api/join-request"),
   requestToJoin: () => call<JoinRequestDto>("/api/join-request", post),
   joinRequests: () => call<JoinRequestAdminDto[]>("/api/join-requests"),

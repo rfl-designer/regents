@@ -40,7 +40,7 @@ export interface PushConfig {
  * - resposta de Agente, falha e Thread seguida (#32): chamam `notify` com outra `urgency`. Na
  *   Thread seguida, quem avisar é `followersOf(db, message.threadRootId)` (`threads.ts`); quem
  *   passa a seguir por esta mensagem já está gravado quando `messageCreated` roda;
- * - os pushes do Admin e da Conta (#28, #34, #35, #38): `notify`.
+ * - os pushes do Admin e da Conta (#28, #34, #35): `notify`, como os da Instalação (#38).
  */
 export function createPush(deps: {
   db: Db;
@@ -226,6 +226,40 @@ export function createPush(deps: {
     });
   }
 
+  /**
+   * Um push que não é de conversa (os do Admin sobre a Instalação; depois, os da Conta): leva a
+   * `path` do PWA, com `tag` e `Topic` próprios (o novo substitui o anterior do mesmo assunto).
+   */
+  function notify(
+    memberId: string,
+    n: { title: string; body: string; path: string; tag: string; urgency: "high" | "normal" },
+  ) {
+    enqueue(async () => {
+      const [subscription] = await db
+        .select({ origin: pushSubscriptions.origin })
+        .from(pushSubscriptions)
+        .where(eq(pushSubscriptions.memberId, memberId))
+        .limit(1);
+      if (!subscription) return;
+      await deliver(memberId, {
+        payload: {
+          web_push: 8030,
+          notification: {
+            title: n.title,
+            body: n.body,
+            navigate: new URL(n.path, subscription.origin).href,
+            tag: n.tag,
+            lang: "pt-BR",
+          },
+          app_badge: await badgeOf(memberId),
+        },
+        ttl: PUSH_TTL_SECONDS,
+        urgency: n.urgency,
+        topic: n.tag.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32),
+      });
+    });
+  }
+
   /** Abriu a conversa: as próximas notificações dela recomeçam do "1". */
   function conversationOpened(memberId: string, conversationId: string) {
     enqueue(async () => {
@@ -304,6 +338,18 @@ export function createPush(deps: {
     routes,
     messageCreated,
     conversationOpened,
+    notify,
+    /**
+     * O Membro foi removido do Workspace: os aparelhos dele deixam de receber push na hora (as
+     * inscrições, os aparelhos e as contagens somem; quem volta liga as notificações de novo).
+     */
+    async forget(memberId: string) {
+      await db.transaction(async (tx) => {
+        await tx.delete(pushSubscriptions).where(eq(pushSubscriptions.memberId, memberId));
+        await tx.delete(devices).where(eq(devices.memberId, memberId));
+        await tx.delete(pushStreaks).where(eq(pushStreaks.memberId, memberId));
+      });
+    },
     /** Garante o par VAPID (o `main.ts` chama na subida). */
     ensureKeys: async () => {
       await vapid();

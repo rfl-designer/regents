@@ -170,8 +170,21 @@ check_tailnet() {
   say "A primeira pessoa a abrir a URL entra como Admin."
 }
 
+# ./backups: os dumps de antes de migrar e os backups noturnos. O app e o backup rodam como o
+# usuário `bun` (uid 1000) da imagem; no Linux, a pasta precisa ser dele.
+setup_backups() {
+  mkdir -p ./backups
+  chmod 700 ./backups
+  if [ "$(uname -s)" = Linux ] && [ "$(stat -c %u ./backups)" != 1000 ]; then
+    chown 1000:1000 ./backups 2>/dev/null ||
+      say "AVISO: rode 'sudo chown 1000:1000 backups' (o app e o backup gravam ali como uid 1000)."
+  fi
+  say "ok: backups em ./backups (guarde ./backups e ./secrets fora deste computador)"
+}
+
 need_docker
 if [ "${1:-}" != "--check" ]; then
   setup_secrets
+  setup_backups
 fi
 check_tailnet

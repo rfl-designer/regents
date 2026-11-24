@@ -16,7 +16,7 @@ import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
 import type { ExecutionKind, Executions } from "./executions";
-import type { Member } from "./members";
+import { isActive, type Member } from "./members";
 import { recordMentions } from "./mentions";
 import { listMessages as listConversationMessages } from "./messages";
 import { outcomesIn } from "./outcomes";
@@ -28,7 +28,7 @@ import { recordFollows } from "./threads";
 type Env = { Variables: { member: Member } };
 /** Uma linha de `channels`: um Canal ou uma DM. */
 export type ConversationRow = typeof schema.channels.$inferSelect;
-type Channel = ConversationRow & { kind: ChannelKind; name: string };
+export type Channel = ConversationRow & { kind: ChannelKind; name: string };
 
 const CHANNEL_KINDS: readonly ChannelKind[] = ["public", "private"];
 const isChannel = (row: ConversationRow): row is Channel => (CHANNEL_KINDS as readonly string[]).includes(row.kind);
@@ -139,7 +139,12 @@ export function conversationRoutes(deps: {
     if (!channel) return c.json({ error: "not_found" }, 404);
     const input = (await c.req.json().catch(() => null)) as Partial<AddParticipantInput> | null;
     const memberId = typeof input?.memberId === "string" && UUID.test(input.memberId) ? input.memberId : undefined;
-    const [person] = memberId ? await db.select({ id: members.id }).from(members).where(eq(members.id, memberId)) : [];
+    const [person] = memberId
+      ? await db
+          .select({ id: members.id })
+          .from(members)
+          .where(and(eq(members.id, memberId), isActive))
+      : [];
     if (!person) return c.json({ error: "invalid_input", message: "Essa pessoa não é Membro do Workspace." }, 400);
 
     if (await addParticipants(db, channel.id, [person.id], clock.now())) await publishChannel(channel);
@@ -227,7 +232,13 @@ export function conversationRoutes(deps: {
       id: values.id,
       channelId: values.channelId,
       body: values.body,
-      author: { kind: "member", id: author.id, displayName: author.displayName, profilePicUrl: author.profilePicUrl },
+      author: {
+        kind: "member",
+        id: author.id,
+        displayName: author.displayName,
+        profilePicUrl: author.profilePicUrl,
+        leftWorkspace: false,
+      },
       originMessageId: null,
       threadRootId,
       mentions,
@@ -400,7 +411,7 @@ function channelDto(channel: Channel, participants: ChannelDto["participants"]):
   };
 }
 
-async function toChannelDto(db: Db, channel: Channel) {
+export async function toChannelDto(db: Db, channel: Channel) {
   return channelDto(channel, (await participantsOf(db, [channel.id])).get(channel.id) ?? []);
 }
 

@@ -23,7 +23,7 @@ deploy/setup.sh        # Instalação: segredos, .env e conferência da tailnet 
 
 - `bun run dev` usa um PGlite em disco em `.data/pglite` (apague a pasta para começar de uma Instalação vazia) e a **identidade de desenvolvimento**: sem cookie, você é a "Pessoa Dev"; abra `http://localhost:5173/dev/como/<id>?nome=Fulana` para ser outra pessoa naquela aba (ela cai no Pedido de entrada, e a Pessoa Dev aprova no painel "Pedidos de entrada"). `/dev/sem-identidade/<tagged|funnel|unknown>` faz o navegador chegar sem identidade, para ver a página estática com o motivo. Essas rotas só existem com `SHEARIM_IDENTITY=dev`.
 - Com `DATABASE_URL` definida, o servidor fala com o Postgres em vez do PGlite.
-- O servidor sempre aplica as migrações ao subir (`serve`); `bun apps/server/src/main.ts migrate` aplica e sai.
+- O servidor sempre aplica as migrações ao subir (`serve`); `bun apps/server/src/main.ts migrate` aplica e sai. Os dois fazem um dump em `.data/backups` antes de migrar um banco que já tem dados e se recusam a rodar num banco migrado por uma versão mais nova (ver "Backup, restauração e migrações").
 
 ### Variáveis do servidor
 
@@ -40,6 +40,10 @@ deploy/setup.sh        # Instalação: segredos, .env e conferência da tailnet 
 | `SHEARIM_ACCOUNTS_DIR` | `.data/accounts` | Pasta-raiz das Contas: uma pasta de `CLAUDE_CONFIG_DIR` por login, fora do backup (no compose, o volume `contas`). O Shearim nunca lê o que há dentro. |
 | `SHEARIM_MASTER_KEY_FILE` | `.data/secrets/master_key` | A chave mestra (32 bytes em hex, como o `deploy/setup.sh` grava, ou em base64), que cifra a Chave do Workspace. No compose, `/run/secrets/master_key`. Sem a variável, o arquivo padrão é gerado se faltar (só desenvolvimento); com ela, o arquivo tem que existir. Com outra chave mestra, o Admin grava a Chave de novo. |
 | `SHEARIM_ANTHROPIC_BASE_URL` | (a da Anthropic) | Onde fica a Messages API. O e2e aponta para a falsa. |
+| `SHEARIM_BACKUPS_DIR` | `.data/backups` | `./backups`: dumps de antes de migrar e de restaurar, e os backups noturnos. No compose, `/backups`. |
+| `SHEARIM_BACKUP_AT` | `03:00` | Hora do backup noturno (comando `backup`), na hora local do container (`TZ`). |
+| `SHEARIM_PG_BIN_DIR` | (o `PATH`) | Pasta do `pg_dump`/`pg_restore`. |
+| `SHEARIM_VERSION` | `dev` | A versão na seção Instalação (a imagem traz a tag). |
 | `SHEARIM_VAPID_CONTACT` | `mailto:shearim@example.com` (só dev) | O `sub` do VAPID do push: `mailto:` com domínio real (a Apple recusa `localhost`). O `deploy/setup.sh` grava no `.env`. |
 
 ## Layout
@@ -66,11 +70,15 @@ apps/server/        Bun + Hono + Drizzle
   src/push.ts       push: par VAPID, inscrições por aparelho, gatilhos de Menção e DM; push-sender.ts é o adaptador do `web-push`
   src/executions.ts fila de execuções no Postgres e o trabalhador que a esvazia
   src/model/        porta de modelo (port.ts: eventos normalizados) e o cérebro da Chave (key.ts)
-  src/main.ts       entrypoint: serve | migrate
+  src/main.ts       entrypoint: serve | migrate | restore <arquivo> | backup
+  src/installation/ migrações seguras (migrations.ts), dumps (dumper.ts, postgres-dumper.ts), comandos
+                    (commands.ts), backup noturno (backups.ts), chave do nó (node-key.ts) e a seção
+                    Instalação com os avisos ao Admin (status.ts)
   src/db/           schema.ts (Drizzle), client.ts, connect.ts (Postgres ou PGlite)
   src/identity/     porta de identidade: whois.ts (tailnet) e dev.ts
   src/join-requests.ts  Pedido de entrada (pedir, aprovar, recusar)
   src/members.ts    Membro (com o identificador), primeira entrada, lista de Membros
+  src/member-admin.ts  o Admin gerencia Membros: papel (`PATCH /api/members/:id`) e remoção (`DELETE`)
   src/profile.ts    perfil do próprio Membro (`/api/me`)
   src/mention-handles.ts  espaço de nomes dos identificadores de Menção (Membros e Agentes)
   src/mentions.ts   `@nome` no texto: extração, quem foi mencionado, registro
@@ -83,7 +91,7 @@ apps/server/        Bun + Hono + Drizzle
 apps/web/           PWA em React + Vite, pt-BR
 packages/contracts/ DTOs do HTTP e eventos do WebSocket (ServerEvent), compartilhados
 e2e/                e2e.config.ts + serve.ts (app com os dublês) + tests/*.e2e.ts (@e2e-dev/web) + support/ (pessoas pela API)
-compose.yaml        a Instalação: sidecar do Tailscale, app, Postgres (backup no #38)
+compose.yaml        a Instalação: sidecar do Tailscale, app, Postgres e backup
 Dockerfile          imagem do app (oven/bun:1.3.11, sem root)
 deploy/             setup.sh e tailscale/serve.json
 ```
@@ -149,6 +157,26 @@ aba.received();                                             // tudo o que chegou
 t.events.publish({ members: [id] }, evento);                 // publicar direto no hub
 ```
 
+`events.disconnect(memberId, código, motivo)` fecha todas as conexões de um Membro: a remoção usa `MEMBER_REMOVED_CLOSE_CODE` (4403), que o `aba.closed` mostra. O mesmo cuidado com o `server.stop()` do Bun 1.3.11 vale aqui.
+
+### Admin gerencia Membros (#36)
+
+| Rota | Quem | O quê |
+|---|---|---|
+| `PATCH /api/members/:id` | Admin | `{ role: "admin" \| "member" }`: torna Admin ou rebaixa (inclusive a si mesmo). Devolve o `MemberSummaryDto` (que agora traz `role`) e publica `member.updated` para todos. Rebaixar o último Admin: `409 last_admin` |
+| `DELETE /api/members/:id` | Admin | remove o Membro (204). A si mesmo: `409 cannot_remove_self` (ninguém sai sozinho); o último Admin: `409 last_admin`; quem já saiu: 404 |
+
+As decisões de papel passam por uma trava (`pg_advisory_xact_lock`) que reconfere, dentro dela, que quem decide ainda é Admin e quantos Admins há: dois Admins rebaixando ou removendo um ao outro ao mesmo tempo não zeram os Admins.
+
+**Remoção** (o Membro "saiu do Workspace"): a linha fica, com `members.left_at` e o papel de volta a Membro comum.
+- O acesso acaba: o HTTP responde `403 not_a_member` (o `memberFor` não o reconhece), o upgrade do WebSocket dá 403 e as conexões abertas recebem `member.removed` (que vai a todos) e fecham com 4403. O push dele para (`push.forget`: inscrições, aparelhos e contagens apagados).
+- Sai dos Canais privados e das DMs em grupo (`channel.updated`/`dm.updated` para quem fica), e deixa de seguir as Threads deles. Continua nos Canais públicos e nas DMs a dois, que são o histórico dele (e nas Threads seguidas ali).
+- As execuções abertas das mensagens dele são canceladas pelo Shearim (`executions.cancelAuthoredBy`), à vista: `cancelled` com `reason: "quem escreveu saiu do Workspace"`. O `cancelled` sem motivo continua sendo o "cancelada por quem escreveu".
+- A Conta é desligada (`accounts.unlink`: `claude auth logout` e a pasta apagada) e uma ligação pela metade, encerrada (`accounts.cancel`).
+- As mensagens dele saem com `author.leftWorkspace: true` (a marca "saiu do Workspace"). Quem saiu não está em `GET /api/members`, não entra no "quem é quem" do contexto e não pode ser posto numa conversa (400).
+
+**Volta:** quem foi removido vê `removedAt` em `GET /api/join-request` (o pedido aprovado de antes não conta: `joinRequest: null`) e pede de novo. Aprovado, é o mesmo Membro (mesmo `UserProfile.ID`, mesmo id, nome e identificador), como Membro comum, com as mensagens e as DMs a dois de antes, e fora dos Canais privados e das DMs em grupo.
+
 ### Perfil e identificador de Menção (#19)
 
 - O nome e a foto vêm da tailnet na **primeira entrada** (o primeiro Admin pelo `whois`, quem foi aprovado pelo que o Pedido de entrada guardou). Depois, nada do `whois` é regravado: o nome é do Membro e a tailnet não o sobrescreve.
@@ -169,7 +197,7 @@ Um Canal público é visto por todo Membro; um privado só por quem participa. P
 | `GET /api/channels/:id` | quem vê | o Canal |
 | `POST /api/channels/:id/join` | Membro | entra num público (privado: 404) |
 | `POST /api/channels/:id/participants` | quem vê | `{ memberId }`; adiciona uma pessoa |
-| `GET /api/members` | Membro | `MemberSummaryDto[]` (`id`, `displayName`, `handle`, `profilePicUrl`, `about`), para escolher quem adicionar |
+| `GET /api/members` | Membro | `MemberSummaryDto[]` (`id`, `displayName`, `handle`, `profilePicUrl`, `about`, `role`), sem quem saiu do Workspace, para escolher quem adicionar |
 | `GET /api/channel-settings` | Admin | Instruções e N de todo Canal, sem mensagens nem participantes |
 | `PATCH /api/channel-settings/:id` | Admin | `{ instructions?, recentMessages? }` (N inteiro ≥ 0, padrão 30) |
 
@@ -395,4 +423,35 @@ deploy/setup.sh --check  # só as conferências (MagicDNS, HTTPS, tag do nó)
 - **Regras do compose que não se negociam:** nenhum serviço tem `ports:`. A rede `interna` tem só o sidecar, o app, o Postgres e o backup, e nenhum `docker-compose.override.yml` pode ligar outro serviço a ela (quem está nela fala com `app:3000` e forja o `X-Forwarded-For`). O sidecar fica em userspace, com `cap_drop: ALL` e sem `/dev/net/tun`. O app roda como `bun` (sem root), então a LocalAPI só lhe dá leitura.
 - **Identidade:** uma pergunta ao `whois` por sessão (a resposta vale 60 s por IP de peer). O WebSocket pergunta no upgrade e fica com aquele Membro. Nó com tag, Funnel e IP desconhecido não têm identidade (403 `no_identity`). Com o tailscaled fora do ar, a API responde 503 `identity_unavailable` e o motivo vai para o log do app.
 - **Saúde:** `/api/health` é o healthcheck do app; o `stop_grace_period` é de 30 s.
+- **Backup:** o serviço `backup` faz um `pg_dump` por noite em `./backups` (ver abaixo). O backup completo é `./backups` mais `./secrets`.
 - **Testes:** o adaptador `whois` tem um teste de contrato contra uma LocalAPI falsa num Unix socket (`fakeLocalApi()` em `apps/server/test/fake-localapi.ts`), com respostas gravadas em `apps/server/test/fixtures/localapi/`. O sidecar de verdade fica no smoke manual.
+
+### Backup, restauração e migrações (#38)
+
+```sh
+docker compose run --rm app migrate                       # migra à parte (com o dump antes)
+docker compose stop app backup                            # antes de restaurar
+docker compose run --rm app restore shearim-20261124T030000Z.dump   # pelo nome em ./backups, ou o caminho
+docker compose up -d
+```
+
+- **Migrações só para a frente.** `serve` e `migrate` comparam o maior `drizzle.__drizzle_migrations.created_at` do banco com o último `when` do `_journal.json` da versão: banco mais novo, a versão não sobe (sai 1 com o que fazer: voltar à versão nova ou restaurar o dump de antes da atualização). Com migração pendente num banco com dados, antes um dump `shearim-pre-migracao-<hora>.dump` em `./backups`; se o dump falha, nada é migrado. Banco vazio não ganha dump.
+- **`restore <arquivo>`** troca o banco inteiro pelo do dump (no Postgres: apaga os schemas `public` e `drizzle` e roda o `pg_restore`). Antes, guarda `shearim-pre-restauracao-<hora>.dump` do banco atual (`--sem-copia` pula, para um banco que não tem mais nada a salvar). Os Membros não mudam (são o `UserProfile.ID`); com a mesma `./secrets`, a Chave do Workspace segue legível.
+- **Backup noturno** (`backup`, o serviço do compose, a mesma imagem): às `SHEARIM_BACKUP_AT` (padrão 03:00, `TZ` do container), e na subida se não houve backup bom nas últimas 24 h. Arquivo `shearim-<hora UTC>.dump` (`pg_dump -Fc`), escrito em `.partial` e renomeado no fim. Ficam os de menos de 14 dias; os `pre-migracao`/`pre-restauracao` não são apagados. Cada tentativa vai para a tabela `backups`.
+- **Seção Instalação** (`GET /api/installation`, só Admin, `InstallationDto`): `version`, `migration` (a última aplicada), `backup.last` e `backup.lastGoodAt`, `nodeKey` (`expires`/`never`/`unknown`, do `GET /localapi/v0/status` do tailscaled, `Self.KeyExpiry`) e `alerts` (`backup_failed`, `backup_stale`). No PWA, "Instalação" na barra do Admin e em `/instalacao`.
+- **Avisos ao Admin** (`status.ts`, a cada 15 min, `INSTALLATION_CHECK_MS`): backup que falhou e 36 h sem backup bom (contadas da última boa, ou da primeira subida) mandam push (`Urgency: high`, `tag` `instalacao-backup`, leva a `/instalacao`) a cada Admin e acendem a faixa (`installation.updated` só para Admins, quando muda). A 14 dias do vencimento da chave do nó, push `normal` (`instalacao-chave-do-no`). Cada aviso sai uma vez por ocorrência (`installation_alerts`), também depois de reiniciar. O envio é `push.notify(memberId, { title, body, path, tag, urgency })`, que serve aos outros pushes fora de conversa (#34, #35).
+
+Nos testes:
+
+```ts
+const t = await testApp({ installation: { watch: true, version: "1.4.2", nodeKey } });  // watch liga a verificação
+const job = createNightlyBackups({ db: t.db, clock: t.clock, dumper: fakeDumper(), dir, log: () => {} });
+await job.runNow();                       // ou job.start(); fakeDumper().failWith("...") faz o dump falhar
+const localApi = fakeLocalApi(); localApi.status(recordedStatus("status-com-vencimento"));
+const nodeKey = localApiNodeKey({ socketPath: localApi.socketPath });
+testApp({ db: conn.db, masterKey });      // outro banco (PGlite em disco) e a mesma chave mestra; t.shutdown() para o app
+```
+
+- `test/installation-commands.test.ts` roda `bun src/main.ts migrate|serve|restore|backup` de verdade num PGlite em disco (o dump é o `.tar.gz` do diretório de dados).
+- `test/postgres-backup.test.ts` sobe um cluster descartável do Postgres 18 (`initdb`/`pg_ctl` numa porta livre) e testa o `pg_dump`/`pg_restore` pela mesma borda. Sem os binários (procura em `SHEARIM_TEST_PG_BIN`, `/opt/homebrew/opt/postgresql@18/bin`, `/usr/lib/postgresql/18/bin`), é pulado.
+- **Smoke manual** (Docker): `docker compose build && docker compose up -d`; `docker compose logs backup` mostra o primeiro backup e `ls backups` o arquivo; `docker compose run --rm app migrate`; `docker compose stop app backup && docker compose run --rm app restore <arquivo> && docker compose up -d` e o Workspace volta; a seção Instalação mostra a versão, "há X h" e o vencimento da chave do nó (o de um nó com tag costuma vir "não vence"); `docker compose stop postgres` e esperar o backup falhar (ou mudar `SHEARIM_BACKUP_AT`) para ver o push e a faixa.

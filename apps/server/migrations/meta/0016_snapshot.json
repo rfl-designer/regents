@@ -1,5 +1,5 @@
 {
-  "id": "2555c266-9a51-4edb-af30-2d0cbdac9931",
+  "id": "06a88c04-7166-4065-ba97-331960d72ebc",
   "prevId": "4e68511f-a353-4e54-bd99-db830ca5d0aa",
   "version": "7",
   "dialect": "postgresql",
@@ -164,12 +164,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
-        },
-        "monthly_budget_usd": {
-          "name": "monthly_budget_usd",
-          "type": "double precision",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
@@ -212,54 +206,72 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.budget_overruns": {
-      "name": "budget_overruns",
+    "public.backups": {
+      "name": "backups",
       "schema": "",
       "columns": {
-        "agent_id": {
-          "name": "agent_id",
+        "id": {
+          "name": "id",
           "type": "uuid",
-          "primaryKey": false,
+          "primaryKey": true,
           "notNull": true
         },
-        "month": {
-          "name": "month",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "at": {
-          "name": "at",
+        "started_at": {
+          "name": "started_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ok": {
+          "name": "ok",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "file": {
+          "name": "file",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "bytes": {
+          "name": "bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
-      "indexes": {},
-      "foreignKeys": {
-        "budget_overruns_agent_id_agents_id_fk": {
-          "name": "budget_overruns_agent_id_agents_id_fk",
-          "tableFrom": "budget_overruns",
-          "tableTo": "agents",
-          "columnsFrom": [
-            "agent_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "budget_overruns_agent_id_month_pk": {
-          "name": "budget_overruns_agent_id_month_pk",
+      "indexes": {
+        "backups_finished_at_index": {
+          "name": "backups_finished_at_index",
           "columns": [
-            "agent_id",
-            "month"
-          ]
+            {
+              "expression": "finished_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -549,128 +561,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.execution_usage": {
-      "name": "execution_usage",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "execution_id": {
-          "name": "execution_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "agent_id": {
-          "name": "agent_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "payer": {
-          "name": "payer",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "model": {
-          "name": "model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "input_tokens": {
-          "name": "input_tokens",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "output_tokens": {
-          "name": "output_tokens",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "cost_usd": {
-          "name": "cost_usd",
-          "type": "double precision",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "month": {
-          "name": "month",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "execution_usage_agent_id_month_index": {
-          "name": "execution_usage_agent_id_month_index",
-          "columns": [
-            {
-              "expression": "agent_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "month",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "execution_usage_execution_id_executions_id_fk": {
-          "name": "execution_usage_execution_id_executions_id_fk",
-          "tableFrom": "execution_usage",
-          "tableTo": "executions",
-          "columnsFrom": [
-            "execution_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "execution_usage_agent_id_agents_id_fk": {
-          "name": "execution_usage_agent_id_agents_id_fk",
-          "tableFrom": "execution_usage",
-          "tableTo": "agents",
-          "columnsFrom": [
-            "agent_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.executions": {
       "name": "executions",
       "schema": "",
@@ -953,6 +843,76 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.installation": {
+      "name": "installation",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "installation_uma_linha": {
+          "name": "installation_uma_linha",
+          "value": "\"installation\".\"id\" = 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.installation_alerts": {
+      "name": "installation_alerts",
+      "schema": "",
+      "columns": {
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ref": {
+          "name": "ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sent_at": {
+          "name": "sent_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "installation_alerts_kind_ref_pk": {
+          "name": "installation_alerts_kind_ref_pk",
+          "columns": [
+            "kind",
+            "ref"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.join_requests": {
       "name": "join_requests",
       "schema": "",
@@ -1079,61 +1039,6 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.key_incidents": {
-      "name": "key_incidents",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "key_incident_kind",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "opened_at": {
-          "name": "opened_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "closed_at": {
-          "name": "closed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "key_incidents_one_open": {
-          "name": "key_incidents_one_open",
-          "columns": [
-            {
-              "expression": "(\"closed_at\" is null)",
-              "asc": true,
-              "isExpression": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"key_incidents\".\"closed_at\" is null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -2156,14 +2061,6 @@
         "pending",
         "approved",
         "refused"
-      ]
-    },
-    "public.key_incident_kind": {
-      "name": "key_incident_kind",
-      "schema": "public",
-      "values": [
-        "auth_failed",
-        "billing_failed"
       ]
     },
     "public.member_role": {

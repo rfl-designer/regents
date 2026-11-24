@@ -101,6 +101,23 @@ export function EntryView({ onApproved }: { onApproved: () => void }) {
     );
   }
 
+  if (state.removedAt) {
+    return (
+      <main className="center entry" aria-label="Pedido de entrada">
+        <h1>Você saiu deste Workspace</h1>
+        <p role="status">
+          Um Admin removeu você em {formatWhen(state.removedAt)}. Para voltar, peça para entrar de novo: você volta com
+          o seu histórico, mas fora dos Canais privados e das DMs em grupo.
+        </p>
+        {whoami}
+        <button type="button" className="primary" onClick={ask} disabled={sending}>
+          Pedir para entrar de novo
+        </button>
+        {error}
+      </main>
+    );
+  }
+
   return (
     <main className="center entry" aria-label="Pedido de entrada">
       <h1>Você ainda não é Membro deste Workspace</h1>

@@ -188,6 +188,17 @@ export function Conversation({
     if (event.type === "execution.updated" && event.execution.channelId === conversationId) {
       setExecutions((prev) => upsertExecution(prev, event.execution));
     }
+    // Quem escreveu foi removido: as mensagens dele ganham a marca.
+    if (event.type === "member.removed") {
+      setMessages(
+        (prev) =>
+          prev?.map((m) =>
+            m.author.kind === "member" && m.author.id === event.memberId
+              ? { ...m, author: { ...m.author, leftWorkspace: true } }
+              : m,
+          ) ?? null,
+      );
+    }
     if (event.type === "outcome.created" && event.outcome.channelId === conversationId) {
       const { outcome } = event;
       setOutcomes((prev) => ({ ...prev, [outcome.messageId]: outcome }));
@@ -617,6 +628,9 @@ function MessageRow({
       <div>
         <div className="meta">
           <strong>{m.author.displayName}</strong>
+          {m.author.kind === "member" && m.author.leftWorkspace && (
+            <span className="left-workspace">saiu do Workspace</span>
+          )}
           <time dateTime={m.createdAt}>{time.format(new Date(m.createdAt))}</time>
           {outcome?.decision === "none" && <NoneMark outcome={outcome} />}
           {mentionsMe && <span className="mention-tag">menciona você</span>}
@@ -734,7 +748,8 @@ function Progress({ execution: e, now, onRetry }: { execution: ExecutionDto; now
     );
   }
   if (e.state === "cancelled") {
-    return <p className="cancelled">cancelada por quem escreveu</p>;
+    // Sem motivo, foi quem escreveu; com motivo, o Shearim (ex.: quem escreveu saiu do Workspace).
+    return <p className="cancelled">{e.reason ? `cancelada: ${e.reason}` : "cancelada por quem escreveu"}</p>;
   }
   if (e.state === "retrying") {
     const wait = mmss(e.retryAt ? new Date(e.retryAt).getTime() - now : 0);
