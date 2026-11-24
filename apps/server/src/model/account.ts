@@ -178,6 +178,8 @@ const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : u
 function streamReading(request: ModelRequest) {
   /** Um `rate_limit_event` rejeitado: a Conta bateu no limite até `resetsAt`. */
   let limited: { resetsAt: Date | null } | undefined;
+  /** O `isUsingOverage` do último `rate_limit_event` ("usando uso extra"), se veio algum. */
+  let extraUsage: boolean | undefined;
   /** A categoria de `assistant.error`. */
   let category: string | undefined;
   let result: Json | undefined;
@@ -204,7 +206,9 @@ function streamReading(request: ModelRequest) {
       }
       if (line.type === "rate_limit_event") {
         const info = (line.rate_limit_info ?? {}) as Json;
-        // `allowed_warning` (85%) e o uso extra (`allowed`, `isUsingOverage`) não mudam nada.
+        // `allowed_warning` (85%) e o uso extra (`allowed`, `isUsingOverage`) não mudam quem paga;
+        // o uso extra só aparece em "Minha Conta".
+        extraUsage = info.isUsingOverage === true;
         if (info.status === "rejected") {
           const at = num(info.resetsAt);
           limited = { resetsAt: at === undefined ? null : new Date(at * 1000) };
@@ -236,6 +240,7 @@ function streamReading(request: ModelRequest) {
             usage: { inputTokens: num(usage.input_tokens) ?? 0, outputTokens: num(usage.output_tokens) ?? 0 },
             costUsd: num(result.total_cost_usd) ?? 0,
             ...(expires && !Number.isNaN(Date.parse(expires)) ? { credentialExpiresAt: new Date(expires) } : {}),
+            ...(extraUsage === undefined ? {} : { extraUsage }),
           },
         ];
       }

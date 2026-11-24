@@ -26,7 +26,7 @@ import { JoinRequestsPanel } from "./JoinRequestsPanel";
 import { KeyBanners } from "./KeyBanners";
 import { setPresence, useServerEvents } from "./live";
 import { MembersSettings } from "./MembersAdmin";
-import { AccountOffer, MyAccount, useAccount } from "./MyAccount";
+import { AccountOffer, expiringValidity, MyAccount, useAccount } from "./MyAccount";
 import { NotificationsOnboarding } from "./NotificationsOnboarding";
 import { closeNotificationsOf, usePush } from "./notifications";
 import { ProfileView } from "./ProfileView";
@@ -288,6 +288,9 @@ export function App() {
             onClick={() => setView(view === "account" ? "channel" : "account")}
           >
             {view === "account" ? "Voltar à conversa" : "Minha Conta"}
+            {expiringValidity(account.account) && (
+              <span className="selo" role="img" aria-label="A sua Conta do Claude vence em breve" />
+            )}
           </button>
         </div>
       </header>

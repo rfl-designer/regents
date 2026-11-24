@@ -8,21 +8,35 @@
  * só para `{ members: [ele] }`. Nem o Admin vê.
  *
  * Quem paga (#27) marca a Conta "No limite até HH:MM" (`markLimited`) e "Precisa ligar de novo"
- * (`markNeedsRelink`) pelo que a execução pela Conta viu; ligar de novo é o mesmo fluxo de ligar.
+ * (`markNeedsRelink`) pelo que a execução pela Conta viu.
  *
- * Os pushes da Conta (#34) saem pelos ganchos (`AccountHooks`): a queda (uma vez por queda) e a
- * assinatura repetida (ao primeiro dono). Fora daqui por enquanto: a religação sem perder a
- * ligação atual e a validade, com o aviso de vencimento 3 dias antes (#35, também por um gancho).
+ * Validade (#35): a data mais cedo em que o login pode cair é `loginExpiresAt` (ou o
+ * `credential_expires_at` de uma execução, se vier antes) menos 3 dias. O `auth status` é lido ao
+ * ligar e uma vez por dia (`watch`); 3 dias antes da data sai um único aviso por login.
+ *
+ * Ligar de novo (#35) é o mesmo fluxo, a qualquer momento, numa pasta nova que só entra em uso
+ * depois de validada. A pasta antiga sai de uso na hora e é apagada quando o último `claude -p`
+ * nela termina (`lease`), sem `auth logout`. Desistir no meio não mexe na Conta.
+ *
+ * Os pushes da Conta (#34) saem pelos ganchos (`AccountHooks`): a queda (uma vez por queda), a
+ * assinatura repetida (ao primeiro dono) e o aviso de vencimento (#35).
  */
 import { lstat, mkdir, readdir, rm, rmdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { AccountDto, AccountLinkingDto, AccountStatusDto, SubmitAccountCodeInput } from "@shearim/contracts";
+import type {
+  AccountDto,
+  AccountLinkingDto,
+  AccountStatusDto,
+  AccountValidityDto,
+  SubmitAccountCodeInput,
+} from "@shearim/contracts";
 import { and, eq, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
 import type { EventHub } from "../events";
 import type { Member } from "../members";
+import { hasWorkspaceKey } from "../workspace-key";
 import {
   type AuthStatus,
   authLogout,
@@ -53,6 +67,18 @@ const REFRESH_LOCK = ".oauth_refresh.lock";
 const STALE_LOCK_MS = 60_000;
 /** As pastas de Conta são `<raiz>/<id do Membro>/<uuid do login>`; o resto da raiz não é nosso. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const DAY_MS = 24 * 60 * 60_000;
+/** O fim real do login pode chegar até 3 dias antes de `loginExpiresAt` (ADR 0005). */
+const LOGIN_END_MARGIN_MS = 3 * DAY_MS;
+/** O aviso de vencimento sai 3 dias antes da validade. */
+export const EXPIRY_WARNING_MS = 3 * DAY_MS;
+/**
+ * De quanto em quanto tempo o `auth status` de cada Conta Ligada é relido. Também é o horizonte dos
+ * prazos marcados no relógio (um `setTimeout` não passa de ~24 dias): o que vence depois, a próxima
+ * releitura marca.
+ */
+export const STATUS_CHECK_MS = DAY_MS;
 
 /** Quanto a tela espera pelo código colado (Spec, história 34). */
 export const LOGIN_WAIT_MS = 10 * 60_000;
@@ -133,6 +159,18 @@ export function accountStanding(row: AccountRow | undefined | null, now: Date): 
   return { state: "linked", configDir: row.configDir };
 }
 
+/**
+ * A validade do login (ADR 0005): a data mais cedo em que ele pode cair. `null` sem data nenhuma
+ * (o `auth status` não trouxe `loginExpiresAt` e nenhuma execução trouxe `credential_expires_at`).
+ */
+export function validityOf(row: AccountRow, now: Date): { until: Date; state: AccountValidityDto["state"] } | null {
+  const ends = [row.loginExpiresAt, row.credentialExpiresAt].filter((d): d is Date => d !== null);
+  if (ends.length === 0) return null;
+  const until = new Date(Math.min(...ends.map((d) => d.getTime())) - LOGIN_END_MARGIN_MS);
+  const left = until.getTime() - now.getTime();
+  return { until, state: left < 0 ? "any_time" : left <= EXPIRY_WARNING_MS ? "soon" : "ok" };
+}
+
 /** O limite sem `resetsAt` (o limite semanal pode sair sem a hora): a Conta é tentada de novo em 1 h. */
 export const LIMIT_FALLBACK_MS = 60 * 60_000;
 
@@ -150,6 +188,11 @@ export interface AccountHooks {
    * de gravar a ligação nova.
    */
   subscriptionShared?(owners: string[], memberId: string): void;
+  /**
+   * Faltam 3 dias (ou menos) para a validade do login do Membro (`until`; `state: "any_time"` se ela
+   * já passou quando o aviso saiu). Uma vez por login. Roda depois de gravar.
+   */
+  accountExpiring?(memberId: string, validity: { until: Date; state: "soon" | "any_time" }): void;
 }
 
 const { accounts } = schema;
@@ -172,6 +215,13 @@ export function createAccounts(deps: {
   const procs = processTracker();
   const cli = { clock, procs };
   const flows = new Map<string, Flow>();
+  /** Os prazos da validade de cada Membro: o aviso e a passagem para "pode vencer a qualquer momento". */
+  const expiryTimers = new Map<string, (() => void)[]>();
+  /** Quantos `claude -p` rodam em cada pasta de Conta (`lease`). */
+  const leases = new Map<string, number>();
+  /** Pastas que saíram de uso ao ligar de novo: apagadas quando o último `claude -p` nelas termina. */
+  const retired = new Set<string>();
+  let stopWatch: (() => void) | undefined;
   /** Depois do `close()`, nenhum processo novo sobe (ele ficaria órfão). */
   let closed = false;
 
@@ -188,15 +238,21 @@ export function createAccounts(deps: {
       .onConflictDoUpdate({ target: accounts.memberId, set: { ...values, updatedAt: now } });
   }
 
+  async function validityDto(r: AccountRow): Promise<AccountValidityDto | null> {
+    const v = validityOf(r, clock.now());
+    if (!v) return null;
+    return { until: v.until.toISOString(), state: v.state, afterwards: (await hasWorkspaceKey(db)) ? "key" : "queue" };
+  }
+
   async function dto(memberId: string): Promise<AccountDto> {
     const r = await row(memberId);
     const standing = accountStanding(r, clock.now());
     const who = { email: r?.email ?? "", plan: planLabel(r?.subscriptionType ?? null) };
     const status: AccountStatusDto =
       standing.state === "linked"
-        ? { state: "linked", ...who }
+        ? { state: "linked", ...who, validity: await validityDto(r!), extraUsage: r!.extraUsage }
         : standing.state === "limited"
-          ? { state: "limited", ...who, until: standing.until.toISOString() }
+          ? { state: "limited", ...who, until: standing.until.toISOString(), validity: await validityDto(r!) }
           : standing.state === "needs_relink"
             ? { state: "needs_relink", ...who }
             : { state: "not_linked" };
@@ -245,10 +301,8 @@ export function createAccounts(deps: {
     work().catch(() => fail(memberId, flow, LINKING_FAILURES.unavailable));
   };
 
+  /** Ligar, ou ligar de novo: o mesmo fluxo, numa pasta nova. A Conta atual fica como está até validar. */
   async function start(memberId: string): Promise<Result> {
-    if ((await row(memberId))?.state === "linked") {
-      return { ok: false, message: "A sua Conta já está ligada. Desligue antes de ligar outra." };
-    }
     const old = flows.get(memberId);
     const flow: Flow = { dto: { state: "starting" }, dir: join(config.root, memberId, crypto.randomUUID()) };
     flows.set(memberId, flow);
@@ -307,7 +361,11 @@ export function createAccounts(deps: {
       if (!isCurrent(memberId, flow)) return;
       if (!status) return fail(memberId, flow, LINKING_FAILURES.rejected);
       flow.status = status;
-      if (await linkedToSomeoneElse(memberId, status.email)) return step(memberId, flow, { state: "duplicate" });
+      // Ligar de novo a mesma assinatura já foi decidido na primeira vez.
+      const again = sameSubscription(await row(memberId), status.email);
+      if (!again && (await linkedToSomeoneElse(memberId, status.email))) {
+        return step(memberId, flow, { state: "duplicate" });
+      }
       await validateAndLink(memberId, flow);
     });
     return { ok: true, account: await dto(memberId) };
@@ -329,6 +387,9 @@ export function createAccounts(deps: {
   }
   const linkedToSomeoneElse = async (memberId: string, email: string) =>
     (await othersLinkedTo(memberId, email)).length > 0;
+  /** A Conta já tem esta assinatura (ligar de novo o mesmo login). */
+  const sameSubscription = (r: AccountRow | undefined, email: string) =>
+    r?.state !== undefined && r.state !== "not_linked" && r.email?.toLowerCase() === email.toLowerCase();
 
   async function validateAndLink(memberId: string, flow: Flow) {
     const v = await validateAccount(config.claudeBin, flow.dir, cli);
@@ -336,6 +397,10 @@ export function createAccounts(deps: {
     if (!v.ok) return fail(memberId, flow, explainValidation(v));
     const s = flow.status!;
     const now = clock.now();
+    const before = await row(memberId);
+    // Ligar de novo: a pasta antiga sai de uso antes da troca (nenhum `claude -p` novo pega ela) e
+    // é apagada quando terminam as execuções dela. Sem `auth logout` (ADR 0005).
+    if (before?.configDir && before.configDir !== flow.dir) retire(before.configDir);
     await upsert(memberId, {
       state: "linked",
       email: s.email,
@@ -347,12 +412,155 @@ export function createAccounts(deps: {
       linkedAt: now,
       offerDismissedAt: now,
       limitedUntil: null,
+      credentialExpiresAt: null,
+      expiryWarnedAt: null,
+      extraUsage: false,
     });
     flows.delete(memberId);
     await publish(memberId);
     deps.onChanged?.(memberId);
+    await schedule(memberId);
+    if (sameSubscription(before, s.email)) return;
     const owners = await othersLinkedTo(memberId, s.email);
     if (owners.length) deps.hooks?.subscriptionShared?.(owners, memberId);
+  }
+
+  /** Tira a pasta de uso: apagada agora, ou quando o último `claude -p` nela soltar. */
+  function retire(configDir: string) {
+    const dir = resolve(configDir);
+    retired.add(dir);
+    if (!leases.get(dir)) void rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+
+  function lease(_memberId: string, configDir: string): (() => void) | null {
+    const dir = resolve(configDir);
+    if (retired.has(dir)) return null;
+    leases.set(dir, (leases.get(dir) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (leases.get(dir) ?? 1) - 1;
+      if (left > 0) return void leases.set(dir, left);
+      leases.delete(dir);
+      if (retired.has(dir)) void rm(dir, { recursive: true, force: true }).catch(() => {});
+    };
+  }
+
+  /** O fim com sucesso de uma execução pela pasta: a validade da credencial e o uso extra. */
+  async function runEnded(
+    memberId: string,
+    configDir: string,
+    seen: { credentialExpiresAt?: Date; extraUsage?: boolean },
+  ) {
+    const r = await row(memberId);
+    if (!r || r.configDir !== configDir || r.state !== "linked") return;
+    const set: Partial<typeof accounts.$inferInsert> = {};
+    if (seen.credentialExpiresAt && seen.credentialExpiresAt.getTime() !== r.credentialExpiresAt?.getTime()) {
+      set.credentialExpiresAt = seen.credentialExpiresAt;
+    }
+    if (seen.extraUsage !== undefined && seen.extraUsage !== r.extraUsage) set.extraUsage = seen.extraUsage;
+    if (Object.keys(set).length === 0) return;
+    await db
+      .update(accounts)
+      .set({ ...set, updatedAt: clock.now() })
+      .where(and(eq(accounts.memberId, memberId), eq(accounts.configDir, configDir)));
+    await publish(memberId);
+    if (set.credentialExpiresAt) await schedule(memberId);
+  }
+
+  /**
+   * Marca no relógio os prazos da validade do Membro: o aviso (3 dias antes) e a passagem para "pode
+   * vencer a qualquer momento". Só os que caem antes da próxima releitura diária; os outros, ela marca.
+   * O aviso que já devia ter saído sai agora.
+   */
+  async function schedule(memberId: string) {
+    for (const cancel of expiryTimers.get(memberId) ?? []) cancel();
+    expiryTimers.delete(memberId);
+    const r = await row(memberId);
+    if (closed || r?.state !== "linked" || !r.configDir) return;
+    const v = validityOf(r, clock.now());
+    if (!v) return;
+    const dir = r.configDir;
+    const now = clock.now().getTime();
+    const warnAt = v.until.getTime() - EXPIRY_WARNING_MS;
+    const timers: (() => void)[] = [];
+    if (!r.expiryWarnedAt) {
+      if (warnAt <= now) void warn(memberId, dir);
+      else if (warnAt - now <= STATUS_CHECK_MS) timers.push(clock.after(warnAt - now, () => void warn(memberId, dir)));
+    }
+    const left = v.until.getTime() - now;
+    if (left >= 0 && left <= STATUS_CHECK_MS) {
+      timers.push(clock.after(left + 1, () => void publish(memberId).catch(() => {})));
+    }
+    if (timers.length) expiryTimers.set(memberId, timers);
+  }
+
+  /** O aviso de vencimento: um só por login (`expiryWarnedAt`), e a "Minha Conta" em destaque. */
+  async function warn(memberId: string, configDir: string) {
+    try {
+      const [warned] = await db
+        .update(accounts)
+        .set({ expiryWarnedAt: clock.now(), updatedAt: clock.now() })
+        .where(
+          and(
+            eq(accounts.memberId, memberId),
+            eq(accounts.configDir, configDir),
+            eq(accounts.state, "linked"),
+            isNull(accounts.expiryWarnedAt),
+          ),
+        )
+        .returning();
+      if (!warned) return;
+      await publish(memberId);
+      const v = validityOf(warned, clock.now());
+      if (v && v.state !== "ok") deps.hooks?.accountExpiring?.(memberId, { until: v.until, state: v.state });
+    } catch (err) {
+      console.error("shearim: o aviso de vencimento da Conta falhou", err);
+    }
+  }
+
+  /**
+   * A releitura diária: o `auth status --json` de cada Conta Ligada (só lê a pasta: sem rede, sem
+   * cota, sem o lock de renovação). Atualiza `loginExpiresAt` e o plano, avisa as abas e marca os
+   * prazos da validade. Um login revogado o status não percebe: isso fica com a execução.
+   */
+  async function checkAll() {
+    const linked = await db
+      .select({ memberId: accounts.memberId, configDir: accounts.configDir })
+      .from(accounts)
+      .where(and(eq(accounts.state, "linked"), isNotNull(accounts.configDir)));
+    for (const { memberId, configDir } of linked) {
+      if (closed) return;
+      try {
+        const status = await authStatus(config.claudeBin, configDir!, cli);
+        if (status) {
+          await db
+            .update(accounts)
+            .set({
+              loginExpiresAt: status.loginExpiresAt,
+              subscriptionType: status.subscriptionType,
+              planTier: status.planTier,
+              updatedAt: clock.now(),
+            })
+            .where(and(eq(accounts.memberId, memberId), eq(accounts.configDir, configDir!)));
+        }
+        await publish(memberId);
+        await schedule(memberId);
+      } catch (err) {
+        console.error("shearim: a releitura da validade da Conta falhou", err);
+      }
+    }
+  }
+
+  /** Liga a releitura diária: uma agora (a subida) e depois a cada 24 h do relógio. */
+  function watch() {
+    const tick = () => {
+      if (closed) return;
+      stopWatch = clock.after(STATUS_CHECK_MS, tick);
+      void checkAll().catch((err) => console.error("shearim: a releitura da validade da Conta falhou", err));
+    };
+    tick();
   }
 
   async function confirmDuplicate(memberId: string): Promise<Result> {
@@ -393,6 +601,7 @@ export function createAccounts(deps: {
       });
       await publish(memberId);
       deps.onChanged?.(memberId);
+      await schedule(memberId);
     }
     return dto(memberId);
   }
@@ -497,13 +706,20 @@ export function createAccounts(deps: {
     /** Encerra a ligação em andamento, se houver (processo morto, pasta nova apagada). Não mexe na Conta ligada. */
     cancel,
     recover,
+    /** A releitura diária do `auth status` e os prazos da validade (a subida chama). */
+    watch,
     markLimited,
     markNeedsRelink,
+    lease,
+    runEnded,
     /** Encerra os processos do `claude` em andamento (testes e parada do servidor). */
     async close() {
       closed = true;
+      stopWatch?.();
       for (const cancel of limitTimers.values()) cancel();
       limitTimers.clear();
+      for (const cancels of expiryTimers.values()) for (const cancel of cancels) cancel();
+      expiryTimers.clear();
       const pending = [...flows.values()];
       flows.clear();
       for (const flow of pending) flow.stopTimer?.();

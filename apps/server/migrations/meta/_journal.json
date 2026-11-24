@@ -134,6 +134,13 @@
       "when": 1795528110415,
       "tag": "0018_orcamento-e-incidentes-da-chave",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1795530010170,
+      "tag": "0019_validade-e-religacao-da-conta",
+      "breakpoints": true
     }
   ]
 }

@@ -61,8 +61,11 @@ export type ModelEvent =
    * `authorReason`, quando o motivo é estado da Conta do autor: só ele o vê; os outros veem `reason`.
    */
   | { type: "failed"; reason: string; retryable: boolean; authorReason?: string }
-  /** Fim com sucesso: uso, custo em dólares e, pela Conta, a validade da credencial. */
-  | { type: "done"; usage: ModelUsage; costUsd: number; credentialExpiresAt?: Date };
+  /**
+   * Fim com sucesso: uso, custo em dólares e, pela Conta, a validade da credencial e, se veio
+   * `rate_limit_event`, se a execução passou do plano com o uso extra ligado (`extraUsage`).
+   */
+  | { type: "done"; usage: ModelUsage; costUsd: number; credentialExpiresAt?: Date; extraUsage?: boolean };
 
 /** O motivo quando o pedido trouxe `output` e a resposta não veio no formato (ADR 0009). */
 export const NOT_STRUCTURED_REASON = "o modelo não devolveu a decisão no formato pedido";

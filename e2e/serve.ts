@@ -16,10 +16,15 @@
  *
  * O roteamento da Articuladora (o pedido com `output_config`) nunca falha: uma mensagem com
  * `[delegar]` é passada aos dois primeiros Agentes do Canal; as outras recebem o Desfecho "nenhum".
+ *
+ * As Contas usam o `fake-claude` (nunca o binário `claude` de verdade): o login aceita
+ * `FAKE_LOGIN_CODE` e entra numa conta cujo login vence daqui a 4 dias (a validade, 3 dias antes,
+ * cai amanhã: "Minha Conta" já abre em destaque, com o selo no menu pessoal).
  */
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { fakeClaude } from "../apps/server/test/fake-claude";
 import {
   type FakeReply,
   lastUserText,
@@ -66,6 +71,10 @@ function desfecho(req: RecordedRequest): FakeReply {
   return { json: { decisao: "nenhum", agentes: [], motivo: "É conversa entre pessoas." } };
 }
 
+const claude = fakeClaude({
+  login: { account: { loginExpiresAt: new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString() } },
+});
+
 const secretsDir = mkdtempSync(join(tmpdir(), "shearim-e2e-secrets-"));
 const masterKeyFile = join(secretsDir, "master_key");
 writeFileSync(masterKeyFile, Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex"), { mode: 0o600 });
@@ -75,6 +84,7 @@ const server = Bun.spawn(["bun", resolve(import.meta.dir, "../apps/server/src/ma
     ...process.env,
     SHEARIM_ANTHROPIC_BASE_URL: anthropic.url,
     SHEARIM_MASTER_KEY_FILE: masterKeyFile,
+    SHEARIM_CLAUDE_BIN: claude.bin,
     // O push service falso dos testes (`support/push-service.ts`) fala HTTPS com este certificado.
     NODE_EXTRA_CA_CERTS: pushServiceCert().certFile,
   },
@@ -89,6 +99,7 @@ async function stop(signal: NodeJS.Signals) {
   await server.exited;
   await anthropic.stop();
   rmSync(secretsDir, { recursive: true, force: true });
+  claude.dispose();
   process.exit(0);
 }
 process.on("SIGTERM", () => stop("SIGTERM"));
@@ -98,5 +109,6 @@ const code = await server.exited;
 if (!stopping) {
   await anthropic.stop();
   rmSync(secretsDir, { recursive: true, force: true });
+  claude.dispose();
   process.exit(code);
 }
