@@ -14,6 +14,7 @@ import type { Identity, IdentityPort } from "./identity/port";
 import { IdentityUnavailableError } from "./identity/whois";
 import { createInstallation, type InstallationConfig } from "./installation/status";
 import { type JoinRequestHooks, joinRequestAdminRoutes, myJoinRequestRoutes, type TailnetUser } from "./join-requests";
+import { createKeyLedger, type KeyHooks } from "./key-budget";
 import { memberAdminRoutes } from "./member-admin";
 import { listMembers, type Member, memberFor } from "./members";
 import { accountBrain } from "./model/account";
@@ -46,8 +47,11 @@ export interface AppDeps {
   keyBrain?: ModelBrain;
   /** Rotas só de desenvolvimento (`/dev/*`), vindas do adaptador de identidade de dev. */
   devRoutes?: Hono;
-  /** Ganchos de domínio (ex.: push aos Admins a cada Pedido de entrada, #34; push da falha ao autor, #32). */
-  hooks?: JoinRequestHooks & ExecutionHooks;
+  /**
+   * Ganchos de domínio (ex.: push aos Admins a cada Pedido de entrada, a cada incidente da Chave e
+   * no estouro de orçamento, #34; push da falha ao autor, #32).
+   */
+  hooks?: JoinRequestHooks & ExecutionHooks & KeyHooks;
   /** O `sub` do VAPID e, nos testes, o agente HTTPS do coletor de push. */
   push: PushConfig;
   /** A versão que está rodando e de onde vem o vencimento da chave do nó (seção Instalação). */
@@ -81,7 +85,8 @@ export function createApp(deps: AppDeps) {
     account: accountBrain({ claudeBin: deps.accounts.claudeBin, procs: runs, stopGrace: deps.accounts.stopGrace }),
   });
   const reading = createReading({ db, clock, events });
-  const executions = createExecutions({ db, clock, events, model, secrets, accounts, hooks, reading });
+  const ledger = createKeyLedger({ db, clock, events, hooks });
+  const executions = createExecutions({ db, clock, events, model, secrets, accounts, hooks, reading, ledger });
   // A Presença avisa o push quando uma conversa fica à vista; o push pergunta a ela antes de mandar.
   const presence = createPresence({ db, events, onOpened: (m, conv) => push.conversationOpened(m, conv) });
   const push = createPush({
@@ -152,7 +157,7 @@ export function createApp(deps: AppDeps) {
   app.route("/api", reading.routes);
   app.route("/api", threadRoutes({ db }));
   app.route("/api", accounts.routes);
-  app.route("/api", agentRoutes({ db, clock }));
+  app.route("/api", agentRoutes({ db, clock, ledger }));
   app.route(
     "/api",
     workspaceKeyRoutes({ db, clock, secrets, onChanged: () => void executions.reconsider().catch(() => {}) }),

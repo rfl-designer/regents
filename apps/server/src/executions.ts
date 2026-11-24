@@ -7,6 +7,7 @@ import type { Clock } from "./clock";
 import { buildContext, type Call } from "./context";
 import { type Db, schema } from "./db/client";
 import { type EventHub, without } from "./events";
+import type { KeyLedger } from "./key-budget";
 import { findMessage } from "./messages";
 import type { ModelEvent, ModelPort, ModelRequest, Payer, TerminalModelEvent } from "./model/port";
 import { outcomeOf, recordOutcome } from "./outcomes";
@@ -77,12 +78,13 @@ export interface ExecutionHooks {
  * utilizável, quem espera a própria Conta fica "⏸ na fila" (`held`), fora da vez, sem segurar os
  * outros, e volta com a hora de chegada de antes.
  *
+ * O gasto na Chave, o orçamento e os incidentes da Chave (#28) ficam no `ledger` (`key-budget.ts`):
+ * `byPayer` avisa cada chamada que a Chave pagou e cada recusa dela; `keyUsableFor` confere o orçamento.
+ *
  * Fica para depois, com o seam indicado:
- * - o orçamento do Agente na Chave (#28): `keyUsableFor`;
  * - ordem por Agente e conversa, paralelismo e tetos (#42): `claim` e o laço em `work`. A
  *   conversa para a ordem é `(channel_id, thread_root_id)`: o fluxo principal e cada Thread
  *   contam como conversas separadas (`seriesOf`);
- * - incidente da Chave em `auth_failed`/`billing_failed` e o gasto por Agente (#28): `settle`;
  * - push da falha ao autor (#32): `hooks.executionFailed`.
  */
 export interface Executions {
@@ -139,8 +141,10 @@ export function createExecutions(deps: {
   hooks?: ExecutionHooks;
   /** A resposta conta como não-lida para quem participa da conversa. */
   reading: Pick<Reading, "messageCreated">;
+  /** O gasto na Chave por Agente e por mês, o orçamento e os incidentes da Chave (#28). */
+  ledger: KeyLedger;
 }): Executions {
-  const { db, clock, events, model, secrets, hooks, reading } = deps;
+  const { db, clock, events, model, secrets, hooks, reading, ledger } = deps;
 
   /**
    * Anuncia o Andamento a quem vê a conversa. O autor recebe a sua cópia, com o que é da Conta
@@ -221,12 +225,15 @@ export function createExecutions(deps: {
   }
 
   /**
-   * "Chave utilizável" (Spec, módulo 6): existe Chave e o Agente tem orçamento. O orçamento é do
-   * #28; por enquanto, só a existência da Chave. Sem ela, o motivo (o de todos, sem a Conta).
+   * "Chave utilizável" (Spec, módulo 6): existe Chave e o Agente tem orçamento no mês (conferido
+   * antes de cada execução pela Chave, inclusive na troca no meio). Sem ela, o motivo (o de todos,
+   * sem a Conta).
    */
-  async function keyUsableFor(_agent: Agent): Promise<{ apiKey: string } | { reason: string }> {
+  async function keyUsableFor(agent: Agent): Promise<{ apiKey: string } | { reason: string }> {
     const apiKey = await readWorkspaceKey(db, secrets);
-    return apiKey ? { apiKey } : { reason: "o Workspace não tem Chave" };
+    if (!apiKey) return { reason: "o Workspace não tem Chave" };
+    const budget = await ledger.usable(agent.id);
+    return budget.ok ? { apiKey } : { reason: budget.reason };
   }
 
   /**
@@ -310,7 +317,14 @@ export function createExecutions(deps: {
         .set({ payer: payer.kind, apiRetryAttempt: null, apiRetryMax: null })
         .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
       await publish(job.id);
-      const result = await complete(job, controller, await build(payer));
+      const request = await build(payer);
+      const result = await complete(job, controller, request);
+      if (result && payer.kind === "key") {
+        const end = result.end;
+        if (end?.type === "done") await ledger.charged(job, { model: request.model, ...end });
+        if (end?.type === "auth_failed" || end?.type === "billing_failed") await ledger.refused(end.type);
+        return result;
+      }
       if (!result || payer.kind !== "account") return result;
       if (result.end?.type === "limit") {
         await deps.accounts.markLimited(payer.memberId, payer.configDir, result.end.resetsAt);

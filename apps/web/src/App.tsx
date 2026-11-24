@@ -19,6 +19,7 @@ import { DmView } from "./DmView";
 import { EntryView } from "./EntryView";
 import { InstallationBanner, InstallationSettings, useInstallation } from "./Installation";
 import { JoinRequestsPanel } from "./JoinRequestsPanel";
+import { KeyBanners } from "./KeyBanners";
 import { setPresence, useServerEvents } from "./live";
 import { MembersSettings } from "./MembersAdmin";
 import { AccountOffer, MyAccount, useAccount } from "./MyAccount";
@@ -270,6 +271,9 @@ export function App() {
         </div>
       </header>
       {state.me.role === "admin" && <JoinRequestsPanel />}
+      {state.me.role === "admin" && (
+        <KeyBanners onOpenKey={() => setView("key")} onOpenAgents={() => setView("agents")} />
+      )}
       {view !== "installation" && (
         <InstallationBanner installation={installation.installation} onOpen={() => setView("installation")} />
       )}
