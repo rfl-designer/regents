@@ -172,7 +172,7 @@ export function conversationRoutes(deps: {
   /** O Andamento do que ainda não virou resposta (na fila, escrevendo, falhou, não agem). */
   async function listExecutions(c: Context<Env>, conversation: ConversationRow | undefined) {
     if (!conversation) return c.json({ error: "not_found" }, 404);
-    return c.json(await executions.openIn(conversation.id));
+    return c.json(await executions.openIn(conversation.id, c.get("member").id));
   }
 
   /** A mensagem `:messageId` da conversa, se quem chama a escreveu (cancelar é só do autor). */

@@ -12,7 +12,21 @@ import { toMeDto } from "./members";
  * participantes e passa `{ members }`; o que é só do autor (estado da Conta)
  * passa `{ members: [autor] }`.
  */
-export type Audience = "everyone" | { members: readonly string[] };
+export type Audience = "everyone" | { members: readonly string[] } | { everyoneBut: readonly string[] };
+
+/** A mesma audiência sem `memberId` (ex.: o autor recebe a sua cópia à parte). */
+export function without(to: Audience, memberId: string): Audience {
+  if (to === "everyone") return { everyoneBut: [memberId] };
+  if ("members" in to) return { members: to.members.filter((m) => m !== memberId) };
+  return { everyoneBut: [...to.everyoneBut, memberId] };
+}
+
+/** Se `memberId` está na audiência. */
+export function reaches(to: Audience, memberId: string): boolean {
+  if (to === "everyone") return true;
+  if ("members" in to) return to.members.includes(memberId);
+  return !to.everyoneBut.includes(memberId);
+}
 
 /** O ponto único por onde o servidor empurra eventos às conexões de WebSocket. */
 export interface EventHub {
@@ -40,8 +54,7 @@ export function createEventHub() {
   const hub: EventHub = {
     publish(to, event) {
       const data = JSON.stringify(event);
-      const members = to === "everyone" ? undefined : new Set(to.members);
-      for (const c of connections.values()) if (!members || members.has(c.memberId)) c.send(data);
+      for (const c of connections.values()) if (reaches(to, c.memberId)) c.send(data);
     },
     ownerOf: (connectionId) => connections.get(connectionId)?.memberId,
     onClose(fn) {

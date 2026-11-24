@@ -110,8 +110,15 @@
     {
       "idx": 15,
       "version": "7",
-      "when": 1795525392480,
-      "tag": "0015_saida-do-membro",
+      "when": 1795525009758,
+      "tag": "0015_quem-paga-e-fila",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1795526930519,
+      "tag": "0016_saida-do-membro",
       "breakpoints": true
     }
   ]

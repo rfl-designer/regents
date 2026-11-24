@@ -1,5 +1,5 @@
 {
-  "id": "e1f17dec-ef54-445a-a7ce-094bb6dff7a7",
+  "id": "4e68511f-a353-4e54-bd99-db830ca5d0aa",
   "prevId": "c847157d-d889-4897-96fa-498502dbb2d3",
   "version": "7",
   "dialect": "postgresql",
@@ -60,6 +60,12 @@
         "config_dir": {
           "name": "config_dir",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "limited_until": {
+          "name": "limited_until",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -605,6 +611,25 @@
           "primaryKey": false,
           "notNull": false
         },
+        "author_reason": {
+          "name": "author_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "held": {
+          "name": "held",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "held_until": {
+          "name": "held_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "arrived_at": {
           "name": "arrived_at",
           "type": "timestamp with time zone",
@@ -932,12 +957,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
-        },
-        "left_at": {
-          "name": "left_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -1856,7 +1875,8 @@
       "schema": "public",
       "values": [
         "not_linked",
-        "linked"
+        "linked",
+        "needs_relink"
       ]
     },
     "public.channel_kind": {

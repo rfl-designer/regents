@@ -278,6 +278,11 @@ export interface MessageDto {
   mentions: MentionDto[];
   /** ISO 8601, UTC. */
   createdAt: string;
+  /**
+   * Só na resposta de Agente paga pela Chave do Workspace: `"key"` ("⚠ pela Chave do Workspace",
+   * que todos veem). Ausente pela Conta do autor e nas mensagens de pessoa.
+   */
+  payer?: "key";
 }
 
 /** Corpo de `POST /api/conversations/:id/messages` (e de `/api/channels/:id/messages`). */
@@ -471,12 +476,34 @@ export interface ExecutionDto {
   payer: "key" | null;
   /**
    * Motivo da falha (em `retrying` e `failed`), de "Agentes não agem" ou do cancelamento que não foi
-   * de quem escreveu (`cancelled`), em pt-BR, para completar a frase "Faro não respondeu: …".
-   * Nulo nos outros estados e no cancelamento por quem escreveu.
+   * de quem escreveu (`cancelled`, ex. "quem escreveu saiu do Workspace"), em pt-BR, para completar
+   * a frase "Faro não respondeu: …". Nulo nos outros estados e no cancelamento por quem escreveu.
+   * Quando o motivo é estado da Conta do autor (ex. "a sua Conta do Claude não pode ser usada
+   * agora"), só a cópia do autor o traz; os outros veem um motivo que não fala da Conta.
    */
   reason: string | null;
+  /**
+   * "⏸ na fila": a execução (em `queued`) espera quem pague por ela (a Conta do autor no limite ou
+   * em "Precisa ligar de novo", sem Chave utilizável). Todos veem; o porquê e a hora da volta só o
+   * autor vê, em `yourAccount`. Não segura as outras mensagens da fila.
+   */
+  held: boolean;
+  /**
+   * Só na cópia do autor da mensagem de origem (os outros recebem nulo): o motivo ligado à Conta
+   * dele, quando ela explica a fila, a Chave pagando ou "Agentes não agem". Nulo quando a Conta
+   * não tem nada a ver com o que se vê.
+   */
+  yourAccount: YourAccountDto | null;
   replyMessageId: string | null;
 }
+
+/**
+ * O estado da Conta do autor que explica o Andamento, só para ele:
+ * - `limited`: no limite até `until` ("⏸ na fila até qui., 15:45", "· sua Conta no limite até 18:00");
+ * - `needs_relink`: "Precisa ligar de novo" ("⏸ na fila até você ligar sua Conta de novo");
+ * - `not_linked`: ele não ligou uma Conta ("Agentes não agem: você não ligou uma Conta e …").
+ */
+export type YourAccountDto = { state: "limited"; until: string } | { state: "needs_relink" } | { state: "not_linked" };
 
 // ---------- Desfecho (ADR 0004) ----------
 
@@ -507,13 +534,16 @@ export interface OutcomeDto {
 
 /**
  * O estado da Conta do Claude do Membro, como "Minha Conta" mostra.
- * Só o próprio Membro vê (nem o Admin). "No limite até" e "Precisa ligar de novo"
- * entram aqui com "Quem paga e fila" (#35).
+ * Só o próprio Membro vê (nem o Admin).
+ * - `limited`: "No limite até HH:MM" (`until`); as mensagens dele saem pela Chave ou esperam na fila.
+ * - `needs_relink`: "Precisa ligar de novo" (o login caiu); ligar de novo é o mesmo fluxo de ligar.
  */
 export type AccountStatusDto =
   | { state: "not_linked" }
   /** `plan` já vem pronto para a tela, ex. "Claude Max". */
-  | { state: "linked"; email: string; plan: string };
+  | { state: "linked"; email: string; plan: string }
+  | { state: "limited"; email: string; plan: string; until: string }
+  | { state: "needs_relink"; email: string; plan: string };
 
 /**
  * O fluxo "Ligar minha Conta do Claude" em andamento, ou o fim dele que a tela ainda mostra.

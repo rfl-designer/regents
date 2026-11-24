@@ -3,7 +3,7 @@ import { asc, eq } from "drizzle-orm";
 import { type Db, schema } from "./db/client";
 import { mentionsOf } from "./mentions";
 
-const { messages, members, agents } = schema;
+const { messages, members, agents, executions } = schema;
 
 /** Leitura das mensagens com o autor (pessoa ou Agente), no formato do contrato. */
 function selectMessages(db: Db) {
@@ -22,10 +22,13 @@ function selectMessages(db: Db) {
       agentId: agents.id,
       agentName: agents.name,
       agentPhoto: agents.photo,
+      // Quem pagou a resposta de Agente (uma execução por resposta).
+      payer: executions.payer,
     })
     .from(messages)
     .leftJoin(members, eq(members.id, messages.authorMemberId))
-    .leftJoin(agents, eq(agents.id, messages.authorAgentId));
+    .leftJoin(agents, eq(agents.id, messages.authorAgentId))
+    .leftJoin(executions, eq(executions.replyMessageId, messages.id));
 }
 
 type Row = Awaited<ReturnType<ReturnType<typeof selectMessages>["where"]>>[number];
@@ -48,6 +51,8 @@ function toDto(r: Row, mentions: Map<string, MessageDto["mentions"]>): MessageDt
     threadRootId: r.threadRootId,
     mentions: mentions.get(r.id) ?? [],
     createdAt: r.createdAt.toISOString(),
+    // "⚠ pela Chave do Workspace" é de todos; pela Conta, nada aparece (a Conta é só do autor).
+    ...(r.payer === "key" ? { payer: "key" as const } : {}),
   };
 }
 
