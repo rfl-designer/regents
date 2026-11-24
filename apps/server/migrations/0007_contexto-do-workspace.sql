@@ -1,0 +1,1 @@
+ALTER TABLE "workspace_settings" ADD COLUMN "context" text DEFAULT '' NOT NULL;

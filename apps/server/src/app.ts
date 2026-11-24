@@ -18,6 +18,7 @@ import { createModelPort } from "./model/port";
 import { noIdentityPage } from "./no-identity-page";
 import { profileRoutes } from "./profile";
 import type { SecretBox } from "./secrets";
+import { workspaceContextRoutes } from "./workspace-context";
 import { workspaceKeyRoutes } from "./workspace-key";
 
 export interface AppDeps {
@@ -106,6 +107,7 @@ export function createApp(deps: AppDeps) {
   app.route("/api", accounts.routes);
   app.route("/api", agentRoutes({ db, clock }));
   app.route("/api", workspaceKeyRoutes({ db, clock, secrets }));
+  app.route("/api", workspaceContextRoutes({ db }));
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
 

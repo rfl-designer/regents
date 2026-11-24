@@ -12,6 +12,7 @@ import { useServerEvents } from "./live";
 import { AccountOffer, MyAccount, useAccount } from "./MyAccount";
 import { ProfileView } from "./ProfileView";
 import { type AdminView, Sidebar } from "./Sidebar";
+import { WorkspaceContextSettings } from "./WorkspaceContext";
 
 type State =
   | { kind: "loading" }
@@ -167,6 +168,8 @@ export function App() {
           <ProfileView key={state.me.id} me={state.me} onSaved={(me) => setMe(() => me)} />
         ) : view === "account" ? (
           <MyAccount state={account} />
+        ) : view === "context" ? (
+          <WorkspaceContextSettings />
         ) : view === "settings" ? (
           <ChannelSettings />
         ) : view === "agents" ? (

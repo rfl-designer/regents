@@ -68,7 +68,7 @@ describe("Menção a um Agente pela Chave", () => {
     expect(chamada!.apiKey).toBe(CHAVE);
     expect(chamada!.body).toMatchObject({ model: "claude-sonnet-5-5", stream: true });
     expect(JSON.stringify(chamada!.body.system)).toContain("Você é o Faro, do comercial. Responda curto.");
-    expect(JSON.stringify(chamada!.body.messages)).toContain("Juliana: Oi @faro, tudo certo?");
+    expect(JSON.stringify(chamada!.body.messages)).toContain("Juliana (pessoa): Oi @faro, tudo certo?");
   });
 
   test("o Andamento aparece pelo WebSocket: na fila, escrevendo e então respondida", async () => {

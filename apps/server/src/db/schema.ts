@@ -160,7 +160,7 @@ export const messages = pgTable(
 
 /**
  * Configuração do Workspace: uma linha só (`id = 1`). A Chave do Workspace fica cifrada com a
- * chave mestra (AES-256-GCM); o Contexto do Workspace (#21) entra aqui também.
+ * chave mestra (AES-256-GCM). O Contexto do Workspace (#21) também mora aqui.
  */
 export const workspaceSettings = pgTable(
   "workspace_settings",
@@ -169,6 +169,8 @@ export const workspaceSettings = pgTable(
     keyCiphertext: text(),
     keyIv: text(),
     keyUpdatedAt: timestamp({ withTimezone: true }),
+    /** Contexto do Workspace: texto curto do Admin que entra em toda execução. */
+    context: text().notNull().default(""),
   },
   (t) => [check("workspace_settings_uma_linha", sql`${t.id} = 1`)],
 );

@@ -309,6 +309,17 @@ export interface SetWorkspaceKeyInput {
   apiKey: string;
 }
 
+/** Tamanho máximo do Contexto do Workspace, em caracteres: ele é curto e entra em toda execução. */
+export const WORKSPACE_CONTEXT_MAX = 4000;
+
+/**
+ * `GET`/`PUT /api/workspace-context` (só Admin): o Contexto do Workspace, um texto curto sobre
+ * quem é o Workspace e como ele fala. Entra no contexto de todo Agente, em todo Canal e DM.
+ */
+export interface WorkspaceContextDto {
+  context: string;
+}
+
 // ---------- Execuções e Andamento ----------
 
 /**
