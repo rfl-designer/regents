@@ -23,6 +23,7 @@ import {
   useState,
 } from "react";
 import { Avatar } from "./Avatar";
+import { agentToolsText } from "./agent-tools";
 import { api } from "./api";
 import { hourMinute, weekdayShort } from "./format";
 import { useServerEvents } from "./live";
@@ -1046,6 +1047,7 @@ function AddAgent({
           <option key={a.id} value={a.id}>
             {a.name}
             {a.description ? ` · ${a.description}` : ""}
+            {` · ${agentToolsText(a)}`}
           </option>
         ))}
       </select>
