@@ -6,8 +6,8 @@
  * (401), `billing_error` (402), outros erros HTTP antes do stream, `event: error` no meio dele,
  * pensamento, `ping` e um stream que fica pendurado até o cliente desistir.
  *
- * Nos testes: `const api = await startFakeMessagesApi()` e `api.reply({...})` para roteirizar a
- * próxima resposta. No e2e: `bun apps/server/test/fakes/messages-api.ts` (ver `e2e/serve.ts`).
+ * Nos testes: `t.anthropic` (ou `fakeMessagesApi()` do arnês) e `api.reply({...})` para roteirizar
+ * a próxima resposta. No e2e, `e2e/serve.ts` sobe este falso ao lado do servidor.
  */
 
 /** O que o falso responde a uma chamada. Sem nada, responde um texto curto. */
@@ -241,21 +241,4 @@ export async function startFakeMessagesApi(
       await server.stop(true);
     },
   };
-}
-
-/**
- * Modo de linha de comando, para o e2e: sobe na porta `FAKE_MESSAGES_API_PORT` (ou livre),
- * imprime a URL e responde cada chamada devagar (`FAKE_MESSAGES_API_DELAY_MS` entre pedaços),
- * para a bolha "escrevendo" ficar à vista.
- */
-if (import.meta.main) {
-  const delayMs = Number(process.env.FAKE_MESSAGES_API_DELAY_MS ?? 300);
-  const api = await startFakeMessagesApi({
-    port: Number(process.env.FAKE_MESSAGES_API_PORT ?? 0),
-    defaultReply: (req) => ({
-      text: `Oi! Sobre "${lastUserText(req.body).slice(0, 60)}": tudo certo por aqui, pode seguir.`,
-      delayMs,
-    }),
-  });
-  console.log(api.url);
 }

@@ -4,6 +4,7 @@
  * O runner sobe o servidor de verdade servindo o build do PWA (`bun run build` antes),
  * com a identidade de dev e um PGlite em memória: cada execução começa de uma
  * Instalação vazia, e a primeira pessoa a abrir (a "Pessoa Dev") vira Admin.
+ * `serve.ts` põe os dublês nas pontas: a Messages API falsa no lugar da Anthropic.
  */
 import { web } from "@e2e-dev/web";
 import type { E2EConfig } from "e2e";
@@ -18,7 +19,7 @@ export default {
         readyUrl: "http://127.0.0.1:{port}/api/health",
         command: {
           executable: "bun",
-          args: ["../apps/server/src/main.ts", "serve"],
+          args: ["serve.ts"],
           env: {
             SHEARIM_IDENTITY: "dev",
             HOST: "127.0.0.1",
