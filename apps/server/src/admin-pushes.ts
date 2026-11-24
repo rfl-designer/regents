@@ -6,14 +6,11 @@ import {
   MEMBERS_PATH,
   WORKSPACE_KEY_PATH,
 } from "@shearim/contracts";
-import { and, eq } from "drizzle-orm";
-import { type Db, schema } from "./db/client";
+import type { Db } from "./db/client";
 import type { JoinRequestHooks } from "./join-requests";
 import type { KeyHooks } from "./key-budget";
-import { isActive } from "./members";
+import { activeAdminIds } from "./members";
 import type { Push } from "./push";
-
-const { members } = schema;
 
 /**
  * Os pushes do Admin (Spec, módulo 12, "Gatilhos"): a cada Pedido de entrada (história 20), um por
@@ -26,11 +23,7 @@ export function adminPushes(deps: { db: Db; notify: Push["notify"] }): JoinReque
   const { db, notify } = deps;
 
   async function toAdmins(n: Parameters<Push["notify"]>[1]) {
-    const admins = await db
-      .select({ id: members.id })
-      .from(members)
-      .where(and(isActive, eq(members.role, "admin")));
-    for (const { id } of admins) notify(id, n);
+    for (const id of await activeAdminIds(db)) notify(id, n);
   }
 
   /** O aviso já saiu da transação que o pediu: uma falha aqui vai para o log, nunca desfaz nada. */

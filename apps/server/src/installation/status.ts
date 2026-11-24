@@ -7,19 +7,17 @@ import {
   NODE_KEY_WARNING_DAYS,
   type NodeKeyDto,
 } from "@shearim/contracts";
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
 import type { EventHub } from "../events";
-import { isActive, type Member } from "../members";
+import { activeAdminIds, type Env } from "../members";
 import type { Push } from "../push";
 import { migrationState } from "./migrations";
 import { type NodeKeyPort, noNodeKey } from "./node-key";
 
-type Env = { Variables: { member: Member } };
-
-const { backups, installation, installationAlerts, members } = schema;
+const { backups, installation, installationAlerts } = schema;
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -111,12 +109,7 @@ export function createInstallation(deps: {
   }
 
   async function admins() {
-    return (
-      await db
-        .select({ id: members.id })
-        .from(members)
-        .where(and(isActive, eq(members.role, "admin")))
-    ).map((m) => m.id);
+    return activeAdminIds(db);
   }
 
   /** Marca o aviso como enviado; `true` só na primeira vez. */

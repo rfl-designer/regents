@@ -1,11 +1,8 @@
 import type { FollowedThreadDto, MentionDto } from "@shearim/contracts";
 import { and, asc, eq, isNotNull } from "drizzle-orm";
 import { Hono } from "hono";
-import { type Db, schema } from "./db/client";
-import type { Member } from "./members";
-
-type Env = { Variables: { member: Member } };
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+import { type Db, schema, type Tx } from "./db/client";
+import type { Env } from "./members";
 
 const { messages, messageMentions, threadFollows } = schema;
 

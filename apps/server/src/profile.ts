@@ -3,10 +3,8 @@ import { Hono } from "hono";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
-import { type Member, memberById, toMeDto, toMemberDto } from "./members";
+import { type Env, type Member, memberById, toMeDto, toMemberDto } from "./members";
 import { changeHandle, HANDLE_MAX, parseHandle } from "./mention-handles";
-
-type Env = { Variables: { member: Member } };
 
 const NAME_MAX = 80;
 const ABOUT_MAX = 500;

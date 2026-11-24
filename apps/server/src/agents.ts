@@ -9,12 +9,11 @@ import { and, asc, desc, eq, getTableColumns, ne, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { withBuiltinText } from "./articuladora";
 import type { Clock } from "./clock";
-import { type Db, schema } from "./db/client";
+import { type Db, isUuid, schema } from "./db/client";
 import { budgetOf, type KeyLedger, keySpend, monthOf, parseBudget } from "./key-budget";
-import type { Member } from "./members";
+import type { Env } from "./members";
 import { claimHandle, handleBase } from "./mention-handles";
 
-type Env = { Variables: { member: Member } };
 export type Agent = typeof schema.agents.$inferSelect;
 /** O Agente com o identificador de Menção dele (`mention_handles`). */
 export type AgentWithHandle = Agent & { handle: string };
@@ -26,7 +25,6 @@ const NAME_MAX = 40;
 const PHOTO = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 const PHOTO_MAX = 400_000;
 const BUDGET_INVALID = "O orçamento mensal é um valor em dólares, zero ou mais (vazio: sem teto).";
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Agentes: o Admin cria; todo Membro vê o nome, a foto, a descrição e o modelo. */
 export function agentRoutes(deps: {
@@ -103,7 +101,7 @@ export function agentRoutes(deps: {
   routes.patch("/agents/:id", async (c) => {
     if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
     const id = c.req.param("id");
-    const [current] = UUID.test(id) ? await db.select().from(agents).where(eq(agents.id, id)) : [];
+    const [current] = isUuid(id) ? await db.select().from(agents).where(eq(agents.id, id)) : [];
     if (!current) return c.json({ error: "not_found" }, 404);
     const input = ((await c.req.json().catch(() => null)) ?? {}) as Partial<Record<keyof UpdateAgentInput, unknown>>;
     const invalid = (message: string) => c.json({ error: "invalid_input", message }, 400);

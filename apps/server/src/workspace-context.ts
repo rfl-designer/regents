@@ -2,9 +2,7 @@ import { WORKSPACE_CONTEXT_MAX, type WorkspaceContextDto } from "@shearim/contra
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { type Db, schema } from "./db/client";
-import type { Member } from "./members";
-
-type Env = { Variables: { member: Member } };
+import type { Env } from "./members";
 
 const { workspaceSettings } = schema;
 

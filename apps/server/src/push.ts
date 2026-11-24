@@ -14,16 +14,13 @@ import {
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "./clock";
-import { type Db, schema } from "./db/client";
+import { type Db, isUuid, schema } from "./db/client";
 import type { EventHub } from "./events";
-import type { TailnetUser } from "./join-requests";
-import { isActive, type Member } from "./members";
+import { type Env, isActive } from "./members";
 import { type Conversation, participantsOf } from "./participation";
 import type { Presence } from "./presence";
 import { generateVapidKeys, type OutgoingPush, type VapidKeys, webPushSender } from "./push-sender";
 import { followersOf } from "./threads";
-
-type Env = { Variables: { who: TailnetUser; member: Member } };
 
 const { vapidKeys, devices, pushSubscriptions, pushStreaks, channels, messages, members } = schema;
 
@@ -223,7 +220,14 @@ export function createPush(deps: {
           others: () => othersThan(recipientId, authorId),
           everyoneElse: () => othersThan(recipientId),
         });
-        await deliverToConversation(recipientId, conversation.id, notification, urgency);
+        // O push de uma conversa tem `tag` e `Topic` dela: substitui o anterior.
+        await deliverNotice(recipientId, {
+          ...notification,
+          path: conversationPath(conversation.id),
+          tag: conversation.id,
+          topic: conversation.id.replaceAll("-", ""),
+          urgency,
+        });
       }
     });
   }
@@ -247,34 +251,6 @@ export function createPush(deps: {
     return rows.flatMap((r) => (r.memberId ? [r.memberId] : []));
   }
 
-  /** O push de uma conversa, com `tag` e `Topic` dela (substitui o anterior). */
-  async function deliverToConversation(
-    memberId: string,
-    conversationId: string,
-    notification: { title: string; body: string },
-    urgency: Urgency,
-  ) {
-    const subscriptions = await db
-      .select({ origin: pushSubscriptions.origin })
-      .from(pushSubscriptions)
-      .where(eq(pushSubscriptions.memberId, memberId))
-      .limit(1);
-    if (subscriptions.length === 0) return;
-    const badge = await badgeOf(memberId);
-    // Um `navigate` por aparelho seria o certo se o PWA tivesse duas origens; tem uma só.
-    const navigate = new URL(conversationPath(conversationId), subscriptions[0]!.origin).href;
-    await deliver(memberId, {
-      payload: {
-        web_push: 8030,
-        notification: { ...notification, navigate, tag: conversationId, lang: "pt-BR" },
-        app_badge: badge,
-      },
-      ttl: PUSH_TTL_SECONDS,
-      urgency,
-      topic: conversationId.replaceAll("-", ""),
-    });
-  }
-
   /**
    * Um push que não é de conversa (os do Admin e os da Conta): leva a `path` do PWA, com `tag` e
    * `Topic` próprios (o novo substitui o anterior do mesmo assunto). `icon` troca o ícone do app
@@ -284,6 +260,10 @@ export function createPush(deps: {
     enqueue(() => deliverNotice(memberId, n));
   }
 
+  /**
+   * Monta e manda o push no formato do Declarative Web Push (8030), com o badge do Membro, a quem
+   * tem push ligado. Sem `topic`, o `Topic` vem da `tag`.
+   */
   async function deliverNotice(memberId: string, n: Notice & { topic?: string }) {
     const [subscription] = await db
       .select({ origin: pushSubscriptions.origin })
@@ -297,6 +277,7 @@ export function createPush(deps: {
         notification: {
           title: n.title,
           body: n.body,
+          // Um `navigate` por aparelho seria o certo se o PWA tivesse duas origens; tem uma só.
           navigate: new URL(n.path, subscription.origin).href,
           tag: n.tag,
           lang: "pt-BR",
@@ -358,7 +339,7 @@ export function createPush(deps: {
   routes.delete("/devices/:deviceId", async (c) => {
     const me = c.get("member");
     const deviceId = c.req.param("deviceId");
-    if (!UUID.test(deviceId)) return c.json({ error: "not_found" }, 404);
+    if (!isUuid(deviceId)) return c.json({ error: "not_found" }, 404);
     const removed = await db.transaction(async (tx) => {
       await tx
         .delete(pushSubscriptions)
@@ -379,7 +360,7 @@ export function createPush(deps: {
   routes.put("/push/subscriptions/:deviceId", async (c) => {
     const me = c.get("member");
     const deviceId = c.req.param("deviceId");
-    if (!UUID.test(deviceId)) return c.json({ error: "invalid_input", message: "Aparelho inválido." }, 400);
+    if (!isUuid(deviceId)) return c.json({ error: "invalid_input", message: "Aparelho inválido." }, 400);
     const input = (await c.req.json().catch(() => null)) as Partial<PushSubscriptionInput> | null;
     const endpoint = typeof input?.endpoint === "string" ? input.endpoint : "";
     const { p256dh, auth } = input?.keys ?? {};
@@ -471,8 +452,6 @@ function excerpt(body: string) {
   const flat = body.replace(/\s+/g, " ").trim();
   return flat.length <= EXCERPT_MAX ? flat : `${flat.slice(0, EXCERPT_MAX - 1).trimEnd()}…`;
 }
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isHttps(url: string) {
   try {

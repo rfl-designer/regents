@@ -3,9 +3,7 @@ import { Hono } from "hono";
 import { findVisibleConversation } from "./conversations";
 import type { Db } from "./db/client";
 import type { EventHub } from "./events";
-import type { Member } from "./members";
-
-type Env = { Variables: { member: Member } };
+import type { Env } from "./members";
 
 /**
  * Presença (Spec, módulo 11): por Membro e conexão (uma aba ou um PWA, num aparelho), qual

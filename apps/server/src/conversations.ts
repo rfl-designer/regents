@@ -15,10 +15,10 @@ import { type Context, Hono } from "hono";
 import type { Agent } from "./agents";
 import { addArticuladora } from "./articuladora";
 import type { Clock } from "./clock";
-import { type Db, schema } from "./db/client";
+import { type Db, isUuid, schema, type Tx } from "./db/client";
 import type { EventHub } from "./events";
 import type { ExecutionKind, Executions } from "./executions";
-import { isActive, type Member } from "./members";
+import { type Env, isActive, type Member } from "./members";
 import { recordMentions } from "./mentions";
 import { listMessages as listConversationMessages } from "./messages";
 import { outcomesIn } from "./outcomes";
@@ -27,8 +27,6 @@ import type { Push } from "./push";
 import type { Reading } from "./reading";
 import { recordFollows } from "./threads";
 
-type Env = { Variables: { member: Member } };
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 /** Uma linha de `channels`: um Canal ou uma DM. */
 export type ConversationRow = typeof schema.channels.$inferSelect;
 export type Channel = ConversationRow & { kind: ChannelKind; name: string };
@@ -140,7 +138,7 @@ export function conversationRoutes(deps: {
     const channel = await findVisibleChannel(db, c.get("member"), c.req.param("id"));
     if (!channel) return c.json({ error: "not_found" }, 404);
     const input = (await c.req.json().catch(() => null)) as Partial<AddParticipantInput> | null;
-    const memberId = typeof input?.memberId === "string" && UUID.test(input.memberId) ? input.memberId : undefined;
+    const memberId = typeof input?.memberId === "string" && isUuid(input.memberId) ? input.memberId : undefined;
     const [person] = memberId
       ? await db
           .select({ id: members.id })
@@ -158,7 +156,7 @@ export function conversationRoutes(deps: {
     const channel = await findVisibleChannel(db, c.get("member"), c.req.param("id"));
     if (!channel) return c.json({ error: "not_found" }, 404);
     const input = (await c.req.json().catch(() => null)) as Partial<AddAgentInput> | null;
-    const agentId = typeof input?.agentId === "string" && UUID.test(input.agentId) ? input.agentId : undefined;
+    const agentId = typeof input?.agentId === "string" && isUuid(input.agentId) ? input.agentId : undefined;
     const [agent] = agentId ? await db.select({ id: agents.id }).from(agents).where(eq(agents.id, agentId)) : [];
     if (!agent) return c.json({ error: "invalid_input", message: "Esse Agente não existe no Workspace." }, 400);
 
@@ -182,7 +180,7 @@ export function conversationRoutes(deps: {
     const notFound = c.json({ error: "not_found" }, 404);
     if (!conversation) return notFound;
     const id = c.req.param("messageId") ?? "";
-    if (!UUID.test(id)) return notFound;
+    if (!isUuid(id)) return notFound;
     const [message] = await db
       .select({ id: messages.id, authorMemberId: messages.authorMemberId })
       .from(messages)
@@ -281,7 +279,7 @@ export function conversationRoutes(deps: {
   routes.post("/conversations/:id/executions/:executionId/retry", async (c) => {
     const conversation = await visibleConversation(c);
     const id = c.req.param("executionId");
-    if (!conversation || !UUID.test(id)) return c.json({ error: "not_found" }, 404);
+    if (!conversation || !isUuid(id)) return c.json({ error: "not_found" }, 404);
     const [execution] = await db
       .select({ id: schema.executions.id, authorMemberId: messages.authorMemberId })
       .from(schema.executions)
@@ -387,7 +385,7 @@ async function whoActs(
 
 /** Uma Thread pendura numa mensagem do fluxo principal da mesma conversa (não há Thread dentro de Thread). */
 async function isThreadRoot(db: Db, conversationId: string, id: unknown) {
-  if (typeof id !== "string" || !UUID.test(id)) return false;
+  if (typeof id !== "string" || !isUuid(id)) return false;
   const [root] = await db
     .select({ id: messages.id })
     .from(messages)
@@ -420,14 +418,8 @@ export async function toChannelDto(db: Db, channel: Channel) {
   return channelDto(channel, (await participantsOf(db, [channel.id])).get(channel.id) ?? []);
 }
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-export function isUuid(id: string) {
-  return UUID.test(id);
-}
-
 async function findConversation(db: Db, id: string): Promise<ConversationRow | undefined> {
-  if (!UUID.test(id)) return undefined;
+  if (!isUuid(id)) return undefined;
   const [row] = await db.select().from(channels).where(eq(channels.id, id));
   return row;
 }

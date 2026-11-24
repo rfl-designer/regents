@@ -6,7 +6,7 @@ import type { Agent } from "./agents";
 import { ROUTING_MODEL } from "./articuladora";
 import type { Clock } from "./clock";
 import { buildContext, type Call } from "./context";
-import { type Db, schema } from "./db/client";
+import { type Db, schema, type Tx } from "./db/client";
 import { type EventHub, reaches, without } from "./events";
 import { type KeyLedger, monthOf } from "./key-budget";
 import { recordMentions } from "./mentions";
@@ -81,7 +81,6 @@ const RESTART_REASON = "o servidor reiniciou";
 
 /** Por que uma execução em andamento foi interrompida (o `reason` do `AbortSignal`). */
 type Interruption = "stalled" | "cancelled" | "shutdown";
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 /** Os estados em que a execução ainda não terminou: o autor pode cancelar. */
 const OPEN_STATES: ExecutionState[] = ["queued", "running", "retrying"];
 

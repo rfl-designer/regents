@@ -1,11 +1,11 @@
 import type { ApproveJoinRequestDto, JoinRequestAdminDto, JoinRequestDto, MyJoinRequestDto } from "@shearim/contracts";
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "./clock";
-import { type Db, schema } from "./db/client";
+import { type Db, isUuid, schema, type Tx } from "./db/client";
 import type { Audience, EventHub } from "./events";
 import type { Identity } from "./identity/port";
-import { createMember, type Member, memberById, toMeDto } from "./members";
+import { activeAdminIds, createMember, type Member, memberById, toMeDto } from "./members";
 
 export type TailnetUser = Extract<Identity, { kind: "user" }>;
 type JoinRequest = typeof schema.joinRequests.$inferSelect;
@@ -169,17 +169,14 @@ export function joinRequestAdminRoutes(deps: JoinRequestDeps) {
   return routes;
 }
 
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Pending =
   | { kind: "pending"; row: JoinRequest }
   | { kind: "not_found" }
   | { kind: "already_decided"; row: JoinRequest };
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /** Trava o pedido para decidir: dois Admins clicando juntos não decidem duas vezes. */
 async function pendingForUpdate(tx: Tx, id: string): Promise<Pending> {
-  if (!UUID.test(id)) return { kind: "not_found" };
+  if (!isUuid(id)) return { kind: "not_found" };
   const [row] = await tx.select().from(joinRequests).where(eq(joinRequests.id, id)).for("update");
   if (!row) return { kind: "not_found" };
   return row.status === "pending" ? { kind: "pending", row } : { kind: "already_decided", row };
@@ -240,11 +237,7 @@ async function comeBack(tx: Tx, tailnetUserId: string): Promise<Member | undefin
 
 /** Pedidos de entrada são assunto só dos Admins. */
 async function adminAudience(db: Db): Promise<Audience> {
-  const admins = await db
-    .select({ id: members.id })
-    .from(members)
-    .where(and(eq(members.role, "admin"), isNull(members.leftAt)));
-  return { members: admins.map((a) => a.id) };
+  return { members: await activeAdminIds(db) };
 }
 
 async function latestOf(db: Db, tailnetUserId: string) {

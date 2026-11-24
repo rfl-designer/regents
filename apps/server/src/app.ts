@@ -15,10 +15,10 @@ import { createExecutions, type ExecutionHooks, type ExecutionLimits } from "./e
 import type { Identity, IdentityPort } from "./identity/port";
 import { IdentityUnavailableError } from "./identity/whois";
 import { createInstallation, type InstallationConfig } from "./installation/status";
-import { type JoinRequestHooks, joinRequestAdminRoutes, myJoinRequestRoutes, type TailnetUser } from "./join-requests";
+import { type JoinRequestHooks, joinRequestAdminRoutes, myJoinRequestRoutes } from "./join-requests";
 import { createKeyLedger, type KeyHooks } from "./key-budget";
 import { memberAdminRoutes } from "./member-admin";
-import { listMembers, type Member, memberFor } from "./members";
+import { type Env, listMembers, memberFor } from "./members";
 import { accountBrain } from "./model/account";
 import { keyBrain } from "./model/key";
 import { createModelPort, type ModelBrain } from "./model/port";
@@ -61,8 +61,6 @@ export interface AppDeps {
   /** Os tetos de concorrência das execuções (padrão: 2 por Conta, 4 na Chave, 8 processos). */
   limits?: Partial<ExecutionLimits>;
 }
-
-type Env = { Variables: { who: TailnetUser; member: Member } };
 
 export type AppHooks = JoinRequestHooks & ExecutionHooks & KeyHooks & AccountHooks;
 

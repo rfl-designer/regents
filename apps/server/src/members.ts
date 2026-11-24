@@ -1,16 +1,16 @@
 import type { MeDto, MemberSummaryDto } from "@shearim/contracts";
-import { asc, eq, getTableColumns, isNull, type SQL, sql } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, isNull, type SQL, sql } from "drizzle-orm";
 import { addArticuladora } from "./articuladora";
 import type { Clock } from "./clock";
-import { type Db, schema } from "./db/client";
+import { type Db, schema, type Tx } from "./db/client";
 import type { Identity } from "./identity/port";
+import type { TailnetUser } from "./join-requests";
 import { claimHandle, handleBase } from "./mention-handles";
 import { addParticipants } from "./participation";
 
 /** O Membro com o identificador de Menção dele (que mora no espaço de nomes compartilhado). */
 export type Member = typeof schema.members.$inferSelect & { handle: string };
 
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Executor = Db | Tx;
 
 const { members, mentionHandles } = schema;
@@ -29,6 +29,20 @@ export function selectMembers(db: Executor, where?: SQL) {
 
 /** Quem ainda é Membro: o removido ("saiu do Workspace") fica de fora até voltar. */
 export const isActive = isNull(members.leftAt);
+
+/** Admin que ainda é Membro. */
+export const isActiveAdmin = and(isActive, eq(members.role, "admin"))!;
+
+/** Os ids dos Admins ativos: a quem vão os eventos e os pushes de Admin. */
+export async function activeAdminIds(db: Executor): Promise<string[]> {
+  return (await db.select({ id: members.id }).from(members).where(isActiveAdmin)).map((m) => m.id);
+}
+
+/**
+ * O ambiente das rotas: quem a tailnet diz que é (`who`) e, depois do filtro de Membro, o Membro
+ * (`member`).
+ */
+export type Env = { Variables: { who: TailnetUser; member: Member } };
 
 /** Um Membro pelo id (inclusive quem saiu do Workspace: as mensagens continuam dele). */
 export async function memberById(db: Executor, id: string): Promise<Member | undefined> {

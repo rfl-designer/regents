@@ -4,20 +4,16 @@ import { Hono } from "hono";
 import type { createAccounts } from "./accounts";
 import type { Clock } from "./clock";
 import { type Channel, toChannelDto } from "./conversations";
-import { type Db, schema } from "./db/client";
+import { type Db, isUuid, schema, type Tx } from "./db/client";
 import { type Dm, toDmDto } from "./dms";
 import type { EventHub } from "./events";
 import type { Executions } from "./executions";
-import { isActive, type Member, memberById, toMemberDto } from "./members";
+import { type Env, isActiveAdmin, memberById, toMemberDto } from "./members";
 import { audienceOf } from "./participation";
 import type { Push } from "./push";
 
-type Env = { Variables: { member: Member } };
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
-
 const { members, channels, channelParticipants, threadFollows } = schema;
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ROLES: readonly MemberRole[] = ["admin", "member"];
 
 /** O motivo à vista de todos, nas execuções de quem foi removido ("Faro não respondeu: …"). */
@@ -151,11 +147,8 @@ async function lockAdmins(tx: Tx, actorId: string, targetId: string) {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext('shearim:admins'))`);
   const actor = await memberById(tx, actorId);
   if (!actor || actor.leftAt || actor.role !== "admin") return { kind: "not_admin" as const };
-  const target = UUID.test(targetId) ? await memberById(tx, targetId) : undefined;
+  const target = isUuid(targetId) ? await memberById(tx, targetId) : undefined;
   if (!target || target.leftAt) return { kind: "not_found" as const };
-  const [row] = await tx
-    .select({ n: count() })
-    .from(members)
-    .where(and(isActive, eq(members.role, "admin")));
+  const [row] = await tx.select({ n: count() }).from(members).where(isActiveAdmin);
   return { kind: "ok" as const, target, admins: row?.n ?? 0 };
 }

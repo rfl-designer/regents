@@ -9,12 +9,10 @@ import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { type Context, Hono } from "hono";
 import type { Clock } from "./clock";
-import { findVisibleConversation, isUuid } from "./conversations";
-import { type Db, schema } from "./db/client";
+import { findVisibleConversation } from "./conversations";
+import { type Db, isUuid, schema } from "./db/client";
 import type { EventHub } from "./events";
-import type { Member } from "./members";
-
-type Env = { Variables: { member: Member } };
+import type { Env } from "./members";
 
 const { messages, messageReads, messageMentions, channelParticipants, channels, threadFollows } = schema;
 const origins = alias(messages, "origins");

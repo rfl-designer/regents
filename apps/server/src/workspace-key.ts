@@ -4,10 +4,8 @@ import { Hono } from "hono";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import { openIncident } from "./key-budget";
-import type { Member } from "./members";
+import type { Env } from "./members";
 import type { SecretBox } from "./secrets";
-
-type Env = { Variables: { member: Member } };
 
 const { workspaceSettings } = schema;
 

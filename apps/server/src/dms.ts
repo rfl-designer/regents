@@ -2,13 +2,12 @@ import { DM_KINDS, type DmDto, type DmKind, type OpenDmInput } from "@shearim/co
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "./clock";
-import { type ConversationRow, isUuid } from "./conversations";
-import { type Db, schema } from "./db/client";
+import type { ConversationRow } from "./conversations";
+import { type Db, isUuid, schema } from "./db/client";
 import type { EventHub } from "./events";
-import { isActive, type Member } from "./members";
+import { type Env, isActive } from "./members";
 import { addAgent, addParticipants, audienceOf, participantsOf } from "./participation";
 
-type Env = { Variables: { member: Member } };
 export type Dm = ConversationRow & { kind: DmKind };
 
 const { channels, channelParticipants, channelAgents, members, agents } = schema;

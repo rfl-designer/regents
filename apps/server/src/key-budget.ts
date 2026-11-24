@@ -3,11 +3,11 @@ import { and, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";
 import type { EventHub } from "./events";
-import { isActive } from "./members";
+import { activeAdminIds } from "./members";
 import type { ModelUsage } from "./model/port";
 import { hasWorkspaceKey } from "./workspace-key";
 
-const { agents, budgetOverruns, executionUsage, members, keyIncidents } = schema;
+const { agents, budgetOverruns, executionUsage, keyIncidents } = schema;
 
 /** O mês do gasto (`YYYY-MM`), em UTC: o orçamento recomeça à 0h UTC do dia 1. */
 export const monthOf = (at: Date) => at.toISOString().slice(0, 7);
@@ -98,11 +98,7 @@ export function createKeyLedger(deps: { db: Db; clock: Clock; events: EventHub; 
   const { db, clock, events, hooks } = deps;
 
   async function adminAudience() {
-    const admins = await db
-      .select({ id: members.id })
-      .from(members)
-      .where(and(eq(members.role, "admin"), isActive));
-    return { members: admins.map((a) => a.id) };
+    return { members: await activeAdminIds(db) };
   }
 
   /** O orçamento de um Agente agora, como o Admin o vê (o teto relido: o Admin pode tê-lo mudado). */

@@ -33,10 +33,10 @@ import type {
 import { and, eq, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
-import { type Db, schema } from "../db/client";
+import { type Db, isUuid, schema } from "../db/client";
 import type { EventHub } from "../events";
 import { keyCoverage } from "../key-budget";
-import type { Member } from "../members";
+import type { Env } from "../members";
 import {
   type AuthStatus,
   authLogout,
@@ -65,9 +65,6 @@ export interface AccountsConfig {
 const REFRESH_LOCK = ".oauth_refresh.lock";
 /** O próprio Claude Code considera o lock velho depois de 60 s sem atualização. */
 const STALE_LOCK_MS = 60_000;
-/** As pastas de Conta são `<raiz>/<id do Membro>/<uuid do login>`; o resto da raiz não é nosso. */
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 const DAY_MS = 24 * 60 * 60_000;
 /** O fim real do login pode chegar até 3 dias antes de `loginExpiresAt` (ADR 0005). */
 const LOGIN_END_MARGIN_MS = 3 * DAY_MS;
@@ -139,7 +136,6 @@ interface Flow {
   status?: AuthStatus;
 }
 
-type Env = { Variables: { member: Member } };
 type AccountRow = typeof schema.accounts.$inferSelect;
 
 /**
@@ -668,7 +664,8 @@ export function createAccounts(deps: {
     for (const flow of flows.values()) inUse.add(resolve(flow.dir));
     const dirs = async (path: string) =>
       (await readdir(path, { withFileTypes: true }).catch(() => [])).filter(
-        (e) => e.isDirectory() && UUID.test(e.name),
+        // As pastas de Conta são `<raiz>/<id do Membro>/<uuid do login>`; o resto da raiz não é nosso.
+        (e) => e.isDirectory() && isUuid(e.name),
       );
     for (const member of await dirs(config.root)) {
       for (const login of await dirs(join(config.root, member.name))) {

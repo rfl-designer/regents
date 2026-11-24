@@ -1,10 +1,9 @@
 import { type MentionDto, mentionPattern, normalizeHandle } from "@shearim/contracts";
 import { asc, inArray } from "drizzle-orm";
-import { type Db, schema } from "./db/client";
+import { type Db, schema, type Tx } from "./db/client";
 import { type HandleOwner, resolveHandles } from "./mention-handles";
 import { type Conversation, canSee } from "./participation";
 
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Executor = Db | Tx;
 
 const { messageMentions } = schema;
