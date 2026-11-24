@@ -1,5 +1,5 @@
 {
-  "id": "3f79d02f-66ea-4e79-a242-d7f9e33dbd96",
+  "id": "d3fdf09e-b7c8-4b33-aa3d-ea9417ecaa9f",
   "prevId": "2800402e-66e8-47c3-a637-0a6511f4e4b1",
   "version": "7",
   "dialect": "postgresql",
@@ -47,6 +47,12 @@
         },
         "login_expires_at": {
           "name": "login_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "credential_expires_at": {
+          "name": "credential_expires_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -524,12 +530,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "thread_root_id": {
-          "name": "thread_root_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "agent_id": {
           "name": "agent_id",
           "type": "uuid",
@@ -688,19 +688,6 @@
           "tableTo": "messages",
           "columnsFrom": [
             "origin_message_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "executions_thread_root_id_messages_id_fk": {
-          "name": "executions_thread_root_id_messages_id_fk",
-          "tableFrom": "executions",
-          "tableTo": "messages",
-          "columnsFrom": [
-            "thread_root_id"
           ],
           "columnsTo": [
             "id"
@@ -1262,12 +1249,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "thread_root_id": {
-          "name": "thread_root_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "body": {
           "name": "body",
           "type": "text",
@@ -1287,27 +1268,6 @@
           "columns": [
             {
               "expression": "channel_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "seq",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "messages_thread_root_id_seq_index": {
-          "name": "messages_thread_root_id_seq_index",
-          "columns": [
-            {
-              "expression": "thread_root_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1371,19 +1331,6 @@
           "tableTo": "messages",
           "columnsFrom": [
             "origin_message_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "messages_thread_root_id_messages_id_fk": {
-          "name": "messages_thread_root_id_messages_id_fk",
-          "tableFrom": "messages",
-          "tableTo": "messages",
-          "columnsFrom": [
-            "thread_root_id"
           ],
           "columnsTo": [
             "id"
@@ -1639,107 +1586,6 @@
           ]
         }
       },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.thread_follows": {
-      "name": "thread_follows",
-      "schema": "",
-      "columns": {
-        "member_id": {
-          "name": "member_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "root_message_id": {
-          "name": "root_message_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "conversation_id": {
-          "name": "conversation_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "since": {
-          "name": "since",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "thread_follows_root_message_id_index": {
-          "name": "thread_follows_root_message_id_index",
-          "columns": [
-            {
-              "expression": "root_message_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "thread_follows_member_id_members_id_fk": {
-          "name": "thread_follows_member_id_members_id_fk",
-          "tableFrom": "thread_follows",
-          "tableTo": "members",
-          "columnsFrom": [
-            "member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "thread_follows_root_message_id_messages_id_fk": {
-          "name": "thread_follows_root_message_id_messages_id_fk",
-          "tableFrom": "thread_follows",
-          "tableTo": "messages",
-          "columnsFrom": [
-            "root_message_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "thread_follows_conversation_id_channels_id_fk": {
-          "name": "thread_follows_conversation_id_channels_id_fk",
-          "tableFrom": "thread_follows",
-          "tableTo": "channels",
-          "columnsFrom": [
-            "conversation_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "thread_follows_member_id_root_message_id_pk": {
-          "name": "thread_follows_member_id_root_message_id_pk",
-          "columns": [
-            "member_id",
-            "root_message_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

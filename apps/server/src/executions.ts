@@ -15,7 +15,7 @@ import { buildRouting, parseDecision, ROUTING_SCHEMA } from "./routing";
 import type { SecretBox } from "./secrets";
 import { readWorkspaceKey } from "./workspace-key";
 
-const { executions, agents, channels, messages } = schema;
+const { executions, agents, channels, messages, accounts } = schema;
 type Row = typeof executions.$inferSelect;
 /**
  * O tipo de uma execução: `mention` (Agente mencionado), `dm` (o Agente de uma DM com Agente),
@@ -64,7 +64,8 @@ export interface ExecutionHooks {
  * "o servidor reiniciou" e segue a nova tentativa.
  *
  * Fica para depois, com o seam indicado:
- * - quem paga (Conta do autor, fila "até HH:MM", orçamento) (#27): `choosePayer`;
+ * - quem paga (a tabela completa: no limite até HH:MM, Precisa ligar de novo, fila, orçamento) (#27):
+ *   `choosePayer` e a troca no meio em `byPayer`;
  * - ordem por Agente e conversa, paralelismo e tetos (#42): `claim` e o laço em `work`. A
  *   conversa para a ordem é `(channel_id, thread_root_id)`: o fluxo principal e cada Thread
  *   contam como conversas separadas (`seriesOf`);
@@ -170,13 +171,61 @@ export function createExecutions(deps: {
   }
 
   /**
-   * Quem paga esta execução, decidido de novo a cada tentativa. Hoje só a Chave; sem ela,
-   * "Agentes não agem". O #27 completa a tabela; `job.retriedByAuthor` diz que é o "Tentar de
-   * novo" do autor, que a Spec quer pago pela Conta dele.
+   * Quem paga esta execução, decidido de novo a cada tentativa: a Conta ligada do autor da
+   * mensagem; sem ela (ou com `skipAccount`, depois da troca no meio), a Chave; sem nenhuma,
+   * "Agentes não agem". O #27 completa a tabela (no limite até HH:MM, Precisa ligar de novo, a
+   * fila, o orçamento); `job.retriedByAuthor` diz que é o "Tentar de novo" do autor, que a Spec
+   * quer pago pela Conta dele.
    */
-  async function choosePayer(_job: Row): Promise<{ kind: "key"; apiKey: string } | { kind: "none"; reason: string }> {
+  async function choosePayer(
+    job: Row,
+    opts: { skipAccount?: boolean } = {},
+  ): Promise<Payer | { kind: "none"; reason: string }> {
+    if (!opts.skipAccount) {
+      const [account] = await db
+        .select({ memberId: accounts.memberId, configDir: accounts.configDir })
+        .from(messages)
+        .innerJoin(accounts, eq(accounts.memberId, messages.authorMemberId))
+        .where(and(eq(messages.id, job.originMessageId), eq(accounts.state, "linked"), isNotNull(accounts.configDir)));
+      if (account) return { kind: "account", memberId: account.memberId, configDir: account.configDir! };
+    }
     const apiKey = await readWorkspaceKey(db, secrets);
     return apiKey ? { kind: "key", apiKey } : { kind: "none", reason: "o Workspace não tem Chave" };
+  }
+
+  /**
+   * Decide quem paga e faz a chamada (`complete`). Troca no meio (Spec, módulo 6): se a Conta
+   * bate no limite ou cai (`limit`, `auth_failed`), o parcial é descartado e a chamada é refeita
+   * inteira pela Chave, à vista, na mesma tentativa. Nada quando "Agentes não agem" (já gravado)
+   * ou quando o `signal` abortou.
+   */
+  async function byPayer(job: Row, controller: AbortController, build: (payer: Payer) => Promise<ModelRequest>) {
+    let skipAccount = false;
+    for (;;) {
+      const payer = await choosePayer(job, { skipAccount });
+      if (payer.kind === "none") {
+        await settle(job, "not_acting", { reason: payer.reason });
+        return undefined;
+      }
+      await db
+        .update(executions)
+        .set({ payer: payer.kind, apiRetryAttempt: null, apiRetryMax: null })
+        .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
+      await publish(job.id);
+      const result = await complete(job, controller, await build(payer));
+      if (!result || payer.kind !== "account") return result;
+      if (result.end?.type === "limit" || result.end?.type === "auth_failed") {
+        skipAccount = true;
+        continue;
+      }
+      if (result.end?.type === "done" && result.end.credentialExpiresAt) {
+        await db
+          .update(accounts)
+          .set({ credentialExpiresAt: result.end.credentialExpiresAt })
+          .where(and(eq(accounts.memberId, payer.memberId), eq(accounts.configDir, payer.configDir)));
+      }
+      return result;
+    }
   }
 
   /**
@@ -247,15 +296,13 @@ export function createExecutions(deps: {
   }
 
   async function run(job: Row, controller: AbortController) {
-    const payer = await choosePayer(job);
-    if (payer.kind === "none") return void (await settle(job, "not_acting", { reason: payer.reason }));
-    await db.update(executions).set({ payer: "key" }).where(eq(executions.id, job.id));
-    await publish(job.id);
-
     const [agent] = await db.select().from(agents).where(eq(agents.id, job.agentId));
-    if (job.kind === "route") return route(job, controller, agent!, payer);
-    const context = await buildContext(db, agent!, job.originMessageId, await callOf(job));
-    const result = await complete(job, controller, { model: agent!.model, ...context, payer });
+    if (job.kind === "route") return route(job, controller, agent!);
+    let context: Awaited<ReturnType<typeof buildContext>> | undefined;
+    const result = await byPayer(job, controller, async (payer) => {
+      context ??= await buildContext(db, agent!, job.originMessageId, await callOf(job));
+      return { model: agent!.model, ...context, payer };
+    });
     if (!result) return;
     const { text, end } = result;
 
@@ -349,15 +396,15 @@ export function createExecutions(deps: {
    * como qualquer execução dela. Depois de gravado e anunciado, "responder" põe na fila a
    * resposta dela e "delegar" a de cada delegado; quem entra na fila mantém a hora de chegada.
    */
-  async function route(job: Row, controller: AbortController, articuladora: Agent, payer: Payer) {
-    const { team, ...request } = await buildRouting(db, articuladora, job.originMessageId);
-    const result = await complete(job, controller, {
-      model: ROUTING_MODEL,
-      ...request,
-      output: { schema: ROUTING_SCHEMA },
-      payer,
+  async function route(job: Row, controller: AbortController, articuladora: Agent) {
+    let routing: Awaited<ReturnType<typeof buildRouting>> | undefined;
+    const result = await byPayer(job, controller, async (payer) => {
+      routing ??= await buildRouting(db, articuladora, job.originMessageId);
+      const { team: _, ...request } = routing;
+      return { model: ROUTING_MODEL, ...request, output: { schema: ROUTING_SCHEMA }, payer };
     });
     if (!result) return;
+    const { team } = routing!;
     const { text, end } = result;
     if (end?.type !== "done") return fail(job, failureReason(end), { retryable: isRetryable(end) });
     const decided = parseDecision(text, team);
