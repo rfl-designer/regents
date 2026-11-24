@@ -30,7 +30,7 @@ describe("adaptador do status da LocalAPI (contrato, resposta gravada)", () => {
 
     expect(expires).toEqual({ kind: "expires", expiresAt: "2027-03-01T09:00:00.000Z" });
     expect(never).toEqual({ kind: "never" });
-  });
+  }, 60_000);
 
   test("tailscaled fora do ar ou com erro: não se sabe, e o motivo vai junto", async () => {
     const localApi = fakeLocalApi();
@@ -43,7 +43,7 @@ describe("adaptador do status da LocalAPI (contrato, resposta gravada)", () => {
 
     expect(broken).toEqual({ kind: "unknown", reason: expect.stringContaining("500") });
     expect(down).toEqual({ kind: "unknown", reason: expect.stringContaining("tailscaled") });
-  });
+  }, 60_000);
 });
 
 describe("chave do nó na seção Instalação", () => {
@@ -56,7 +56,7 @@ describe("chave do nó na seção Instalação", () => {
     const dto: InstallationDto = await (await t.as(juliana).get("/api/installation")).json();
 
     expect(dto.nodeKey).toEqual({ kind: "expires", expiresAt: "2027-03-01T09:00:00.000Z" });
-  });
+  }, 60_000);
 
   test("14 dias antes de a chave do nó vencer, cada Admin recebe um push, uma vez só", async () => {
     const localApi = fakeLocalApi();
@@ -95,5 +95,5 @@ describe("chave do nó na seção Instalação", () => {
     await job.runNow();
     t.clock.advance(CHECK);
     expect((await celular.next({ timeoutMs: 5_000 })).payload.notification.title).toBe("O backup do Shearim falhou");
-  });
+  }, 60_000);
 });

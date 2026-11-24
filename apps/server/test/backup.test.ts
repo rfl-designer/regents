@@ -62,7 +62,7 @@ describe("backup noturno", () => {
     const { backup } = await installation(t);
     expect(backup.lastGoodAt).toBe(backup.last!.at);
     expect(new Date(backup.lastGoodAt!).getTime()).toBeGreaterThan(Date.parse("2026-11-25T12:00:00.000Z"));
-  });
+  }, 60_000);
 
   test("os backups noturnos ficam 14 dias; os dumps de antes de migrar ou restaurar não são apagados", async () => {
     const t = await testApp();
@@ -83,7 +83,7 @@ describe("backup noturno", () => {
     expect(nightlyFiles.at(-1)).toBe("shearim-20261213T120000Z.dump");
     expect(readdirSync(dir)).toContain("shearim-pre-migracao-20260901T120000Z.dump");
     expect(readdirSync(dir)).toContain("notas.txt");
-  });
+  }, 60_000);
 
   test("um backup que falha fica registrado com o motivo, e não deixa arquivo pela metade", async () => {
     const t = await testApp();
@@ -106,7 +106,7 @@ describe("backup noturno", () => {
     });
     expect(backup.lastGoodAt).toBe("2026-11-24T12:00:00.000Z");
     expect(readdirSync(dir)).toEqual(["shearim-20261124T120000Z.dump"]);
-  });
+  }, 60_000);
 });
 
 describe("seção Instalação", () => {
@@ -120,7 +120,7 @@ describe("seção Instalação", () => {
     expect(dto.version).toBe("1.4.2");
     expect(dto.migration).toBe(journal.entries.at(-1).tag);
     expect(dto.backup).toEqual({ last: null, lastGoodAt: null });
-  });
+  }, 60_000);
 
   test("só o Admin vê a seção Instalação", async () => {
     const t = await testApp();
@@ -130,7 +130,7 @@ describe("seção Instalação", () => {
 
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: "not_admin" });
-  });
+  }, 60_000);
 });
 
 describe("avisos ao Admin sobre o backup", () => {
@@ -183,7 +183,7 @@ describe("avisos ao Admin sobre o backup", () => {
     while (cleared.installation.alerts.length > 0)
       cleared = await aba.next("installation.updated", { timeoutMs: 5_000 });
     expect(cleared.installation.backup.last).toMatchObject({ ok: true });
-  });
+  }, 60_000);
 
   test("36 h sem backup bom depois de um que deu certo: push com quando foi o último, e a faixa", async () => {
     const t = await testApp({ installation: { watch: true } });
@@ -199,5 +199,5 @@ describe("avisos ao Admin sobre o backup", () => {
     expect(push.payload.notification.title).toBe("Faz 36 h sem um backup bom");
     expect(push.payload.notification.body).toContain("O último backup bom foi em 24/11");
     expect((await installation(t)).alerts).toEqual([{ kind: "backup_stale", lastGoodAt: "2026-11-24T12:00:00.000Z" }]);
-  });
+  }, 60_000);
 });

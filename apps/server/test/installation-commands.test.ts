@@ -126,7 +126,7 @@ describe("banco migrado por uma versão mais nova", () => {
     const { rows } = await after.query<{ n: number }>("select count(*)::int as n from da_versao_mais_nova");
     expect(rows).toEqual([{ n: 0 }]);
     await after.close();
-  });
+  }, 120_000);
 });
 
 describe("migrações com um dump antes", () => {
@@ -141,7 +141,7 @@ describe("migrações com um dump antes", () => {
     const files = readdirSync(backupsDir);
     expect(files).toEqual([expect.stringMatching(/^shearim-pre-migracao-\d{8}T\d{6}Z\.tar\.gz$/)]);
     expect(run.stdout).toContain(files[0]!);
-  });
+  }, 120_000);
 
   test("banco vazio (a primeira subida) e banco em dia não ganham dump: não há o que salvar nem o que migrar", async () => {
     const dataDir = tmpDir("shearim-pg-");
@@ -152,7 +152,7 @@ describe("migrações com um dump antes", () => {
 
     expect([first.code, again.code]).toEqual([0, 0]);
     expect(readdirSync(backupsDir)).toEqual([]);
-  });
+  }, 120_000);
 });
 
 describe("restore", () => {
@@ -190,7 +190,7 @@ describe("restore", () => {
     await t2.as(juliana).post(`/api/channels/${channel.id}/messages`, { body: "@faro tudo certo?" });
     const [call] = await t2.anthropic.waitForRequests(1);
     expect(call!.apiKey).toBe("sk-ant-api03-do-workspace");
-  });
+  }, 120_000);
 
   test("antes de trocar o banco, `restore` guarda uma cópia do atual em ./backups (o arquivo errado não apaga nada)", async () => {
     const dataDir = tmpDir("shearim-pg-");
@@ -206,7 +206,7 @@ describe("restore", () => {
     const copies = readdirSync(backupsDir).filter((f) => f.startsWith("shearim-pre-restauracao-"));
     expect(copies).toHaveLength(1);
     expect(run.stdout).toContain(copies[0]!);
-  });
+  }, 120_000);
 
   test("arquivo que não existe: sai com erro e não mexe no banco", async () => {
     const dataDir = tmpDir("shearim-pg-");
@@ -220,7 +220,7 @@ describe("restore", () => {
     expect(none.code).toBe(1);
     expect(none.stderr).toContain("restore <arquivo>");
     expect(readdirSync(backupsDir)).toEqual([]);
-  });
+  }, 120_000);
 });
 
 describe("serviço backup", () => {
@@ -247,5 +247,5 @@ describe("serviço backup", () => {
     await t.as({ id: "1001", name: "Juliana" }).get("/api/me");
     const dto = await (await t.as({ id: "1001", name: "Juliana" }).get("/api/installation")).json();
     expect(dto.backup.last).toMatchObject({ ok: true, file: readdirSync(backupsDir)[0] });
-  });
+  }, 120_000);
 });

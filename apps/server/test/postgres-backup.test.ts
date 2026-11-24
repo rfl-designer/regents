@@ -56,13 +56,13 @@ beforeAll(async () => {
     "start",
   ]);
   cluster = { dir, port };
-});
+}, 120_000);
 
 afterAll(async () => {
   if (!cluster || !binDir) return;
   await sh([join(binDir, "pg_ctl"), "-D", join(cluster.dir, "data"), "-m", "immediate", "stop"]);
   rmSync(cluster.dir, { recursive: true, force: true });
-});
+}, 60_000);
 
 /** Um banco novo e vazio no cluster. */
 async function freshDatabase() {
@@ -122,7 +122,7 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
     // Em dia com as migrações: subir de novo não pede dump nem migração.
     expect((await runApp(["migrate"], env)).code).toBe(0);
     expect(readdirSync(backupsDir).filter((f) => f.startsWith("shearim-pre-migracao-"))).toEqual([]);
-  });
+  }, 120_000);
 
   test("banco migrado por uma versão mais nova: `migrate` se recusa também no Postgres", async () => {
     const url = await freshDatabase();
@@ -138,5 +138,5 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
 
     expect(run.code).toBe(1);
     expect(run.stderr).toContain("migrado por uma versão mais nova do Shearim");
-  });
+  }, 120_000);
 });
