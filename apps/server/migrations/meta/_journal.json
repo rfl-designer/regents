@@ -155,6 +155,13 @@
       "when": 1795537636768,
       "tag": "0021_sem-tentar-de-novo-do-autor",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1795558463595,
+      "tag": "0022_ferramentas",
+      "breakpoints": true
     }
   ]
 }

@@ -25,6 +25,7 @@ import type { Reading } from "./reading";
 import { buildRouting, parseDecision, ROUTING_SCHEMA } from "./routing";
 import type { SecretBox } from "./secrets";
 import { recordFollows } from "./threads";
+import { type ToolPort, toolCallsOf } from "./tools/port";
 import { readWorkspaceKey } from "./workspace-key";
 
 const { executions, agents, channels, messages, accounts } = schema;
@@ -83,6 +84,8 @@ export function limitsFromEnv(env: Record<string, string | undefined>): Partial<
 const STALL_REASON: Record<ExecutionStep, string> = {
   deciding: "ficou 2 minutos sem dar o Desfecho",
   writing: "ficou 2 minutos sem escrever nada",
+  // Enquanto a Ferramenta roda, vale o prazo dela (a vigia espera); este só aparece se nada a encerra.
+  tool: "ficou 2 minutos sem escrever nada",
 };
 const RESTART_REASON = "o servidor reiniciou";
 
@@ -210,6 +213,8 @@ export function createExecutions(deps: {
   push: Pick<Push, "messageCreated">;
   /** O gasto na Chave por Agente e por mês, o orçamento e os incidentes da Chave (#28). */
   ledger: KeyLedger;
+  /** A porta de Ferramentas: as Ferramentas de cada execução, com o passo no Andamento. */
+  tools: ToolPort;
   /** Os tetos de concorrência (padrão: os da Spec, `DEFAULT_LIMITS`). */
   limits?: Partial<ExecutionLimits>;
 }): Executions {
@@ -543,8 +548,10 @@ export function createExecutions(deps: {
   async function run(job: Row, agent: Agent, payer: Choice, controller: AbortController) {
     if (job.kind === "route") return route(job, payer, controller, agent);
     const result = await byPayer(job, payer, controller, async (payer) => {
-      const context = await buildContext(db, agent, job.originMessageId, await callOf(job));
-      return { model: agent.model, ...context, payer };
+      const tools = toolsOf(job);
+      const offered = await tools.list();
+      const context = await buildContext(db, agent, job.originMessageId, await callOf(job), offered);
+      return { model: agent.model, ...context, payer, ...(offered.length ? { tools } : {}) };
     });
     if (!result) return;
     const { text, end } = result;
@@ -648,6 +655,7 @@ export function createExecutions(deps: {
     const { signal } = controller;
     const step = (job.step as ExecutionStep | null) ?? "writing";
     const watchdog = stallWatch(clock, STALL_MS, () => controller.abort("stalled" satisfies Interruption));
+    watchdogs.set(job.id, watchdog);
     let text = "";
     let end: TerminalModelEvent | undefined;
     let apiRetrying = false;
@@ -676,6 +684,7 @@ export function createExecutions(deps: {
       }
     } finally {
       watchdog.cancel();
+      watchdogs.delete(job.id);
     }
     if (signal.aborted) {
       // Na vigia, é falha. No cancelamento, já está gravado. No reinício, continua "em andamento"
@@ -684,6 +693,43 @@ export function createExecutions(deps: {
       return undefined;
     }
     return { text, end };
+  }
+
+  /** A vigia de cada execução que está rodando: a Ferramenta a pausa enquanto roda. */
+  const watchdogs = new Map<string, StallWatch>();
+
+  /**
+   * As Ferramentas da execução, pela porta de Ferramentas. Enquanto uma roda, o passo é o dela
+   * ("listando os Agentes") e vale o prazo dela, não o da vigia; o começo e o fim contam como
+   * progresso. A porta grava o uso; aqui ficam o passo e o anúncio do Andamento.
+   */
+  function toolsOf(job: Row) {
+    const step = async (next: ExecutionStep) => {
+      await db
+        .update(executions)
+        .set({ step: next, since: clock.now() })
+        .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
+      await publish(job.id);
+    };
+    return deps.tools.forExecution(
+      {
+        executionId: job.id,
+        attempt: job.attempt,
+        agentId: job.agentId,
+        channelId: job.channelId,
+        originMessageId: job.originMessageId,
+      },
+      {
+        async started() {
+          watchdogs.get(job.id)?.pause();
+          await step("tool");
+        },
+        async finished() {
+          watchdogs.get(job.id)?.resume();
+          await step("writing");
+        },
+      },
+    );
   }
 
   /** Por que o Agente foi chamado (o preâmbulo do contexto). */
@@ -1139,17 +1185,33 @@ function isProgress(event: ModelEvent) {
   return event.type === "text" || event.type === "thinking" || event.type === "api_retry";
 }
 
-/** Um prazo que recomeça a cada progresso e chama `onStall` se vencer. */
+/**
+ * Um prazo que recomeça a cada progresso e chama `onStall` se vencer. `pause` o suspende (uma
+ * Ferramenta rodando, com o prazo dela) até `resume`, que recomeça a contagem.
+ */
 function stallWatch(clock: Clock, ms: number, onStall: () => void) {
   let cancel = clock.after(ms, onStall);
+  let paused = false;
+  const arm = () => {
+    cancel();
+    cancel = clock.after(ms, onStall);
+  };
   return {
     reset() {
+      if (!paused) arm();
+    },
+    pause() {
+      paused = true;
       cancel();
-      cancel = clock.after(ms, onStall);
+    },
+    resume() {
+      paused = false;
+      arm();
     },
     cancel: () => cancel(),
   };
 }
+type StallWatch = ReturnType<typeof stallWatch>;
 
 /** Falhas que uma nova tentativa não conserta: a credencial e o pedido em si. */
 function isRetryable(end: TerminalModelEvent | undefined) {
@@ -1206,6 +1268,10 @@ async function selectViews(
     .leftJoin(accounts, eq(accounts.memberId, messages.authorMemberId))
     .where(where)
     .orderBy(asc(executions.arrivedAt), asc(executions.seq));
+  const tools = await toolCallsOf(
+    db,
+    rows.map(({ e }) => ({ id: e.id, attempt: e.attempt })),
+  );
   return rows.map(({ e, agentName, agentPhoto, authorId, account }) => {
     const reason = WITH_REASON.includes(e.state) ? e.reason : null;
     const everyone: ExecutionDto = {
@@ -1229,6 +1295,7 @@ async function selectViews(
       waitingTurn: (e.state === "queued" || e.state === "retrying") && waiting.has(e.id),
       yourAccount: null,
       replyMessageId: e.replyMessageId,
+      tools: tools.get(e.id) ?? [],
     };
     // A Conta explica o que se vê quando outra coisa paga, espera ou não age no lugar dela.
     const explains = everyone.held || everyone.payer === "key" || e.state === "not_acting";

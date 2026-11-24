@@ -81,6 +81,7 @@ services:
       SHEARIM_MAX_PER_ACCOUNT: ${SHEARIM_MAX_PER_ACCOUNT:-}
       SHEARIM_MAX_ON_KEY: ${SHEARIM_MAX_ON_KEY:-}
       SHEARIM_MAX_PROCESSES: ${SHEARIM_MAX_PROCESSES:-}
+      SHEARIM_TOOL_TIMEOUT_S: ${SHEARIM_TOOL_TIMEOUT_S:-}
     secrets:
       - postgres_password
       - master_key

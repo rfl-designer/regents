@@ -14,6 +14,9 @@
  * cartão de falha com "Tentar de novo". Com `[chave recusada]`, a Anthropic recusa a Chave (401
  * `authentication_error`): abre o incidente da Chave, que a próxima resposta bem-sucedida encerra.
  *
+ * Com `[listar agentes]`, o Agente que tem a Ferramenta "listar Agentes" a pede; a resposta
+ * seguinte começa por "Pela Ferramenta:" e traz a primeira linha do resultado.
+ *
  * O roteamento da Articuladora (o pedido com `output_config`) nunca falha: uma mensagem com
  * `[delegar]` é passada aos dois primeiros Agentes do Canal; as outras recebem o Desfecho "nenhum".
  *
@@ -30,6 +33,7 @@ import {
   lastUserText,
   type RecordedRequest,
   startFakeMessagesApi,
+  toolResults,
 } from "../apps/server/test/fakes/messages-api";
 import { pushServiceCert } from "../apps/server/test/fakes/push-cert";
 
@@ -38,11 +42,17 @@ const failures = new Map<string, number>();
 const anthropic = await startFakeMessagesApi({
   defaultReply: (req) => {
     if (req.body.output_config) return desfecho(req);
+    const [resultado] = toolResults(req.body);
+    if (resultado) return { text: `Pela Ferramenta: ${resultado.content.split("\n")[0]}`, delayMs };
     // O contexto leva as mensagens recentes num só `user`, uma por parágrafo, e fecha com
     // "Responda à última mensagem…": a de origem é o penúltimo parágrafo.
     const text = lastUserText(req.body).split("\n\n").at(-2) ?? "";
     if (text.includes("[chave recusada]")) {
       return { status: 401, errorType: "authentication_error", errorMessage: "invalid x-api-key" };
+    }
+    const tools = (req.body.tools as { name: string }[] | undefined) ?? [];
+    if (text.includes("[listar agentes]") && tools.some((t) => t.name === "listar_agentes")) {
+      return { toolUse: [{ name: "listar_agentes" }], delayMs };
     }
     const times = Number(text.match(/\[falhe (\d+)x\]/)?.[1] ?? 0);
     const failed = failures.get(text) ?? 0;

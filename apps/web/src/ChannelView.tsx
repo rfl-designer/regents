@@ -798,18 +798,28 @@ function Progress({ execution: e, now, onRetry }: { execution: ExecutionDto; now
     );
   }
   const retry = e.attempt > 1 ? ` (${e.attempt}ª tentativa)` : "";
+  // Enquanto uma Ferramenta roda, o passo é o dela ("listando os Agentes").
+  const tool = e.step === "tool" ? e.tools.findLast((c) => c.state === "running") : undefined;
+  const doing = tool?.label ?? "escrevendo";
   return (
-    <div className="message agent" role="status" aria-label={`${name} escrevendo`}>
+    <div className="message agent" role="status" aria-label={`${name} ${doing}`}>
       <Avatar name={name} agent photo={e.agent.photo} />
       <div>
         <div className="meta">
           <strong>{name}</strong>
         </div>
+        {e.tools
+          .filter((c) => c.state === "failed")
+          .map((c) => (
+            <p key={c.id} className="tool-failed">
+              ⚠ {c.title} falhou: {c.reason}
+            </p>
+          ))}
         <p className="writing">
           {e.apiRetry ? (
             `tentando de novo (${e.apiRetry.attempt}/${e.apiRetry.max})`
           ) : (
-            <span className="dots">escrevendo</span>
+            <span className="dots">{doing}</span>
           )}
           {retry} · {elapsed(e.since, now)}
         </p>

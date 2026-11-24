@@ -30,6 +30,9 @@ import { createPush, type PushConfig } from "./push";
 import { createReading, unreadOf } from "./reading";
 import type { SecretBox } from "./secrets";
 import { threadRoutes } from "./threads";
+import { createToolPort, type ToolDefinition } from "./tools/port";
+import { agentToolRoutes } from "./tools/routes";
+import { WORKSPACE_TOOLS } from "./tools/workspace";
 import { workspaceContextRoutes } from "./workspace-context";
 import { workspaceKeyRoutes } from "./workspace-key";
 
@@ -61,6 +64,11 @@ export interface AppDeps {
   installation?: InstallationConfig;
   /** Os tetos de concorrência das execuções (padrão: 2 por Conta, 4 na Chave, 8 processos). */
   limits?: Partial<ExecutionLimits>;
+  /**
+   * A porta de Ferramentas: o prazo padrão de uma chamada (`SHEARIM_TOOL_TIMEOUT_S`) e o catálogo
+   * (padrão: as Ferramentas do Workspace; os testes juntam Ferramentas que travam ou falham).
+   */
+  tools?: { timeoutMs?: number; definitions?: readonly ToolDefinition[] };
 }
 
 export type AppHooks = JoinRequestHooks & ExecutionHooks & KeyHooks & AccountHooks;
@@ -118,6 +126,12 @@ export function createApp(deps: AppDeps) {
   });
   const reading = createReading({ db, clock, events });
   const ledger = createKeyLedger({ db, clock, events, hooks });
+  const tools = createToolPort({
+    db,
+    clock,
+    definitions: deps.tools?.definitions ?? WORKSPACE_TOOLS,
+    timeoutMs: deps.tools?.timeoutMs,
+  });
   // As mensagens novas (de pessoa e as respostas de Agente) vão ao push pelo mesmo `messageCreated`.
   const executions = createExecutions({
     db,
@@ -130,6 +144,7 @@ export function createApp(deps: AppDeps) {
     reading,
     push,
     ledger,
+    tools,
     limits: deps.limits,
   });
   // A volta da Conta (ou a troca da Chave, ou do orçamento) solta quem espera por ela na fila.
@@ -198,6 +213,7 @@ export function createApp(deps: AppDeps) {
   app.route("/api", threadRoutes({ db }));
   app.route("/api", accounts.routes);
   app.route("/api", agentRoutes({ db, clock, ledger, onBudgetChanged: () => reconsider() }));
+  app.route("/api", agentToolRoutes({ db, tools }));
   app.route("/api", workspaceKeyRoutes({ db, clock, secrets, onChanged: () => reconsider() }));
   app.route("/api", workspaceContextRoutes({ db }));
   app.route("/api", installation.routes);

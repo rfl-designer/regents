@@ -1,4 +1,11 @@
-import { AGENT_MODELS, type AgentDto, type AgentModel, type WorkspaceKeyDto } from "@shearim/contracts";
+import {
+  AGENT_MODELS,
+  type AgentDto,
+  type AgentModel,
+  type AgentToolDto,
+  type ToolOrigin,
+  type WorkspaceKeyDto,
+} from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
 import { ApiFailure, api } from "./api";
@@ -166,13 +173,16 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
             : ` de ${usd.format(a.monthlyBudgetUsd)}${a.overBudget ? " · estourado: não usa a Chave até o mês virar" : ""}`}
         </p>
         {editing && (
-          <EditAgent
-            agent={a}
-            onSaved={(changed) => {
-              onChanged(changed);
-              setEditing(false);
-            }}
-          />
+          <>
+            <EditAgent
+              agent={a}
+              onSaved={(changed) => {
+                onChanged(changed);
+                setEditing(false);
+              }}
+            />
+            <AgentTools agent={a} />
+          </>
         )}
       </div>
     </li>
@@ -254,6 +264,64 @@ function EditAgent({ agent, onSaved }: { agent: AgentDto; onSaved(agent: AgentDt
         )}
       </div>
     </form>
+  );
+}
+
+const ORIGIN_LABEL: Record<ToolOrigin, string> = { workspace: "Do Workspace", web: "Da web" };
+
+/**
+ * As Ferramentas do Agente, agrupadas por origem, cada uma marcada como leitura ou escrita (toda
+ * escrita passa por um Pedido de aprovação). Conceder ou retirar vale na hora, sem "Salvar".
+ */
+function AgentTools({ agent }: { agent: AgentDto }) {
+  const [tools, setTools] = useState<AgentToolDto[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.agentTools(agent.id).then(setTools, () => setError("Não foi possível carregar as Ferramentas."));
+  }, [agent.id]);
+
+  async function toggle(tool: AgentToolDto) {
+    setBusy(tool.id);
+    setError(null);
+    try {
+      setTools(await api.setAgentTool(agent.id, tool.id, !tool.granted));
+    } catch (err) {
+      setError(
+        messageOf(err, `A Ferramenta ${tool.title} não foi ${tool.granted ? "retirada" : "concedida"}. Tente de novo.`),
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const origins = [...new Set(tools?.map((t) => t.origin))];
+  return (
+    <fieldset className="settings-row" aria-label={`Ferramentas de ${agent.name}`}>
+      <legend>Ferramentas</legend>
+      {tools === null && !error && <p className="hint">Carregando…</p>}
+      {origins.map((origin) => (
+        <div key={origin}>
+          <p className="hint">{ORIGIN_LABEL[origin]}</p>
+          {tools
+            ?.filter((t) => t.origin === origin)
+            .map((t) => (
+              <label key={t.id} className="hint">
+                <input type="checkbox" checked={t.granted} disabled={busy !== null} onChange={() => toggle(t)} />{" "}
+                {t.title} <span className="tag">{t.access === "read" ? "leitura" : "escrita"}</span>
+                <br />
+                <small>{t.description}</small>
+              </label>
+            ))}
+        </div>
+      ))}
+      {error && (
+        <span className="error" role="alert">
+          {error}
+        </span>
+      )}
+    </fieldset>
   );
 }
 

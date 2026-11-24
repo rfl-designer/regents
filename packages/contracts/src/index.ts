@@ -426,6 +426,50 @@ export interface CreateAgentInput {
  */
 export type UpdateAgentInput = Partial<CreateAgentInput>;
 
+// ---------- Ferramentas (Spec #44) ----------
+
+/**
+ * De onde vem uma Ferramenta: o próprio Workspace ou a web. As dos Conectores entram depois,
+ * cada uma com o Conector dela.
+ */
+export type ToolOrigin = "workspace" | "web";
+/** `read` só lê; `write` escreve, e toda escrita passa por um Pedido de aprovação. */
+export type ToolAccess = "read" | "write";
+
+/**
+ * Uma Ferramenta do Workspace na tela do Agente (só Admin): `GET /api/agents/:id/tools`, e a
+ * resposta de `PUT`/`DELETE /api/agents/:id/tools/:toolId` (conceder, retirar).
+ */
+export interface AgentToolDto {
+  /** O id estável da Ferramenta (ex. `listar_agentes`), o mesmo nome que o modelo recebe. */
+  id: string;
+  /** O nome em pt-BR, como o Admin e o Andamento o mostram ("listar Agentes"). */
+  title: string;
+  description: string;
+  origin: ToolOrigin;
+  access: ToolAccess;
+  granted: boolean;
+}
+
+/**
+ * Um uso de Ferramenta no Andamento: `running` enquanto roda ("listando os Agentes"), `done`, ou
+ * `failed` com o motivo ("listar Agentes falhou: não terminou em 60 s"). A resposta segue sem ela.
+ */
+export interface ToolCallDto {
+  id: string;
+  /** O id da Ferramenta. */
+  tool: string;
+  /** O nome em pt-BR ("listar Agentes"). */
+  title: string;
+  /** O que ela está fazendo, para o passo em andamento ("listando os Agentes"). */
+  label: string;
+  state: "running" | "done" | "failed";
+  /** Em `failed`: o motivo, em pt-BR. */
+  reason: string | null;
+  /** Quando começou (ISO 8601). */
+  startedAt: string;
+}
+
 /** `GET`/`PUT /api/workspace-key` (só Admin). A Chave em si nunca volta ao navegador. */
 /** Sem backup bom há mais que isto, o Admin recebe push e vê a faixa (Spec, história 14). */
 export const BACKUP_STALE_HOURS = 36;
@@ -533,9 +577,10 @@ export const OPEN_STATES: readonly ExecutionState[] = ["queued", "running", "ret
 
 /**
  * O passo de uma execução em andamento. `writing` é a bolha "escrevendo"; `deciding` é o
- * roteamento da Articuladora ("Sophya decidindo quem responde").
+ * roteamento da Articuladora ("Sophya decidindo quem responde"); `tool` é uma Ferramenta rodando
+ * (o rótulo dela, "listando os Agentes", está no último item de `ExecutionDto.tools`).
  */
-export type ExecutionStep = "deciding" | "writing";
+export type ExecutionStep = "deciding" | "writing" | "tool";
 
 /**
  * O Andamento de uma execução, como todos que veem a conversa o veem.
@@ -599,6 +644,11 @@ export interface ExecutionDto {
    */
   yourAccount: YourAccountDto | null;
   replyMessageId: string | null;
+  /**
+   * Os usos de Ferramenta da tentativa atual, na ordem: o que está rodando e os que falharam ficam
+   * à vista (a resposta segue sem a Ferramenta que falhou). Vazio sem Ferramentas.
+   */
+  tools: ToolCallDto[];
 }
 
 /**

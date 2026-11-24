@@ -49,6 +49,7 @@ deploy/release.sh 1.2.3 dist   # empacota a release (o workflow de release roda;
 | `SHEARIM_VAPID_CONTACT` | `mailto:shearim@example.com` (só dev) | O `sub` do VAPID do push: `mailto:` com domínio real (a Apple recusa `localhost`). O `deploy/setup.sh` grava no `.env`. |
 | `SHEARIM_MAX_PER_ACCOUNT` | `2` | Respostas ao mesmo tempo pela Conta de um Membro (o roteamento fica fora). No compose, vem do `.env`. |
 | `SHEARIM_MAX_ON_KEY` | `4` | Execuções ao mesmo tempo pela Chave do Workspace (roteamento incluso). |
+| `SHEARIM_TOOL_TIMEOUT_S` | `60` | Prazo de uma chamada de Ferramenta sem prazo próprio (ADR 0003): estourado, vira falha da Ferramenta com motivo e a resposta segue. |
 | `SHEARIM_MAX_PROCESSES` | `8` | Processos `claude -p` ao mesmo tempo no host: todas as execuções pela Conta, roteamento incluso. Valor que não é inteiro maior que zero impede a subida. |
 
 ## Layout
@@ -63,6 +64,7 @@ apps/server/        Bun + Hono + Drizzle
   src/dms.ts        rotas de DMs (abrir, listar)
   src/participation.ts  quem participa, quem vê (canSee) e quem recebe eventos (audienceOf)
   src/agents.ts     rotas de Agentes; src/workspace-key.ts a Chave do Workspace (cifrada por src/secrets.ts)
+  src/tools/        porta de Ferramentas (port.ts), o catálogo do Workspace (workspace.ts) e as concessões (routes.ts)
   src/key-budget.ts Chave e orçamentos: o gasto na Chave por Agente e mês, o orçamento e os incidentes da Chave
   src/articuladora.ts  a Articuladora: descrição, instruções e modelo do roteamento (do código)
   src/routing.ts    o contrato de roteamento (pedido, `ROUTING_SCHEMA`, conferência) e o mapa do Workspace visto pelo autor
@@ -419,6 +421,15 @@ await chamada.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, c
 ```
 
 `testApp({ hooks: { executionFailed } })` recebe as falhas de vez; `keyIncidentOpened` e `budgetExceeded`, os avisos da Chave (#28). `testApp({ limits })` troca os tetos de concorrência.
+
+### Ferramentas (#45, Spec #44)
+
+`src/tools/port.ts` é a porta de Ferramentas, o único lugar onde uma Ferramenta roda: o catálogo (`tools/workspace.ts`, por ora só "listar Agentes"), as concessões (`agent_tools`), o prazo de cada chamada (`SHEARIM_TOOL_TIMEOUT_S` ou o da Ferramenta) e o registro de cada uso (`execution_tool_calls`). `forExecution(run, observer)` dá à execução as Ferramentas dela (`ModelRequest.tools`); `call` nunca lança: prazo, erro (`ToolFailure` com motivo) e Ferramenta não concedida voltam ao modelo como `is_error` e a resposta segue.
+
+- **Rotas (só Admin, `403 not_admin`):** `GET /api/agents/:id/tools` (`AgentToolDto[]`, com `access` leitura/escrita e `granted`), `PUT`/`DELETE /api/agents/:id/tools/:toolId` (conceder, retirar; devolvem a lista). Vale para a Articuladora.
+- **Pela Chave:** o cérebro roda o vai-e-vem de `tool_use` (client tools); o uso de todos os turnos soma num só gasto. O roteamento continua sem Ferramentas.
+- **Andamento:** enquanto uma roda, `step: "tool"` e o `label` dela ("listando os Agentes") no último item de `ExecutionDto.tools`; a vigia fica parada (vale o prazo da Ferramenta) e recomeça no fim. A falha aparece como "⚠ <Ferramenta> falhou: <motivo>".
+- **Nos testes:** `t.anthropic.reply({ toolUse: [{ name: "listar_agentes" }] })` pede a Ferramenta e `toolResults(req.body)` lê o que voltou; `testApp({ tools: { definitions, timeoutMs } })` junta uma Ferramenta que trava ou falha. No e2e, `[listar agentes]` no texto.
 
 ### A Articuladora e o Desfecho (#22, ADR 0004)
 
