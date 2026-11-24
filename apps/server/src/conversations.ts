@@ -19,6 +19,7 @@ import type { Member } from "./members";
 import { recordMentions } from "./mentions";
 import { listMessages as listConversationMessages } from "./messages";
 import { addAgent, addParticipants, audienceOf, canSee, participantsOf } from "./participation";
+import type { Push } from "./push";
 import type { Reading } from "./reading";
 
 type Env = { Variables: { member: Member } };
@@ -47,8 +48,10 @@ export function conversationRoutes(deps: {
   executions: Executions;
   /** As não-lidas de quem participa mudam a cada mensagem nova. */
   reading: Pick<Reading, "messageCreated">;
+  /** O push de Menção e de DM. */
+  push: Pick<Push, "messageCreated">;
 }) {
-  const { db, clock, events, executions, reading } = deps;
+  const { db, clock, events, executions, reading, push } = deps;
   const routes = new Hono<Env>();
 
   /** Avisa quem vê o Canal de como ele está agora. */
@@ -212,6 +215,9 @@ export function conversationRoutes(deps: {
     events.publish(await audienceOf(db, conversation), { type: "message.created", message: dto });
     if (joined && isChannel(conversation)) await publishChannel(conversation);
     await reading.messageCreated(dto);
+    // O push sai em segundo plano (quem escreveu não espera pelos push services); o badge dele já
+    // conta esta mensagem.
+    push.messageCreated(dto, conversation);
     // Só depois de gravada e anunciada, a mensagem dispara os Agentes.
     await executions.enqueue(
       dto,
@@ -369,7 +375,7 @@ async function findChannel(db: Db, id: string) {
 }
 
 /** A conversa, se o Membro a vê. Uma fechada de que ele não participa é como uma que não existe. */
-export async function findVisibleConversation(db: Db, member: Member, id: string) {
+export async function findVisibleConversation(db: Db, member: Pick<Member, "id">, id: string) {
   const row = await findConversation(db, id);
   return row && (await canSee(db, member.id, row)) ? row : undefined;
 }

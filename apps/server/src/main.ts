@@ -16,6 +16,8 @@
  *   Workspace. No compose, `/run/secrets/master_key`. Sem a variável, `.data/secrets/master_key`,
  *   gerada se faltar (só desenvolvimento).
  * - `SHEARIM_ANTHROPIC_BASE_URL`: a Messages API (padrão: a da Anthropic; o e2e usa a falsa).
+ * - `SHEARIM_VAPID_CONTACT`: o `sub` do VAPID (`mailto:` com domínio real; o `deploy/setup.sh`
+ *   grava no `.env`). Sem ela, só em desenvolvimento, um `mailto:` de exemplo.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -35,6 +37,9 @@ function fail(message: string): never {
   console.error(`shearim: ${message}`);
   process.exit(1);
 }
+
+/** Só desenvolvimento: a Apple recusa o push com `sub` sem domínio real. */
+const DEV_VAPID_CONTACT = "mailto:shearim@example.com";
 
 const DEFAULT_TS_SOCKET = "/var/run/tailscale/tailscaled.sock";
 
@@ -99,6 +104,8 @@ async function main(command: string | undefined) {
     fail((err as Error).message);
   }
   await conn.migrate();
+  const vapidContact = process.env.SHEARIM_VAPID_CONTACT || DEV_VAPID_CONTACT;
+  if (!/^(mailto:|https:)/.test(vapidContact)) fail(`SHEARIM_VAPID_CONTACT=${vapidContact} não é mailto: nem https:.`);
   const shearim = createApp({
     db: conn.db,
     identity: who.identity,
@@ -110,7 +117,10 @@ async function main(command: string | undefined) {
     secrets,
     anthropicBaseUrl: process.env.SHEARIM_ANTHROPIC_BASE_URL || undefined,
     devRoutes: who.routes,
+    push: { contact: vapidContact },
   });
+  // O par VAPID nasce na primeira subida (e daí em diante é sempre o mesmo, guardado no banco).
+  await shearim.push.ensureKeys();
   shearim.executions.start();
 
   const root = new Hono();

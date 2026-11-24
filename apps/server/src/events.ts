@@ -17,23 +17,33 @@ export type Audience = "everyone" | { members: readonly string[] };
 /** O ponto único por onde o servidor empurra eventos às conexões de WebSocket. */
 export interface EventHub {
   publish(to: Audience, event: ServerEvent): void;
+  /** De quem é a conexão aberta com esse id (o `connectionId` do `ready`), ou `undefined`. */
+  ownerOf(connectionId: string): string | undefined;
+  /** Chama `fn` sempre que uma conexão fecha (a Presença dela some junto). */
+  onClose(fn: (connectionId: string) => void): void;
 }
 
 interface Connection {
+  id: string;
   memberId: string;
   send(data: string): void;
   close(code: number, reason: string): void;
 }
 
 export function createEventHub() {
-  const connections = new Set<Connection>();
+  const connections = new Map<string, Connection>();
+  const closeListeners: ((connectionId: string) => void)[] = [];
   let restarting = false;
 
   const hub: EventHub = {
     publish(to, event) {
       const data = JSON.stringify(event);
       const members = to === "everyone" ? undefined : new Set(to.members);
-      for (const c of connections) if (!members || members.has(c.memberId)) c.send(data);
+      for (const c of connections.values()) if (!members || members.has(c.memberId)) c.send(data);
+    },
+    ownerOf: (connectionId) => connections.get(connectionId)?.memberId,
+    onClose(fn) {
+      closeListeners.push(fn);
     },
   };
 
@@ -47,15 +57,20 @@ export function createEventHub() {
     return {
       onOpen(_event, ws) {
         connection = {
+          id: crypto.randomUUID(),
           memberId: member.id,
           send: (data) => ws.send(data),
           close: (code, reason) => ws.close(code, reason),
         };
-        connections.add(connection);
-        ws.send(JSON.stringify({ type: "ready", me: toMeDto(member) } satisfies ServerEvent));
+        connections.set(connection.id, connection);
+        ws.send(
+          JSON.stringify({ type: "ready", me: toMeDto(member), connectionId: connection.id } satisfies ServerEvent),
+        );
       },
       onClose() {
-        if (connection) connections.delete(connection);
+        if (!connection) return;
+        connections.delete(connection.id);
+        for (const fn of closeListeners) fn(connection.id);
       },
     };
   });
@@ -70,7 +85,7 @@ export function createEventHub() {
    */
   function closeForRestart() {
     restarting = true;
-    for (const c of connections) c.close(EVENTS_CLOSE_UPDATING, "o Shearim vai reiniciar");
+    for (const c of connections.values()) c.close(EVENTS_CLOSE_UPDATING, "o Shearim vai reiniciar");
     connections.clear();
   }
 

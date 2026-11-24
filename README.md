@@ -40,6 +40,7 @@ deploy/setup.sh        # Instalação: segredos, .env e conferência da tailnet 
 | `SHEARIM_ACCOUNTS_DIR` | `.data/accounts` | Pasta-raiz das Contas: uma pasta de `CLAUDE_CONFIG_DIR` por login, fora do backup (no compose, o volume `contas`). O Shearim nunca lê o que há dentro. |
 | `SHEARIM_MASTER_KEY_FILE` | `.data/secrets/master_key` | A chave mestra (32 bytes em hex, como o `deploy/setup.sh` grava, ou em base64), que cifra a Chave do Workspace. No compose, `/run/secrets/master_key`. Sem a variável, o arquivo padrão é gerado se faltar (só desenvolvimento); com ela, o arquivo tem que existir. Com outra chave mestra, o Admin grava a Chave de novo. |
 | `SHEARIM_ANTHROPIC_BASE_URL` | (a da Anthropic) | Onde fica a Messages API. O e2e aponta para a falsa. |
+| `SHEARIM_VAPID_CONTACT` | `mailto:shearim@example.com` (só dev) | O `sub` do VAPID do push: `mailto:` com domínio real (a Apple recusa `localhost`). O `deploy/setup.sh` grava no `.env`. |
 
 ## Layout
 
@@ -55,6 +56,8 @@ apps/server/        Bun + Hono + Drizzle
   src/context.ts    montagem de contexto: as 6 camadas que cada execução recebe (buildContext)
   src/workspace-context.ts  o Contexto do Workspace (só Admin)
   src/reading.ts    leitura e não-lido: quais mensagens cada Membro viu, contagens e `unread.updated`
+  src/presence.ts   Presença: qual conversa cada conexão tem à vista (faz o push calar)
+  src/push.ts       push: par VAPID, inscrições por aparelho, gatilhos de Menção e DM; push-sender.ts é o adaptador do `web-push`
   src/executions.ts fila de execuções no Postgres e o trabalhador que a esvazia
   src/model/        porta de modelo (port.ts: eventos normalizados) e o cérebro da Chave (key.ts)
   src/main.ts       entrypoint: serve | migrate
@@ -69,7 +72,7 @@ apps/server/        Bun + Hono + Drizzle
   migrations/       SQL gerado pelo drizzle-kit (commitado)
   test/harness.ts   arnês: testApp(), testDb(), fakeClock(), fakeIdentity, t.addMember(), throwawayAccounts(), eventually()
   test/fake-claude/ o dublê do binário `claude` (processo de verdade, roteirizável)
-  test/fakes/       messages-api.ts: a Messages API falsa (o dublê da Chave); scripted-brain.ts: o cérebro roteirizado
+  test/fakes/       messages-api.ts: a Messages API falsa (o dublê da Chave); scripted-brain.ts: o cérebro roteirizado; push-collector.ts: o coletor de push
   test/fake-localapi.ts  LocalAPI falsa do tailscaled num Unix socket (contrato do whois)
 apps/web/           PWA em React + Vite, pt-BR
 packages/contracts/ DTOs do HTTP e eventos do WebSocket (ServerEvent), compartilhados
@@ -120,7 +123,7 @@ Se o teste já abriu o Workspace com outra pessoa, passe-a em `by`. Devolve o `M
 
 ### WebSocket de eventos
 
-O PWA abre um WebSocket em `/api/events` (`EVENTS_PATH`). O upgrade passa pelo mesmo middleware de `/api/*`: sem identidade ou sem ser Membro, 403 e a conexão não sobe. Toda conexão começa com `{ type: "ready", me }`; depois, só chegam eventos (`ServerEvent` em `packages/contracts`). Comandos continuam no HTTP.
+O PWA abre um WebSocket em `/api/events` (`EVENTS_PATH`). O upgrade passa pelo mesmo middleware de `/api/*`: sem identidade ou sem ser Membro, 403 e a conexão não sobe. Toda conexão começa com `{ type: "ready", me, connectionId }` (o `connectionId` é o da Presença); depois, só chegam eventos (`ServerEvent` em `packages/contracts`). Comandos continuam no HTTP.
 
 Para publicar, o módulo recebe o `EventHub` e chama `events.publish(audiência, evento)`, sempre **depois** de gravar. A audiência é `"everyone"` ou `{ members: [ids] }` (todas as conexões desses Membros). Quem sabe quem vê a conversa resolve os participantes; o que é só do autor (estado da Conta) vai para `{ members: [autor] }`. Evento novo é mais um membro da união `ServerEvent`, com `type` no formato `assunto.fato`.
 
@@ -189,6 +192,34 @@ O servidor guarda **quais mensagens** cada Membro viu (`message_reads`), não um
 `unread.updated` (com o `UnreadDto` inteiro) vai só às conexões do próprio Membro: a cada mensagem nova numa conversa dele (`reading.messageCreated(dto)`, chamado depois de gravar e anunciar, por quem cria mensagem: o envio e a resposta do Agente) e a cada marcação que leu algo. `mentions` conta as não-lidas com Menção ao Membro, pelas Menções que o #19 registra ao gravar (`message_mentions`). O badge do ícone e o push (#32) leem o `total`.
 
 No PWA, `apps/web/src/reading.ts` (`useReading`) faz a leitura da conversa aberta: marca o que aparece na tela com a aba visível, abre na primeira não-lida com a linha "Novas", mantém a tela parada fora do fim e dá os avisos flutuantes ("↑ Faro respondeu Juliana", "↑ n respostas acima", "↓ n novas abaixo"), que levam à mensagem e a fazem piscar (`data-flash`).
+
+### Presença e push (#31)
+
+| Rota | Quem | O quê |
+|---|---|---|
+| `PUT /api/presence` | Membro | `{ connectionId, conversationId \| null }`: a conversa que essa conexão (o `connectionId` do `ready`) tem aberta e visível. 404 para conexão de outra pessoa, que já caiu, ou conversa que ele não vê |
+| `GET /api/push/key` | Membro | `{ publicKey }`: a chave pública VAPID (o `applicationServerKey`) |
+| `PUT /api/push/subscriptions/:aparelho` | Membro | `PushSubscription.toJSON()` deste aparelho (o id é um UUID que o PWA gera e guarda). Troca a anterior do aparelho; o mesmo endpoint inscrito por outra pessoa muda de dono. 204 |
+| `GET /api/devices` | Membro | `DeviceDto[]`: os aparelhos com push, `pushing`, `pushStoppedAt` ("parou em") e `lastPushAt` (a tela e as faixas são do #33) |
+
+- **Presença** (`presence.ts`): na memória do processo, por conexão de WebSocket. Enquanto alguma conexão do Membro tem a conversa à vista, o push dela não sai para nenhum aparelho; a conexão que cai leva a Presença junto. O PWA manda a conversa aberta com a aba visível e em foco (`setPresence` em `apps/web/src/live.ts`) e repete a cada `ready`.
+- **Par VAPID**: gerado na primeira subida (`push.ensureKeys()` no `main.ts`) e guardado em `vapid_keys`; nunca muda (trocar mata todas as inscrições).
+- **Gatilhos** (`push.messageCreated(dto, conversa)`, chamado pelo envio depois de anunciar e do `reading.messageCreated`): Menção a Membro e toda mensagem de DM, nunca a quem escreveu. Mensagem comum de Canal não gera push. A resposta de Agente, a falha e a Thread (#32) e os pushes do Admin e da Conta penduram-se no mesmo módulo, com outra `urgency`.
+- **Formato**: o JSON do Declarative Web Push, `{ web_push: 8030, notification: { title, body, navigate, tag, lang }, app_badge }`. Título `#canal · Autor`, `Autor` (DM) ou `Autor em DM com X, Y` (grupo); corpo com cerca de 140 caracteres; `navigate` absoluto para `/c/<conversa>` na origem de onde o aparelho se inscreveu; `app_badge` é o `total` de `unreadOf`. Pushes seguidos da mesma conversa viram "3 novas em #vendas" (ou "3 novas de Juliana", "3 novas em DM com X, Y") com `Autor: trecho` da última; abrir a conversa (Presença) zera a contagem (`push_streaks`).
+- **Envio**: um de cada vez, em segundo plano (quem escreve não espera), com `tag` e `Topic` da conversa (o UUID sem hífens, 32 caracteres), `Urgency: high` e TTL de 24 h. `404`/`410` apagam a inscrição e anotam `devices.push_stopped_at`.
+- **PWA**: `public/sw.js` monta a notificação nos navegadores sem Declarative Web Push e, ao tocar, abre a conversa (foca a janela aberta ou abre `navigate`); `/c/<id>` abre a conversa. Abrir uma conversa fecha as notificações dela no aparelho (`closeNotificationsOf`). O onboarding "Ligar notificações" (com "Pular") aparece enquanto a permissão não foi dada e ninguém pulou neste aparelho; pede a permissão no toque. O `setAppBadge` é do #32; o passo ilustrado do iPhone (história 99) não entrou aqui.
+
+Nos testes, `testApp()` traz o coletor de push em `t.push` (HTTPS com certificado autoassinado gerado pelo `openssl` e guardado no tmp; o app manda por um agente que o aceita):
+
+```ts
+const celular = await t.pushDevice(bruno);           // inscrição nova no coletor, entregue pelo PUT
+const push = await celular.next();                   // payload decifrado, tag, topic, urgency, ttl, status
+celular.respond(410);                                // daqui em diante o push service diz "inscrição morta"
+t.push.deliveries;                                   // tudo o que chegou, de todos os aparelhos
+await t.as(bruno).put("/api/presence", { connectionId: aba.connectionId, conversationId });
+```
+
+O coletor registra a entrega antes de o servidor ler a resposta: o que o servidor anota depois (`lastPushAt`, "parou em") se espera com `eventually`. Para provar que um push **não** saiu, mande depois um que sai e verifique que o próximo a chegar é ele.
 
 ### fake-claude
 
@@ -273,7 +304,7 @@ bun run e2e                                   # build do PWA + todos os e2e
 (cd e2e && npx e2e run --headed)              # vendo o navegador
 ```
 
-O runner sobe o servidor de verdade (por `e2e/serve.ts`, que antes sobe a Messages API falsa, respondendo devagar para a bolha "escrevendo" aparecer, e aponta o servidor para ela com uma chave mestra temporária; uma mensagem com `[falhe 2x]` no texto recebe a sobrecarga da Anthropic nas duas primeiras chamadas, para o cartão de falha, que sai depois dos 10 s de verdade da nova tentativa) numa porta livre, servindo `apps/web/dist`, com `SHEARIM_IDENTITY=dev` e `SHEARIM_PGLITE_DIR=memory://`: cada execução começa de uma Instalação vazia, e a primeira aba a abrir (a "Pessoa Dev") vira Admin. Os testes da mesma execução dividem esse banco, então use textos únicos (`Date.now()`). Duas abas da mesma pessoa são `browser.newTab()` + `browser.goto("/")` e `tab.activate()`. O cookie `dev_user` vale para o contexto inteiro (todas as abas), então uma segunda pessoa no mesmo teste age pela API, com os helpers de `e2e/support/people.ts`: `newPerson("Bruno")` (id único na execução), `addMember(app.baseUrl, bruno)` (ela pede e a Pessoa Dev aprova), `requestToJoin`/`approve` separados, e `as(app.baseUrl, bruno)("/api/...", init)` para chamar a API como ela (sem pessoa, é a Pessoa Dev). `/dev/como/<id>?nome=Fulana` troca a pessoa do navegador todo; ela chega como não-Membro, no Pedido de entrada. Resultados e traces ficam em `e2e/.e2e/` (ignorado pelo git). Antes de escrever um teste, leia `npx e2e guide writing-tests`.
+O runner sobe o servidor de verdade (por `e2e/serve.ts`, que antes sobe a Messages API falsa, respondendo devagar para a bolha "escrevendo" aparecer, e aponta o servidor para ela com uma chave mestra temporária; uma mensagem com `[falhe 2x]` no texto recebe a sobrecarga da Anthropic nas duas primeiras chamadas, para o cartão de falha, que sai depois dos 10 s de verdade da nova tentativa) numa porta livre, servindo `apps/web/dist`, com `SHEARIM_IDENTITY=dev` e `SHEARIM_PGLITE_DIR=memory://`: cada execução começa de uma Instalação vazia, e a primeira aba a abrir (a "Pessoa Dev") vira Admin. Os testes da mesma execução dividem esse banco, então use textos únicos (`Date.now()`). O Chromium do e2e nega toda permissão; para o caminho de "Ligar notificações", `tests/notificacoes.e2e.ts` troca o push service do navegador por um falso com `browser.addInitScript`. Duas abas da mesma pessoa são `browser.newTab()` + `browser.goto("/")` e `tab.activate()`. O cookie `dev_user` vale para o contexto inteiro (todas as abas), então uma segunda pessoa no mesmo teste age pela API, com os helpers de `e2e/support/people.ts`: `newPerson("Bruno")` (id único na execução), `addMember(app.baseUrl, bruno)` (ela pede e a Pessoa Dev aprova), `requestToJoin`/`approve` separados, e `as(app.baseUrl, bruno)("/api/...", init)` para chamar a API como ela (sem pessoa, é a Pessoa Dev). `/dev/como/<id>?nome=Fulana` troca a pessoa do navegador todo; ela chega como não-Membro, no Pedido de entrada. Resultados e traces ficam em `e2e/.e2e/` (ignorado pelo git). Antes de escrever um teste, leia `npx e2e guide writing-tests`.
 
 ## Instalação
 

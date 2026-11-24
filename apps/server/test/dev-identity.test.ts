@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createApp } from "../src/app";
 import { createDevIdentity } from "../src/identity/dev";
 import { secretBox } from "../src/secrets";
-import { fakeClock, fakeIdentity, testDb, throwawayAccounts } from "./harness";
+import { fakeClock, fakeIdentity, TEST_VAPID_CONTACT, testDb, throwawayAccounts } from "./harness";
 
 const secrets = () => secretBox(crypto.getRandomValues(new Uint8Array(32)));
 
@@ -17,6 +17,7 @@ async function devApp() {
     accounts,
     devRoutes: dev.routes,
     secrets: await secrets(),
+    push: { contact: TEST_VAPID_CONTACT },
   }).app;
 }
 
@@ -81,6 +82,7 @@ describe("identidade de desenvolvimento (bun run dev)", () => {
       identity: fakeIdentity,
       accounts: throwawayAccounts().config,
       secrets: await secrets(),
+      push: { contact: TEST_VAPID_CONTACT },
     });
 
     expect((await app.request("/dev/como/1001")).status).toBe(404);
