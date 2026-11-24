@@ -48,6 +48,7 @@ describe("Menção a um Agente pela Chave", () => {
       body: "O prazo é sexta.",
       author: { kind: "agent", id: faro.id, displayName: "Faro", photo: null },
       originMessageId: origem.id,
+      threadRootId: null,
       mentions: [],
       createdAt: expect.any(String),
       // "⚠ pela Chave do Workspace" (#27): quem paga a resposta, à vista de todos.

@@ -13,6 +13,7 @@ function selectMessages(db: Db) {
       channelId: messages.channelId,
       body: messages.body,
       originMessageId: messages.originMessageId,
+      threadRootId: messages.threadRootId,
       createdAt: messages.createdAt,
       memberId: members.id,
       memberName: members.displayName,
@@ -40,6 +41,7 @@ function toDto(r: Row, mentions: Map<string, MessageDto["mentions"]>): MessageDt
       ? { kind: "agent", id: r.agentId, displayName: r.agentName!, photo: r.agentPhoto }
       : { kind: "member", id: r.memberId!, displayName: r.memberName!, profilePicUrl: r.memberPic },
     originMessageId: r.originMessageId,
+    threadRootId: r.threadRootId,
     mentions: mentions.get(r.id) ?? [],
     createdAt: r.createdAt.toISOString(),
     // "⚠ pela Chave do Workspace" é de todos; pela Conta, nada aparece (a Conta é só do autor).
@@ -47,7 +49,10 @@ function toDto(r: Row, mentions: Map<string, MessageDto["mentions"]>): MessageDt
   };
 }
 
-/** As mensagens de uma conversa, em ordem de gravação (as respostas ancoradas inclusive). */
+/**
+ * As mensagens de uma conversa, em ordem de gravação: as respostas ancoradas e as mensagens de
+ * Thread inclusive (`threadRootId` diz de qual Thread; o cliente as separa do fluxo principal).
+ */
 export async function listMessages(db: Db, channelId: string): Promise<MessageDto[]> {
   const rows = await selectMessages(db).where(eq(messages.channelId, channelId)).orderBy(asc(messages.seq));
   const mentions = await mentionsOf(

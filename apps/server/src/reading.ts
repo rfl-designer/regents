@@ -10,8 +10,10 @@ import type { Member } from "./members";
 
 type Env = { Variables: { member: Member } };
 
-const { messages, messageReads, messageMentions, channelParticipants, channels } = schema;
+const { messages, messageReads, messageMentions, channelParticipants, channels, threadFollows } = schema;
 const origins = alias(messages, "origins");
+const roots = alias(messages, "roots");
+const rootOrigins = alias(messages, "root_origins");
 
 /** Quantas mensagens uma marcação aceita de uma vez (uma tela cheia cabe com folga). */
 const MARK_MAX = 500;
@@ -103,7 +105,13 @@ export type Reading = ReturnType<typeof createReading>;
 
 /**
  * As não-lidas do Membro (numa conversa, ou em todas), na ordem de exibição: cada mensagem de
- * pessoa na ordem de gravação, seguida das respostas ancoradas sob ela.
+ * pessoa do fluxo principal na ordem de gravação, seguida das respostas ancoradas sob ela e,
+ * depois delas, das Threads que penduram ali (cada Thread na ordem dela, com as respostas
+ * ancoradas sob cada mensagem).
+ *
+ * Uma mensagem de Thread só conta para quem segue a Thread, e só a partir de quando segue
+ * (`thread_follows.since`): quem não segue vê no fluxo principal só o resumo da Thread, e não
+ * ficaria com um badge que só some abrindo Threads de que não participa.
  */
 async function unreadRows(db: Db, memberId: string, conversationId?: string) {
   const rows = await db
@@ -115,6 +123,8 @@ async function unreadRows(db: Db, memberId: string, conversationId?: string) {
       mentioned: sql<boolean>`${messageMentions.messageId} is not null`,
       seq: messages.seq,
       originSeq: origins.seq,
+      rootSeq: roots.seq,
+      rootOriginSeq: rootOrigins.seq,
     })
     .from(messages)
     .innerJoin(
@@ -123,6 +133,12 @@ async function unreadRows(db: Db, memberId: string, conversationId?: string) {
     )
     .innerJoin(channels, eq(channels.id, messages.channelId))
     .leftJoin(origins, eq(origins.id, messages.originMessageId))
+    .leftJoin(roots, eq(roots.id, messages.threadRootId))
+    .leftJoin(rootOrigins, eq(rootOrigins.id, roots.originMessageId))
+    .leftJoin(
+      threadFollows,
+      and(eq(threadFollows.rootMessageId, messages.threadRootId), eq(threadFollows.memberId, memberId)),
+    )
     .leftJoin(messageReads, and(eq(messageReads.messageId, messages.id), eq(messageReads.memberId, memberId)))
     .leftJoin(messageMentions, and(eq(messageMentions.messageId, messages.id), eq(messageMentions.memberId, memberId)))
     .where(
@@ -132,12 +148,21 @@ async function unreadRows(db: Db, memberId: string, conversationId?: string) {
         or(isNull(messages.authorMemberId), ne(messages.authorMemberId, memberId)),
         // Quem entrou depois não herda o que veio antes (a resposta que chega depois, sim).
         sql`${messages.createdAt} >= ${channelParticipants.joinedAt}`,
+        // Na Thread, só quem segue, desde quando segue.
+        or(isNull(messages.threadRootId), sql`${messages.createdAt} >= ${threadFollows.since}`),
       ),
     );
-  const key = (r: (typeof rows)[number]) => [r.originSeq ?? r.seq, r.originSeq === null ? 0 : 1, r.seq];
+  /** A posição na tela: [grupo, lugar no grupo, ...], comparada em ordem. */
+  const key = (r: (typeof rows)[number]) => {
+    if (r.rootSeq === null) return r.originSeq === null ? [r.seq, 0, 0, 0, 0] : [r.originSeq, 1, r.seq, 0, 0];
+    // A Thread vem depois do grupo da raiz (a raiz pode ser uma resposta ancorada).
+    const group = r.rootOriginSeq ?? r.rootSeq;
+    return r.originSeq === null ? [group, 2, r.rootSeq, r.seq, 0] : [group, 2, r.rootSeq, r.originSeq, r.seq];
+  };
   return rows.sort((a, b) => {
     const [ka, kb] = [key(a), key(b)];
-    return ka[0]! - kb[0]! || ka[1]! - kb[1]! || ka[2]! - kb[2]!;
+    for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return ka[i]! - kb[i]!;
+    return 0;
   });
 }
 

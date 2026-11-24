@@ -49,6 +49,7 @@ describe("Conversas", () => {
         body: "Bom dia, time!",
         author: { kind: "member", id: expect.any(String), displayName: "Juliana", profilePicUrl: null },
         originMessageId: null,
+        threadRootId: null,
         mentions: [],
         createdAt: "2026-11-24T12:00:00.000Z",
       },
