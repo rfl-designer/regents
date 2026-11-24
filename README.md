@@ -40,7 +40,8 @@ bun run start          # servidor servindo o build (precisa de SHEARIM_IDENTITY,
 apps/server/        Bun + Hono + Drizzle
   src/app.ts        createApp(deps) -> { app, websocket, events }: o seam dos testes
   src/events.ts     WebSocket de eventos: EventHub.publish(audiência, evento)
-  src/conversations.ts  rotas de Canais, participantes, mensagens e Instruções do Canal
+  src/conversations.ts  rotas de Canais, participantes, mensagens de toda conversa e Instruções do Canal
+  src/dms.ts        rotas de DMs (abrir, listar)
   src/participation.ts  quem participa, quem vê (canSee) e quem recebe eventos (audienceOf)
   src/main.ts       entrypoint: serve | migrate
   src/db/           schema.ts (Drizzle), client.ts, connect.ts (Postgres ou PGlite)
@@ -62,7 +63,10 @@ const juliana = t.as({ id: "1001", name: "Juliana" });     // id = UserProfile.I
 await juliana.post(`/api/channels/${id}/messages`, { body: "oi" });
 t.clock.advance(90_000);
 await t.anonymous("funnel").get("/api/me");                  // sem identidade
+const bruno = await membroSemPedidoDeEntrada(t, juliana, { id: "2002", name: "Bruno" }); // PROVISÓRIO até o #16
 ```
+
+`membroSemPedidoDeEntrada(t, admin, pessoa)` (no arnês) faz `admin` chegar primeiro (vira Admin) e grava `pessoa` direto como Membro, devolvendo o `MeDto` dela. É provisório: o #16 troca por "pedir entrada + Admin aprova".
 
 O que cada teste abre é fechado sozinho no fim dele (`onCleanup` no arnês, executado pelo `afterEach` de `test/preload.ts`).
 
@@ -99,6 +103,19 @@ Um Canal público é visto por todo Membro; um privado só por quem participa. P
 | `PATCH /api/channel-settings/:id` | Admin | `{ instructions?, recentMessages? }` (N inteiro ≥ 0, padrão 30) |
 
 Toda mudança num Canal (criado, alguém entrou, Instruções ou N) sai como `channel.updated` com o `ChannelDto` inteiro, para quem vê o Canal; o cliente insere ou troca pelo `id`.
+
+### DMs e conversas
+
+Uma DM é uma conversa fechada sem nome, fora dos Canais: `dm` (duas pessoas; com o #23, pessoa e Agente) ou `group` (três ou mais). Ela mora na mesma tabela dos Canais (`channels.kind`), sem nome, com Instruções vazias e N fixo em 30; por isso o mesmo id serve para mensagens, participantes, eventos (`canSee`/`audienceOf` valem igual) e, daqui para frente, Threads, não-lido e push. As rotas de Canal e as Instruções dos Canais não conhecem DMs (404).
+
+| Rota | Quem | O quê |
+|---|---|---|
+| `GET /api/dms` | Membro | as DMs de que ele participa (`DmDto`: `id`, `kind`, participantes) |
+| `POST /api/dms` | Membro | `{ memberIds }` (as outras pessoas). Com exatamente as mesmas pessoas e o mesmo tipo, devolve a que existe (200); senão, abre uma (201) |
+| `GET /api/conversations/:id/messages` | quem vê | mensagens de qualquer conversa (Canal ou DM) |
+| `POST /api/conversations/:id/messages` | quem vê | `{ body }`; `/api/channels/:id/messages` continua, só para Canais |
+
+Uma DM nova sai como `dm.updated` (com o `DmDto`) para os participantes. `MessageDto.channelId` é o id da conversa, Canal ou DM.
 
 Para provar que algo **não** chegou, sem `sleep`: publique depois um evento que chega a todos e verifique que o próximo evento daquele tipo na conexão é ele (exemplo em `apps/server/test/realtime.test.ts`).
 

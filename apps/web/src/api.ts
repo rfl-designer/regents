@@ -3,6 +3,7 @@ import type {
   ChannelDto,
   ChannelSettingsDto,
   CreateChannelInput,
+  DmDto,
   MeDto,
   MemberSummaryDto,
   MessageDto,
@@ -55,7 +56,11 @@ export const api = {
   channelSettings: () => call<ChannelSettingsDto[]>("/api/channel-settings"),
   updateChannelSettings: (channelId: string, input: UpdateChannelSettingsInput) =>
     call<ChannelSettingsDto>(`/api/channel-settings/${channelId}`, json("PATCH", input)),
-  messages: (channelId: string) => call<MessageDto[]>(`/api/channels/${channelId}/messages`),
-  send: (channelId: string, input: SendMessageInput) =>
-    call<MessageDto>(`/api/channels/${channelId}/messages`, json("POST", input)),
+  dms: () => call<DmDto[]>("/api/dms"),
+  /** Abre a DM com essas pessoas, ou devolve a que já existe com elas. */
+  openDm: (memberIds: string[]) => call<DmDto>("/api/dms", json("POST", { memberIds })),
+  /** Mensagens de qualquer conversa (Canal ou DM). */
+  messages: (conversationId: string) => call<MessageDto[]>(`/api/conversations/${conversationId}/messages`),
+  send: (conversationId: string, input: SendMessageInput) =>
+    call<MessageDto>(`/api/conversations/${conversationId}/messages`, json("POST", input)),
 };
