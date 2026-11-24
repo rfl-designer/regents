@@ -234,11 +234,13 @@ export function createApp(deps: AppDeps) {
     },
     push,
     /**
-     * A subida: limpa as pastas de Conta (pastas de login órfãs, lock de renovação), põe a fila para
+     * A subida: limpa as pastas de Conta (pastas de login órfãs, lock de renovação), liga a releitura
+     * diária da validade das Contas, põe a fila para
      * andar e, com `installation.watch`, a verificação do backup e da chave do nó.
      */
     async start() {
       await accounts.recover();
+      accounts.watch();
       executions.start();
       if (deps.installation?.watch) installation.start();
     },

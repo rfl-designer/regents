@@ -89,6 +89,18 @@ const OPEN_STATES: ExecutionState[] = ["queued", "running", "retrying"];
 export interface PayingAccounts {
   markLimited(memberId: string, configDir: string, until: Date | null): Promise<void>;
   markNeedsRelink(memberId: string, configDir: string): Promise<void>;
+  /**
+   * Segura a pasta `configDir` enquanto um `claude -p` roda nela: depois de ligar de novo, a pasta
+   * antiga só é apagada quando o último solta (ADR 0005). `null` quando a pasta já saiu de uso (a
+   * Conta acabou de ser ligada de novo): a execução volta para a fila e decide de novo quem paga.
+   */
+  lease(memberId: string, configDir: string): (() => void) | null;
+  /** O fim com sucesso pela pasta `configDir`: a validade (`credential_expires_at`) e o uso extra. */
+  runEnded(
+    memberId: string,
+    configDir: string,
+    seen: { credentialExpiresAt?: Date; extraUsage?: boolean },
+  ): Promise<void>;
 }
 
 /** Ganchos de domínio das execuções. */
@@ -400,19 +412,31 @@ export function createExecutions(deps: {
       await hold(job, payer.until);
       return undefined;
     }
-    await db
-      .update(executions)
-      .set({ payer: payer.kind, apiRetryAttempt: null, apiRetryMax: null })
-      .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
-    await publish(job.id);
-    const request = await build(payer);
-    const startedAt = clock.now();
-    const result = await complete(job, controller, request);
-    if (result && payer.kind === "key") {
-      const end = result.end;
-      if (end?.type === "done") await ledger.charged(job, { model: request.model, ...end, startedAt });
-      if (end?.type === "auth_failed" || end?.type === "billing_failed") await ledger.refused(end.type);
-      return result;
+    // A pasta fica segura até o fim do `claude -p`; se ela acabou de sair de uso (a Conta foi
+    // ligada de novo), a execução volta para a fila e o trabalhador decide de novo.
+    const release = payer.kind === "account" ? deps.accounts.lease(payer.memberId, payer.configDir) : undefined;
+    if (release === null) {
+      await requeue(job);
+      return undefined;
+    }
+    let result: Awaited<ReturnType<typeof complete>>;
+    try {
+      await db
+        .update(executions)
+        .set({ payer: payer.kind, apiRetryAttempt: null, apiRetryMax: null })
+        .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
+      await publish(job.id);
+      const request = await build(payer);
+      const startedAt = clock.now();
+      result = await complete(job, controller, request);
+      if (result && payer.kind === "key") {
+        const end = result.end;
+        if (end?.type === "done") await ledger.charged(job, { model: request.model, ...end, startedAt });
+        if (end?.type === "auth_failed" || end?.type === "billing_failed") await ledger.refused(end.type);
+        return result;
+      }
+    } finally {
+      release?.();
     }
     if (!result || payer.kind !== "account") return result;
     if (result.end?.type === "limit" || result.end?.type === "auth_failed") {
@@ -424,11 +448,9 @@ export function createExecutions(deps: {
       await requeue(job);
       return undefined;
     }
-    if (result.end?.type === "done" && result.end.credentialExpiresAt) {
-      await db
-        .update(accounts)
-        .set({ credentialExpiresAt: result.end.credentialExpiresAt })
-        .where(and(eq(accounts.memberId, payer.memberId), eq(accounts.configDir, payer.configDir)));
+    if (result.end?.type === "done") {
+      const { credentialExpiresAt, extraUsage } = result.end;
+      await deps.accounts.runEnded(payer.memberId, payer.configDir, { credentialExpiresAt, extraUsage });
     }
     return result;
   }

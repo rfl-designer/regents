@@ -483,13 +483,17 @@ export const accounts = pgTable("accounts", {
   claudeOrgId: text(),
   subscriptionType: text(),
   planTier: text(),
-  /** `loginExpiresAt` do `auth status --json`. A validade mostrada sai daqui (#35). */
+  /** `loginExpiresAt` do `auth status --json` (ao ligar e uma vez por dia). A validade sai daqui. */
   loginExpiresAt: timestamp({ withTimezone: true }),
   /**
    * O `credential_expires_at` da execução mais recente pela Conta. A validade mostrada é a mais
-   * cedo entre esta e `loginExpiresAt`, menos 3 dias (#35).
+   * cedo entre esta e `loginExpiresAt`, menos 3 dias.
    */
   credentialExpiresAt: timestamp({ withTimezone: true }),
+  /** Quando saiu o aviso de vencimento (3 dias antes da validade) deste login: um só por login. */
+  expiryWarnedAt: timestamp({ withTimezone: true }),
+  /** "usando uso extra": a execução mais recente que trouxe `rate_limit_event` passou do plano. */
+  extraUsage: boolean().notNull().default(false),
   /** A pasta de `CLAUDE_CONFIG_DIR` em uso. */
   configDir: text(),
   /** "No limite até HH:MM": a Conta não paga até esta hora (o `resetsAt` do limite). */

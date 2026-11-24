@@ -6,9 +6,9 @@ import type { Push } from "./push";
 import { hasWorkspaceKey } from "./workspace-key";
 
 /**
- * Os pushes da Conta (Spec, módulo 12, "Gatilhos"): a queda (história 41) e a assinatura repetida
- * (história 43). A Conta é só do Membro: cada push vai só ao dono dela, nunca a um Admin. O aviso
- * de vencimento 3 dias antes (história 38) é do #35: um `notify` igual, com `tag: "conta"`.
+ * Os pushes da Conta (Spec, módulo 12, "Gatilhos"): a queda (história 41), a assinatura repetida
+ * (história 43) e o aviso de vencimento 3 dias antes (histórias 38 e 39). A Conta é só do Membro:
+ * cada push vai só ao dono dela, nunca a um Admin.
  */
 export function accountPushes(deps: { db: Db; notify: Push["notify"] }): AccountHooks {
   const { db, notify } = deps;
@@ -44,6 +44,29 @@ export function accountPushes(deps: { db: Db; notify: Push["notify"] }): Account
       );
     },
 
+    accountExpiring(memberId, validity) {
+      later(
+        "do vencimento da Conta",
+        (async () => {
+          // O que acontece depois do vencimento: a Chave, ou a fila até ligar de novo (história 39).
+          const then = (await hasWorkspaceKey(db))
+            ? "suas mensagens passam a seguir pela Chave do Workspace."
+            : "suas mensagens com Agentes esperam na fila até você ligar de novo.";
+          const n =
+            validity.state === "soon"
+              ? {
+                  title: `Ligue sua Conta do Claude de novo até ${dayOf(validity.until)}`,
+                  body: `Depois disso, ela pode parar a qualquer momento, e ${then}`,
+                }
+              : {
+                  title: "Sua Conta do Claude pode vencer a qualquer momento",
+                  body: `Ligue de novo em Minha Conta. Quando ela vencer, ${then}`,
+                };
+          notify(memberId, { ...n, path: ACCOUNT_PATH, tag: "conta", urgency: "normal" });
+        })(),
+      );
+    },
+
     subscriptionShared(owners, memberId) {
       later(
         "da assinatura repetida",
@@ -63,6 +86,11 @@ export function accountPushes(deps: { db: Db; notify: Push["notify"] }): Account
       );
     },
   };
+}
+
+/** `21/12`, na hora local do servidor (`TZ`), como "Minha Conta" mostra o "vale até". */
+function dayOf(at: Date) {
+  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" }).format(at);
 }
 
 /** `15:45`, na hora local do servidor (`TZ`), como "Minha Conta" mostra o "No limite até". */

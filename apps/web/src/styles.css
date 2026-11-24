@@ -789,6 +789,25 @@ button.primary {
   color: var(--muted);
   font-size: 0.9rem;
 }
+/* A linha da Conta em destaque: faltam 3 dias ou menos para a validade do login. */
+.account-status.expiring {
+  border-color: var(--warn);
+  background: var(--warn-bg);
+}
+.account-status.expiring .validity {
+  color: var(--warn);
+  font-weight: 600;
+}
+/* O selo no menu pessoal ("Minha Conta"): a validade da Conta pede atenção. */
+.selo {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+  vertical-align: middle;
+}
 .steps form {
   display: flex;
   flex-direction: column;

@@ -23,6 +23,8 @@ async function until(aba: EventSocket, done: (a: AccountDto) => boolean): Promis
     if (done(account)) return account;
   }
 }
+/** A validade do login do dublê (`loginExpiresAt` 2026-12-24T12:00Z menos 3 dias); sem Chave no Workspace. */
+const VALIDADE = { until: "2026-12-21T12:00:00.000Z", state: "ok", afterwards: "queue" } as const;
 const linkingIs = (state: string) => (a: AccountDto) => a.linking?.state === state;
 
 /** "Ligar minha Conta do Claude" até a URL aparecer. */
@@ -78,7 +80,13 @@ describe("Ligar minha Conta do Claude", () => {
 
     const ligada = await until(aba, (a) => a.linking === null);
     expect(ligada).toEqual({
-      status: { state: "linked", email: "fulana@exemplo.com", plan: "Claude Max" },
+      status: {
+        state: "linked",
+        email: "fulana@exemplo.com",
+        plan: "Claude Max",
+        validity: VALIDADE,
+        extraUsage: false,
+      },
       linking: null,
       offer: false,
     });
@@ -328,7 +336,13 @@ describe("assinatura já ligada a outro Membro", () => {
     const res = await t.as(bruno).post("/api/account/linking/confirm");
     expect(res.status).toBe(202);
     const ligada = await until(doBruno, (a) => a.linking === null);
-    expect(ligada.status).toEqual({ state: "linked", email: "fulana@exemplo.com", plan: "Claude Max" });
+    expect(ligada.status).toEqual({
+      state: "linked",
+      email: "fulana@exemplo.com",
+      plan: "Claude Max",
+      validity: VALIDADE,
+      extraUsage: false,
+    });
     expect((await account(t, juliana)).status.state).toBe("linked");
   });
 
@@ -358,7 +372,13 @@ describe("assinatura já ligada a outro Membro", () => {
 
     const fim = await link(t, bruno, doBruno);
 
-    expect(fim.status).toEqual({ state: "linked", email: "bruno@exemplo.com", plan: "Claude Pro" });
+    expect(fim.status).toEqual({
+      state: "linked",
+      email: "bruno@exemplo.com",
+      plan: "Claude Pro",
+      validity: VALIDADE,
+      extraUsage: false,
+    });
   });
 });
 
@@ -380,16 +400,17 @@ describe("Desligar", () => {
     expect((await until(aba, (a) => a.status.state === "not_linked")).linking).toBeNull();
   });
 
-  test("com a Conta ligada, ligar outra é recusado até desligar (religar é do #35)", async () => {
+  test("com a Conta ligada, ligar de novo abre um login novo sem mexer na Conta", async () => {
     const t = await testApp();
     await workspace(t);
     const aba = await t.socket(bruno);
-    await link(t, bruno, aba);
+    const ligada = await link(t, bruno, aba);
 
     const res = await t.as(bruno).post("/api/account/linking");
 
-    expect(res.status).toBe(409);
-    expect(t.claude.callsOf("auth login")).toHaveLength(1);
+    expect(res.status).toBe(202);
+    expect((await until(aba, linkingIs("waiting_code"))).status).toEqual(ligada.status);
+    expect(t.claude.callsOf("auth login")).toHaveLength(2);
   });
 });
 

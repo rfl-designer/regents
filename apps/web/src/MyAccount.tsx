@@ -1,9 +1,31 @@
-import type { AccountDto } from "@shearim/contracts";
+import type { AccountDto, AccountValidityDto } from "@shearim/contracts";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ApiFailure, api } from "./api";
 import { useServerEvents } from "./live";
 
 const hour = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
+const day = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" });
+
+/** A validade do login da Conta, quando ela pede atenção (faltam 3 dias ou menos, ou já passou). */
+export function expiringValidity(account: AccountDto | null): AccountValidityDto | null {
+  const status = account?.status;
+  if (status?.state !== "linked" && status?.state !== "limited") return null;
+  return status.validity && status.validity.state !== "ok" ? status.validity : null;
+}
+
+/** "vale até 21/12" ou, passada a data, "pode vencer a qualquer momento". */
+function validityLabel(validity: AccountValidityDto) {
+  return validity.state === "any_time"
+    ? "pode vencer a qualquer momento"
+    : `vale até ${day.format(new Date(validity.until))}`;
+}
+
+/** O que acontece depois do vencimento (história 39). */
+function afterwardsText(validity: AccountValidityDto) {
+  return validity.afterwards === "key"
+    ? "as suas mensagens passam a seguir pela Chave do Workspace"
+    : "as suas mensagens aos Agentes esperam na fila até você ligar de novo";
+}
 
 /**
  * A Conta do Claude do próprio Membro, viva (só com `enabled`, isto é, já Membro): carrega pelo HTTP e acompanha
@@ -104,11 +126,18 @@ export function MyAccount({ state }: { state: AccountState }) {
     if (code.trim()) await run(() => api.account.submitCode({ code }));
   };
   const linking = account.linking;
+  const status = account.status;
+  const validity = status.state === "linked" || status.state === "limited" ? status.validity : null;
+  const expiring = expiringValidity(account);
 
   return (
     <main className="account">
       <h1>Minha Conta</h1>
-      <section className="account-status" aria-label="Estado da Conta">
+      <section
+        className={expiring ? "account-status expiring" : "account-status"}
+        aria-label="Estado da Conta"
+        data-expiring={expiring ? "true" : undefined}
+      >
         {account.status.state === "not_linked" ? (
           <strong>Não ligada</strong>
         ) : (
@@ -123,9 +152,19 @@ export function MyAccount({ state }: { state: AccountState }) {
             <span>
               {account.status.plan} · {account.status.email}
             </span>
+            {validity && <span className="validity">{validityLabel(validity)}</span>}
+            {status.state === "linked" && status.extraUsage && <span className="extra-usage">usando uso extra</span>}
           </>
         )}
       </section>
+      {expiring && !linking && (
+        <p className="hint expiring-hint" role="status">
+          {expiring.state === "any_time"
+            ? "O login da sua Conta do Claude pode vencer a qualquer momento."
+            : `O login da sua Conta do Claude pode vencer a partir de ${day.format(new Date(expiring.until))}.`}{" "}
+          Ligue de novo para não interromper. Quando ele vencer, {afterwardsText(expiring)}.
+        </p>
+      )}
       {account.status.state === "limited" && (
         <p className="hint">Até lá, as suas mensagens aos Agentes usam a Chave do Workspace ou esperam na fila.</p>
       )}
@@ -233,6 +272,12 @@ export function MyAccount({ state }: { state: AccountState }) {
             </button>
           </div>
         </section>
+      )}
+
+      {!linking && (status.state === "linked" || status.state === "limited") && (
+        <button type="button" className={expiring ? "primary" : undefined} onClick={start}>
+          Ligar de novo
+        </button>
       )}
 
       {account.status.state !== "not_linked" &&

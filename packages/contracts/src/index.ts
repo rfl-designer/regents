@@ -629,10 +629,30 @@ export interface OutcomeDto {
  */
 export type AccountStatusDto =
   | { state: "not_linked" }
-  /** `plan` já vem pronto para a tela, ex. "Claude Max". */
-  | { state: "linked"; email: string; plan: string }
-  | { state: "limited"; email: string; plan: string; until: string }
+  /**
+   * `plan` já vem pronto para a tela, ex. "Claude Max". `extraUsage`: "usando uso extra" (a última
+   * execução passou do plano com o uso extra ligado).
+   */
+  | { state: "linked"; email: string; plan: string; validity: AccountValidityDto | null; extraUsage: boolean }
+  | { state: "limited"; email: string; plan: string; until: string; validity: AccountValidityDto | null }
   | { state: "needs_relink"; email: string; plan: string };
+
+/**
+ * A validade do login da Conta (ADR 0005). `until` é a data mais cedo em que ele pode cair: o
+ * `loginExpiresAt` do `claude auth status` (ou o `credential_expires_at` de uma execução, se vier
+ * antes) menos 3 dias. "Minha Conta" mostra "vale até DD/MM".
+ * - `ok`: faltam mais de 3 dias.
+ * - `soon`: faltam 3 dias ou menos: o selo no menu pessoal e a linha da Conta em destaque.
+ * - `any_time`: passou de `until`: "pode vencer a qualquer momento".
+ *
+ * `afterwards` diz o que acontece depois do vencimento: as mensagens seguem pela Chave do
+ * Workspace (`key`) ou, sem ela, esperam na fila até ligar de novo (`queue`).
+ */
+export interface AccountValidityDto {
+  until: string;
+  state: "ok" | "soon" | "any_time";
+  afterwards: "key" | "queue";
+}
 
 /**
  * O fluxo "Ligar minha Conta do Claude" em andamento, ou o fim dele que a tela ainda mostra.
