@@ -7,6 +7,7 @@ import {
   type MessageDto,
   mentionPattern,
   normalizeHandle,
+  type OutcomeDto,
 } from "@shearim/contracts";
 import {
   type FormEvent,
@@ -117,6 +118,8 @@ export function Conversation({
 }) {
   const [messages, setMessages] = useState<MessageDto[] | null>(null);
   const [executions, setExecutions] = useState<Record<string, ExecutionDto>>({});
+  /** O Desfecho de cada mensagem que recebeu um, pela mensagem. */
+  const [outcomes, setOutcomes] = useState<Record<string, OutcomeDto>>({});
   const [loadError, setLoadError] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -132,11 +135,13 @@ export function Conversation({
       api.messages(conversationId),
       api.executions(conversationId),
       api.conversationUnread(conversationId),
+      api.outcomes(conversationId),
     ]).then(
-      ([list, running, unread]) => {
+      ([list, running, unread, decided]) => {
         setLoadError(false);
         setMessages((prev) => append(list, prev ?? []));
         setExecutions(Object.fromEntries(running.map((e) => [e.id, e])));
+        setOutcomes(Object.fromEntries(decided.map((o) => [o.messageId, o])));
         loaded(unread.messageIds);
       },
       () => setLoadError(true),
@@ -154,6 +159,10 @@ export function Conversation({
     }
     if (event.type === "execution.updated" && event.execution.channelId === conversationId) {
       setExecutions((prev) => upsertExecution(prev, event.execution));
+    }
+    if (event.type === "outcome.created" && event.outcome.channelId === conversationId) {
+      const { outcome } = event;
+      setOutcomes((prev) => ({ ...prev, [outcome.messageId]: outcome }));
     }
     // Quem escreveu trocou o nome ou a foto: as mensagens dele já mostram o novo.
     if (event.type === "member.updated") {
@@ -201,9 +210,12 @@ export function Conversation({
   }
   const ids = new Set(messages?.map((m) => m.id));
   const top = messages?.filter((m) => !m.originMessageId || !ids.has(m.originMessageId)) ?? [];
+  // O roteamento em curso fica sob a mensagem ("Sophya decidindo"); o resto, no lugar da resposta.
   const pending = new Map<string, ExecutionDto[]>();
+  const deciding = new Map<string, ExecutionDto>();
   for (const e of Object.values(executions)) {
-    pending.set(e.originMessageId, [...(pending.get(e.originMessageId) ?? []), e]);
+    if (e.kind === "route" && (e.state === "queued" || e.state === "running")) deciding.set(e.originMessageId, e);
+    else pending.set(e.originMessageId, [...(pending.get(e.originMessageId) ?? []), e]);
   }
   const now = useNow(Object.values(executions).some((e) => OPEN.includes(e.state)));
   const showExecution = (e: ExecutionDto) => setExecutions((prev) => upsertExecution(prev, e));
@@ -233,11 +245,20 @@ export function Conversation({
             const running = pending.get(m.id) ?? [];
             const mine = m.author.kind === "member" && m.author.id === me.id;
             const cancellable = mine && running.some((e) => OPEN.includes(e.state));
+            const cancel = () => api.cancelMessage(conversationId, m.id).then((list) => list.forEach(showExecution));
             return (
               <Fragment key={m.id}>
                 {reading.divider === m.id && newLine}
                 <li className="message-group">
-                  <MessageRow message={m} me={me} flash={reading.flashId === m.id} />
+                  <MessageRow
+                    message={m}
+                    me={me}
+                    flash={reading.flashId === m.id}
+                    outcome={outcomes[m.id]}
+                    deciding={deciding.get(m.id)}
+                    now={now}
+                    onCancel={mine && !cancellable ? cancel : undefined}
+                  />
                   {(answers.length > 0 || running.length > 0) && (
                     <ul className="anchored" aria-label={`Respostas a ${m.author.displayName}`}>
                       {answers.map((r) => (
@@ -261,11 +282,7 @@ export function Conversation({
                       ))}
                       {cancellable && (
                         <li>
-                          <CancelButton
-                            onCancel={() =>
-                              api.cancelMessage(conversationId, m.id).then((list) => list.forEach(showExecution))
-                            }
-                          />
+                          <CancelButton onCancel={cancel} />
                         </li>
                       )}
                     </ul>
@@ -308,7 +325,31 @@ export function Conversation({
   );
 }
 
-function MessageRow({ message: m, me, flash }: { message: MessageDto; me: MeDto; flash?: boolean }) {
+/** "Faro", "Faro e Prisma", "Faro, Prisma e Lince". */
+function joinNames(names: string[]) {
+  return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} e ${names.at(-1)}`;
+}
+
+function MessageRow({
+  message: m,
+  me,
+  flash,
+  outcome,
+  deciding,
+  now = 0,
+  onCancel,
+}: {
+  message: MessageDto;
+  me: MeDto;
+  flash?: boolean;
+  /** O Desfecho da Articuladora a esta mensagem (só a de pessoa, num Canal com outros Agentes). */
+  outcome?: OutcomeDto;
+  /** O roteamento em curso: "Sophya decidindo quem responde · 0:03". */
+  deciding?: ExecutionDto;
+  now?: number;
+  /** Quem escreveu cancela enquanto a Articuladora decide. */
+  onCancel?(): Promise<void>;
+}) {
   const agent = m.author.kind === "agent";
   const mentionsMe = m.mentions.some((x) => x.kind === "member" && x.id === me.id);
   const className = ["message", agent && "agent", mentionsMe && "mentions-me"].filter(Boolean).join(" ");
@@ -328,9 +369,18 @@ function MessageRow({ message: m, me, flash }: { message: MessageDto; me: MeDto;
         <div className="meta">
           <strong>{m.author.displayName}</strong>
           <time dateTime={m.createdAt}>{time.format(new Date(m.createdAt))}</time>
+          {outcome?.decision === "none" && <NoneMark outcome={outcome} />}
           {mentionsMe && <span className="mention-tag">menciona você</span>}
         </div>
         <p className="body">{mentionsMe ? highlightMe(m.body, me.handle) : m.body}</p>
+        {deciding && (
+          <p className="micro" role="status" aria-label={`${deciding.agent.displayName} decidindo quem responde`}>
+            <span className="spin" aria-hidden="true" />
+            {deciding.agent.displayName} decidindo quem responde · {elapsed(deciding.since, now)}
+          </p>
+        )}
+        {deciding && onCancel && <CancelButton onCancel={onCancel} />}
+        {outcome?.decision === "delegate" && <DelegationLine outcome={outcome} />}
       </div>
     </article>
   );
@@ -338,6 +388,61 @@ function MessageRow({ message: m, me, flash }: { message: MessageDto; me: MeDto;
 
 /** O que ainda não terminou: tem cronômetro e o autor pode cancelar. */
 const OPEN: ExecutionDto["state"][] = ["queued", "running", "retrying"];
+
+/**
+ * "Nenhum Agente precisa agir": só um `⌀` discreto ao lado da hora. O motivo aparece ao passar o
+ * mouse (`title`) ou ao tocar.
+ */
+function NoneMark({ outcome }: { outcome: OutcomeDto }) {
+  const [open, setOpen] = useState(false);
+  const text = `${outcome.by.displayName}: nenhum Agente precisa agir. ${outcome.reason}`;
+  return (
+    <>
+      <button
+        type="button"
+        className="nil"
+        title={text}
+        aria-label={text}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        ⌀
+      </button>
+      {open && (
+        <span className="micro" role="note">
+          {text}
+        </span>
+      )}
+    </>
+  );
+}
+
+/** "↳ Sophya passou para Faro e Prisma": o motivo e o que cada um cobre, ao passar o mouse ou tocar. */
+function DelegationLine({ outcome }: { outcome: OutcomeDto }) {
+  const [open, setOpen] = useState(false);
+  const line = `↳ ${outcome.by.displayName} passou para ${joinNames(outcome.delegates.map((d) => d.agent.displayName))}`;
+  const detail = [outcome.reason, ...outcome.delegates.map((d) => `${d.agent.displayName}: ${d.cover}`)];
+  return (
+    <div className="delegation">
+      <button
+        type="button"
+        className="micro link-quiet"
+        title={detail.join("\n")}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {line}
+      </button>
+      {open && (
+        <ul className="micro delegation-detail" aria-label="Por que e o que cada um cobre">
+          {detail.map((d) => (
+            <li key={d}>{d}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 /**
  * O Andamento no lugar onde a resposta vai entrar: a bolha "escrevendo · 0:05" (com "2ª tentativa"

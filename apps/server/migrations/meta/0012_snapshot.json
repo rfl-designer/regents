@@ -1,5 +1,5 @@
 {
-  "id": "3668cd08-7801-4b8a-b9ae-7bf10f6d59f2",
+  "id": "2800402e-66e8-47c3-a637-0a6511f4e4b1",
   "prevId": "7ee62bb1-1db3-4de7-a1aa-8f1e3a4c6385",
   "version": "7",
   "dialect": "postgresql",
@@ -145,6 +145,13 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
+        },
+        "builtin": {
+          "name": "builtin",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         }
       },
       "indexes": {
@@ -162,74 +169,19 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.backups": {
-      "name": "backups",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
         },
-        "started_at": {
-          "name": "started_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "finished_at": {
-          "name": "finished_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "ok": {
-          "name": "ok",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "file": {
-          "name": "file",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "bytes": {
-          "name": "bytes",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "error": {
-          "name": "error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "backups_finished_at_index": {
-          "name": "backups_finished_at_index",
+        "agents_one_builtin": {
+          "name": "agents_one_builtin",
           "columns": [
             {
-              "expression": "finished_at",
+              "expression": "builtin",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
-          "isUnique": false,
+          "isUnique": true,
+          "where": "\"agents\".\"builtin\"",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -765,76 +717,6 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.installation": {
-      "name": "installation",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "default": 1
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "installation_uma_linha": {
-          "name": "installation_uma_linha",
-          "value": "\"installation\".\"id\" = 1"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.installation_alerts": {
-      "name": "installation_alerts",
-      "schema": "",
-      "columns": {
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "ref": {
-          "name": "ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "sent_at": {
-          "name": "sent_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "installation_alerts_kind_ref_pk": {
-          "name": "installation_alerts_kind_ref_pk",
-          "columns": [
-            "kind",
-            "ref"
-          ]
-        }
-      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -1462,6 +1344,100 @@
       },
       "isRLSEnabled": false
     },
+    "public.outcomes": {
+      "name": "outcomes",
+      "schema": "",
+      "columns": {
+        "message_id": {
+          "name": "message_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "channel_id": {
+          "name": "channel_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "decision": {
+          "name": "decision",
+          "type": "outcome_decision",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "delegates": {
+          "name": "delegates",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "decided_at": {
+          "name": "decided_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "outcomes_channel_id_index": {
+          "name": "outcomes_channel_id_index",
+          "columns": [
+            {
+              "expression": "channel_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "outcomes_message_id_messages_id_fk": {
+          "name": "outcomes_message_id_messages_id_fk",
+          "tableFrom": "outcomes",
+          "tableTo": "messages",
+          "columnsFrom": [
+            "message_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "outcomes_channel_id_channels_id_fk": {
+          "name": "outcomes_channel_id_channels_id_fk",
+          "tableFrom": "outcomes",
+          "tableTo": "channels",
+          "columnsFrom": [
+            "channel_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.push_streaks": {
       "name": "push_streaks",
       "schema": "",
@@ -1726,7 +1702,10 @@
       "schema": "public",
       "values": [
         "mention",
-        "dm"
+        "dm",
+        "route",
+        "reply",
+        "delegated"
       ]
     },
     "public.execution_state": {
@@ -1757,6 +1736,15 @@
       "values": [
         "admin",
         "member"
+      ]
+    },
+    "public.outcome_decision": {
+      "name": "outcome_decision",
+      "schema": "public",
+      "values": [
+        "reply",
+        "delegate",
+        "none"
       ]
     }
   },
