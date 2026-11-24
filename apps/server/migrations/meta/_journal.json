@@ -1,0 +1,160 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1795512757775,
+      "tag": "0000_init",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795514305597,
+      "tag": "0001_canais-privados-e-participantes",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795515004087,
+      "tag": "0002_join_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795515272217,
+      "tag": "0003_contas",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795515736102,
+      "tag": "0004_dms-entre-pessoas-e-em-grupo",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795516284920,
+      "tag": "0005_agentes-chave-e-execucoes",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795516862458,
+      "tag": "0006_perfil-e-mencao",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795517231098,
+      "tag": "0007_contexto-do-workspace",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795517411937,
+      "tag": "0008_execucao-em-dm-com-agente",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795517690246,
+      "tag": "0009_leitura-mensagens-vistas",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795518173119,
+      "tag": "0010_vigia-falha-e-cancelamento",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795519185888,
+      "tag": "0011_push-e-presenca",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1795520282787,
+      "tag": "0012_articuladora-e-desfecho",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1795521033202,
+      "tag": "0013_validade-da-credencial-da-conta",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1795522970961,
+      "tag": "0014_threads",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1795525009758,
+      "tag": "0015_quem-paga-e-fila",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1795526884122,
+      "tag": "0016_backup-e-instalacao",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1795527691227,
+      "tag": "0017_saida-do-membro",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1795528110415,
+      "tag": "0018_orcamento-e-incidentes-da-chave",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1795530010170,
+      "tag": "0019_validade-e-religacao-da-conta",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795533108273,
+      "tag": "0020_porque-da-chave-na-resposta",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795537636768,
+      "tag": "0021_sem-tentar-de-novo-do-autor",
+      "breakpoints": true
+    }
+  ]
+}

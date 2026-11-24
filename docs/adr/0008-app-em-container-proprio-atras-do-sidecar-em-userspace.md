@@ -12,5 +12,6 @@ O sidecar do Tailscale roda no modo padrão da imagem (userspace), sem `/dev/net
 
 - Qualquer container ligado à rede interna do compose consegue falar com `app:3000` e forjar os headers. Essa rede tem só o sidecar, o app, o Postgres e o backup, e nenhum `docker-compose.override.yml` pode ligar outro serviço a ela.
 - O app continua montando o socket do tailscaled num volume comum e roda sem root, para chamar o `whois` pelo IP do `X-Forwarded-For` (ADR 0007).
+- No Linux, o próprio host alcança os IPs da bridge do compose, então qualquer processo da máquina falaria com `app:3000`. Por isso o app só lê o `X-Forwarded-For` de uma conexão cujo IP é o do sidecar (o nome `tailscale` resolvido na rede interna; `SHEARIM_PROXY_HOST`).
 - Uma porta do sidecar que escuta no loopback (o `/healthz` em `127.0.0.1:9002`) fica alcançável por um peer através do netstack. Ali só pode haver o que não tem segredo.
 - A imagem do Tailscale fica fixada em 1.104.4 ou mais nova (boletins TS-2026-016 e TS-2026-017). O nó usa `tag:shearim`, assim uma requisição feita de dentro da instalação não herda a identidade do dono do nó.

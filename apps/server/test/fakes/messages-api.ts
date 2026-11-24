@@ -1,0 +1,278 @@
+/**
+ * Dublê da Chave (Spec, "Testing Decisions"): um servidor HTTP falso da Messages API.
+ *
+ * Fala `POST /v1/messages` com `stream: true` em SSE, como a API real (nota 02), aceita a
+ * credencial em `x-api-key` ou em `Authorization: Bearer`, e simula `authentication_error`
+ * (401), `billing_error` (402), outros erros HTTP antes do stream, `event: error` no meio dele,
+ * pensamento, `ping` e um stream que fica pendurado até o cliente desistir.
+ *
+ * Nos testes: `t.anthropic` (ou `fakeMessagesApi()` do arnês) e `api.reply({...})` para roteirizar
+ * a próxima resposta. No e2e, `e2e/serve.ts` sobe este falso ao lado do servidor.
+ */
+
+/** O que o falso responde a uma chamada. Sem nada, responde um texto curto. */
+export interface FakeReply {
+  /** O texto da resposta, mandado em pedaços (`chunks`) ou palavra por palavra. */
+  text?: string;
+  chunks?: string[];
+  /** Saída estruturada (`output_config.format`): o JSON vai como o texto, em pedaços. */
+  json?: unknown;
+  /** Um bloco de pensamento (com texto vazio, como o `display: "omitted"`) antes do texto. */
+  thinking?: boolean;
+  /** Espera entre um evento e outro do stream. */
+  delayMs?: number;
+  /** Depois do `message_start`, não manda mais nada até o cliente fechar a conexão. */
+  hang?: boolean;
+  /** Pendurada, manda um `ping` a cada tantos ms (de verdade): sinal de conexão, não de progresso. */
+  pingEveryMs?: number;
+  /** Erro HTTP antes do stream, com o corpo de erro da API (`{ type: "error", error }`). */
+  status?: number;
+  errorType?: string;
+  errorMessage?: string;
+  /** `event: error` depois de alguns pedaços de texto (ex. `overloaded_error`). */
+  streamError?: { type: string; message: string };
+  stopReason?: string;
+  usage?: { input_tokens: number; output_tokens: number };
+}
+
+/** Uma chamada que chegou ao falso. */
+export interface RecordedRequest {
+  /** A credencial, viesse ela em `x-api-key` ou em `Authorization: Bearer`. */
+  apiKey: string | null;
+  /** Por onde a credencial veio. */
+  authVia: "x-api-key" | "bearer" | null;
+  anthropicVersion: string | null;
+  anthropicBeta: string | null;
+  body: {
+    model: string;
+    max_tokens: number;
+    stream?: boolean;
+    system?: string | { type: string; text: string }[];
+    messages: { role: string; content: string | { type: string; text?: string }[] }[];
+    [k: string]: unknown;
+  };
+}
+
+export interface FakeMessagesApi {
+  /** Base para o `baseURL` do SDK (sem `/v1`). */
+  url: string;
+  /** Roteiriza as próximas respostas, na ordem; acabado o roteiro, vale o padrão. */
+  reply(...replies: FakeReply[]): void;
+  /** Só estas credenciais passam; as outras recebem 401 `authentication_error`. Vazio: qualquer uma. */
+  acceptKeys(...keys: string[]): void;
+  requests: RecordedRequest[];
+  /** Espera até `n` chamadas terem chegado (o stream pode ainda estar aberto). */
+  waitForRequests(n: number, timeoutMs?: number): Promise<RecordedRequest[]>;
+  /** Espera até `n` `ping` terem sido mandados, somando todas as chamadas. */
+  waitForPings(n: number, timeoutMs?: number): Promise<void>;
+  stop(): Promise<void>;
+}
+
+const encoder = new TextEncoder();
+const sse = (event: string, data: unknown) => encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function credential(req: Request): Pick<RecordedRequest, "apiKey" | "authVia"> {
+  const key = req.headers.get("x-api-key");
+  if (key) return { apiKey: key, authVia: "x-api-key" };
+  const auth = req.headers.get("authorization");
+  const bearer = auth?.match(/^Bearer\s+(.+)$/i)?.[1];
+  if (bearer) return { apiKey: bearer, authVia: "bearer" };
+  return { apiKey: null, authVia: null };
+}
+
+function errorResponse(status: number, type: string, message: string) {
+  return Response.json(
+    { type: "error", error: { type, message }, request_id: `req_falso_${crypto.randomUUID()}` },
+    { status, headers: { "request-id": `req_falso_${crypto.randomUUID()}` } },
+  );
+}
+
+/** O texto da última mensagem de usuário (o padrão do e2e responde a ela). */
+export function lastUserText(body: RecordedRequest["body"]) {
+  const last = [...body.messages].reverse().find((m) => m.role === "user");
+  if (!last) return "";
+  if (typeof last.content === "string") return last.content;
+  return last.content.map((b) => b.text ?? "").join("");
+}
+
+/**
+ * O padrão: um texto curto; ao roteamento da Articuladora (com `output_config`), o Desfecho
+ * "nenhum", para um teste que não roteiriza o roteamento não ver resposta a mais.
+ */
+export function defaultFakeReply(req: RecordedRequest): FakeReply {
+  if (req.body.output_config) {
+    return { json: { decisao: "nenhum", agentes: [], motivo: "Resposta padrão do falso." } };
+  }
+  return { text: "Resposta de teste." };
+}
+
+export async function startFakeMessagesApi(
+  opts: { port?: number; defaultReply?: (req: RecordedRequest) => FakeReply } = {},
+): Promise<FakeMessagesApi> {
+  const script: FakeReply[] = [];
+  const requests: RecordedRequest[] = [];
+  const accepted = new Set<string>();
+  const arrivals: (() => void)[] = [];
+  let pings = 0;
+  const defaultReply = opts.defaultReply ?? defaultFakeReply;
+
+  function stream(reply: FakeReply, model: string, signal: AbortSignal) {
+    const usage = reply.usage ?? { input_tokens: 42, output_tokens: 12 };
+    const text = reply.json !== undefined ? JSON.stringify(reply.json) : reply.text;
+    const pieces = reply.chunks ?? (text ?? "").split(/(?<=\s)/).filter(Boolean);
+    const delay = reply.delayMs ?? 0;
+    return new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = async (event: string, data: unknown) => {
+          if (signal.aborted) throw new Error("cliente desistiu");
+          controller.enqueue(sse(event, data));
+          if (delay) await sleep(delay);
+        };
+        try {
+          await send("message_start", {
+            type: "message_start",
+            message: {
+              id: `msg_falso_${crypto.randomUUID()}`,
+              type: "message",
+              role: "assistant",
+              model,
+              content: [],
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: usage.input_tokens, output_tokens: 1 },
+            },
+          });
+          if (reply.hang) {
+            const pinger = reply.pingEveryMs
+              ? setInterval(() => {
+                  if (signal.aborted) return;
+                  controller.enqueue(sse("ping", { type: "ping" }));
+                  pings++;
+                }, reply.pingEveryMs)
+              : undefined;
+            await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+            clearInterval(pinger);
+            return;
+          }
+          let index = 0;
+          if (reply.thinking) {
+            await send("content_block_start", {
+              type: "content_block_start",
+              index,
+              content_block: { type: "thinking", thinking: "", signature: "" },
+            });
+            await send("content_block_delta", {
+              type: "content_block_delta",
+              index,
+              delta: { type: "signature_delta", signature: "assinatura-falsa" },
+            });
+            await send("content_block_stop", { type: "content_block_stop", index });
+            index++;
+          }
+          await send("content_block_start", {
+            type: "content_block_start",
+            index,
+            content_block: { type: "text", text: "" },
+          });
+          await send("ping", { type: "ping" });
+          for (const [i, text] of pieces.entries()) {
+            if (reply.streamError && i === Math.ceil(pieces.length / 2)) {
+              await send("error", { type: "error", error: reply.streamError });
+              controller.close();
+              return;
+            }
+            await send("content_block_delta", {
+              type: "content_block_delta",
+              index,
+              delta: { type: "text_delta", text },
+            });
+          }
+          if (reply.streamError && pieces.length === 0) {
+            await send("error", { type: "error", error: reply.streamError });
+            controller.close();
+            return;
+          }
+          await send("content_block_stop", { type: "content_block_stop", index });
+          await send("message_delta", {
+            type: "message_delta",
+            delta: { stop_reason: reply.stopReason ?? "end_turn", stop_sequence: null },
+            usage: { output_tokens: usage.output_tokens },
+          });
+          await send("message_stop", { type: "message_stop" });
+          controller.close();
+        } catch {
+          // O cliente fechou a conexão no meio: nada a fazer.
+          try {
+            controller.close();
+          } catch {}
+        }
+      },
+    });
+  }
+
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: opts.port ?? 0,
+    idleTimeout: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (req.method !== "POST" || url.pathname !== "/v1/messages") {
+        return errorResponse(404, "not_found_error", `Rota desconhecida no falso: ${req.method} ${url.pathname}`);
+      }
+      const body = (await req.json()) as RecordedRequest["body"];
+      const recorded: RecordedRequest = {
+        ...credential(req),
+        anthropicVersion: req.headers.get("anthropic-version"),
+        anthropicBeta: req.headers.get("anthropic-beta"),
+        body,
+      };
+      requests.push(recorded);
+      for (const wake of arrivals.splice(0)) wake();
+
+      if (!recorded.apiKey) return errorResponse(401, "authentication_error", "x-api-key header is required");
+      if (accepted.size && !accepted.has(recorded.apiKey)) {
+        return errorResponse(401, "authentication_error", "invalid x-api-key");
+      }
+      const reply = script.shift() ?? defaultReply(recorded);
+      if (reply.status) {
+        return errorResponse(reply.status, reply.errorType ?? "api_error", reply.errorMessage ?? "Erro do falso");
+      }
+      if (!body.stream) {
+        return errorResponse(400, "invalid_request_error", "O falso só fala em streaming (stream: true).");
+      }
+      return new Response(stream(reply, body.model, req.signal), {
+        headers: { "content-type": "text/event-stream", "cache-control": "no-cache", "request-id": "req_falso" },
+      });
+    },
+  });
+
+  return {
+    url: `http://127.0.0.1:${server.port}`,
+    reply: (...replies) => script.push(...replies),
+    acceptKeys: (...keys) => {
+      accepted.clear();
+      for (const k of keys) accepted.add(k);
+    },
+    requests,
+    async waitForRequests(n, timeoutMs = 2_000) {
+      const deadline = Date.now() + timeoutMs;
+      while (requests.length < n) {
+        const left = deadline - Date.now();
+        if (left <= 0) throw new Error(`Messages API falsa: esperava ${n} chamada(s), chegaram ${requests.length}`);
+        await Promise.race([new Promise<void>((r) => arrivals.push(r)), sleep(left)]);
+      }
+      return requests.slice(0, n);
+    },
+    async waitForPings(n, timeoutMs = 2_000) {
+      const deadline = Date.now() + timeoutMs;
+      while (pings < n) {
+        if (Date.now() > deadline) throw new Error(`Messages API falsa: esperava ${n} ping(s), foram ${pings}`);
+        await sleep(5);
+      }
+    },
+    stop: async () => {
+      await server.stop(true);
+    },
+  };
+}
