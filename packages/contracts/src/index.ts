@@ -464,12 +464,15 @@ export interface AgentToolSummaryDto {
 export interface ToolConnectorDto {
   id: string;
   name: string;
-  /** De quem é a credencial que a Ferramenta usa: do Workspace (uma só para todos). */
+  /** De quem é a credencial que a Ferramenta usa: do Workspace (uma só para todos) ou do autor. */
   credential: ConnectorCredentialMode;
 }
 
-/** De quem é a credencial de um Conector: do Workspace (uma só, colada pelo Admin). */
-export type ConnectorCredentialMode = "workspace";
+/**
+ * De quem é a credencial de um Conector: do Workspace (uma só, colada pelo Admin) ou de cada
+ * Membro (`member`: cada um liga a sua em Perfil › Conectores, e a resposta usa a do autor).
+ */
+export type ConnectorCredentialMode = "workspace" | "member";
 
 /**
  * Um Conector (Spec #44): a ligação do Workspace a um servidor MCP remoto, adicionada pelo Admin.
@@ -483,7 +486,10 @@ export interface ConnectorDto {
   /** O endereço do servidor MCP (streamable HTTP). */
   url: string;
   credential: ConnectorCredentialMode;
-  /** `refused`: o servidor recusou a credencial (401) numa chamada; o Admin cola outra. */
+  /**
+   * `refused`: o servidor recusou a credencial do Workspace (401) numa chamada; o Admin cola outra.
+   * No modo de cada Membro é sempre `ok` (a recusa é da credencial de cada um, no Perfil dele).
+   */
   credentialState: "ok" | "refused";
   /** Quando a credencial foi recusada (ISO 8601), ou `null`. */
   refusedAt: string | null;
@@ -504,11 +510,32 @@ export interface ConnectorToolDto {
   access: ToolAccess;
 }
 
-/** Corpo de `POST /api/connectors`: o nome (não se repete), o endereço e o token do Workspace. */
+/**
+ * Corpo de `POST /api/connectors`: o nome (não se repete), o endereço, o modo da credencial
+ * (padrão: do Workspace) e um token, que lê o catálogo. No modo do Workspace, ele é a credencial
+ * do Workspace; no de cada Membro, vira a credencial do próprio Admin (que a desliga no Perfil).
+ */
 export interface CreateConnectorInput {
   name: string;
   url: string;
   token: string;
+  credential?: ConnectorCredentialMode;
+}
+
+/**
+ * Um Conector com credencial de cada Membro, em Perfil › Conectores (`MY_CONNECTORS_PATH`), como o
+ * próprio Membro o vê: `GET /api/me/connectors`; ligar com `PUT /api/me/connectors/:id/credential`
+ * (`{ token }`, `422 credential_refused` se o servidor o recusa) e desligar com `DELETE` no mesmo
+ * caminho. O token nunca volta. Vai também no evento `my_connector.updated`, só ao Membro.
+ */
+export interface MyConnectorDto {
+  id: string;
+  name: string;
+  url: string;
+  /** `off`: não ligou; `ok`: ligada; `refused`: o servidor recusou (401) numa chamada, ligue de novo. */
+  credentialState: "off" | "ok" | "refused";
+  /** Quando foi recusada (ISO 8601), ou `null`. */
+  refusedAt: string | null;
 }
 
 /**
@@ -545,6 +572,16 @@ export interface ToolCallDto {
   reason: string | null;
   /** Quando começou (ISO 8601). */
   startedAt: string;
+  /**
+   * Em `done`, numa Ferramenta de Conector com a credencial de cada Membro: de quem foi a
+   * credencial, para todos ("usou o CRM de Ana").
+   */
+  used?: string;
+  /**
+   * Só na cópia do autor, numa Ferramenta indisponível porque ele não ligou (ou teve recusada) a
+   * credencial dele: o atalho "Ligar <Conector>" (Perfil › Conectores).
+   */
+  connect?: { connectorId: string; name: string };
 }
 
 /** `GET`/`PUT /api/workspace-key` (só Admin). A Chave em si nunca volta ao navegador. */
@@ -968,6 +1005,8 @@ export const WORKSPACE_KEY_PATH = "/chave";
 export const AGENTS_PATH = "/agentes";
 /** "Minha Conta": para onde levam os pushes da Conta (queda, assinatura repetida). */
 export const ACCOUNT_PATH = "/conta";
+/** Perfil › Conectores: onde o Membro liga as credenciais dele (e para onde leva o push da recusa). */
+export const MY_CONNECTORS_PATH = "/perfil/conectores";
 
 // ---------- eventos do WebSocket ----------
 
@@ -1004,6 +1043,8 @@ export type ServerEvent =
   | { type: "message.created"; message: MessageDto }
   /** A Conta do Membro (ou o fluxo de ligação) mudou. Vai só para as conexões do próprio Membro. */
   | { type: "account.updated"; account: AccountDto }
+  /** A credencial do Membro num Conector mudou (ligada, desligada, recusada). Só para ele. */
+  | { type: "my_connector.updated"; connector: MyConnectorDto }
   /**
    * Um Canal apareceu ou mudou (criado, alguém entrou ou foi adicionado, Instruções ou N mudaram)
    * para quem pode vê-lo. Para quem acabou de ser adicionado a um privado, é a primeira vez que o vê.

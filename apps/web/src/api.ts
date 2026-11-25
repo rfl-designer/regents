@@ -22,6 +22,7 @@ import type {
   MemberRole,
   MemberSummaryDto,
   MessageDto,
+  MyConnectorDto,
   MyJoinRequestDto,
   OutcomeDto,
   PushKeyDto,
@@ -171,6 +172,11 @@ export const api = {
   setConnectorToken: (id: string, token: string) =>
     call<ConnectorDto>(`/api/connectors/${id}/credential`, json("PUT", { token })),
   removeConnector: (id: string) => call<void>(`/api/connectors/${id}`, { method: "DELETE" }),
+  /** Perfil › Conectores: as credenciais do próprio Membro nos Conectores de cada Membro. */
+  myConnectors: () => call<MyConnectorDto[]>("/api/me/connectors"),
+  connectMine: (id: string, token: string) =>
+    call<MyConnectorDto>(`/api/me/connectors/${id}/credential`, json("PUT", { token })),
+  disconnectMine: (id: string) => call<void>(`/api/me/connectors/${id}/credential`, { method: "DELETE" }),
   workspaceKey: () => call<WorkspaceKeyDto>("/api/workspace-key"),
   setWorkspaceKey: (apiKey: string) => call<WorkspaceKeyDto>("/api/workspace-key", json("PUT", { apiKey })),
 };

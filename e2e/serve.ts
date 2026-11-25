@@ -19,6 +19,11 @@
  * Agente que tem "postar mensagem" pede para postar "Aviso: a reunião mudou." no #geral, o que vira
  * Pedido de aprovação; a continuação responde o padrão.
  *
+ * Sobe também um CRM falso (servidor MCP remoto, `startRemoteMcp`) que aceita o token `crm-e2e`, com
+ * a leitura `buscar_cliente`; o endereço e o token ficam em `.e2e/crm.json`, para o teste adicionar o
+ * Conector. Com `[crm]`, o Agente que tem a Ferramenta dele a pede, e a resposta seguinte sai bem
+ * devagar (2 s por pedaço), para o Andamento com o uso dela ficar à vista.
+ *
  * O roteamento da Articuladora (o pedido com `output_config`) nunca falha: uma mensagem com
  * `[delegar]` é passada aos dois primeiros Agentes do Canal; as outras recebem o Desfecho "nenhum".
  *
@@ -26,7 +31,7 @@
  * `FAKE_LOGIN_CODE` e entra numa conta cujo login vence daqui a 4 dias (a validade, 3 dias antes,
  * cai amanhã: "Minha Conta" já abre em destaque, com o selo no menu pessoal).
  */
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fakeClaude } from "../apps/server/test/fake-claude";
@@ -38,6 +43,22 @@ import {
   toolResults,
 } from "../apps/server/test/fakes/messages-api";
 import { pushServiceCert } from "../apps/server/test/fakes/push-cert";
+import { startRemoteMcp } from "../apps/server/test/fakes/remote-mcp";
+
+const crm = startRemoteMcp({
+  token: "crm-e2e",
+  tools: [
+    {
+      name: "buscar_cliente",
+      title: "buscar cliente",
+      description: "Busca um cliente pelo nome.",
+      readOnlyHint: true,
+      handler: () => "Cliente Acme: plano Ouro.",
+    },
+  ],
+});
+mkdirSync(".e2e", { recursive: true });
+writeFileSync(".e2e/crm.json", JSON.stringify({ url: crm.url, token: "crm-e2e" }));
 
 const delayMs = Number(process.env.FAKE_MESSAGES_API_DELAY_MS ?? 400);
 const failures = new Map<string, number>();
@@ -45,7 +66,10 @@ const anthropic = await startFakeMessagesApi({
   defaultReply: (req) => {
     if (req.body.output_config) return desfecho(req);
     const [resultado] = toolResults(req.body);
-    if (resultado) return { text: `Pela Ferramenta: ${resultado.content.split("\n")[0]}`, delayMs };
+    if (resultado) {
+      const slow = resultado.content.includes("buscar cliente") || resultado.content.startsWith("Cliente ");
+      return { text: `Pela Ferramenta: ${resultado.content.split("\n")[0]}`, delayMs: slow ? 2000 : delayMs };
+    }
     // O contexto leva as mensagens recentes num só `user`, uma por parágrafo, e fecha com
     // "Responda à última mensagem…": a de origem é o penúltimo parágrafo.
     const text = lastUserText(req.body).split("\n\n").at(-2) ?? "";
@@ -56,6 +80,8 @@ const anthropic = await startFakeMessagesApi({
     if (text.includes("[listar agentes]") && tools.some((t) => t.name === "listar_agentes")) {
       return { toolUse: [{ name: "listar_agentes" }], delayMs };
     }
+    const doCrm = tools.find((t) => t.name.endsWith("__buscar_cliente"));
+    if (text.includes("[crm]") && doCrm) return { toolUse: [{ name: doCrm.name, input: { nome: "Acme" } }], delayMs };
     if (text.includes("[postar]") && tools.some((t) => t.name === "postar_mensagem")) {
       return {
         toolUse: [{ name: "postar_mensagem", input: { conversa: "#geral", texto: "Aviso: a reunião mudou." } }],
@@ -116,6 +142,7 @@ async function stop(signal: NodeJS.Signals) {
   server.kill(signal);
   await server.exited;
   await anthropic.stop();
+  await crm.stop();
   rmSync(secretsDir, { recursive: true, force: true });
   claude.dispose();
   process.exit(0);
@@ -126,6 +153,7 @@ process.on("SIGINT", () => stop("SIGINT"));
 const code = await server.exited;
 if (!stopping) {
   await anthropic.stop();
+  await crm.stop();
   rmSync(secretsDir, { recursive: true, force: true });
   claude.dispose();
   process.exit(code);

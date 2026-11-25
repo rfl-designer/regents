@@ -9,19 +9,33 @@
  * - Credencial recusada (401) é falha da Ferramenta com motivo, e o Conector fica "recusado" até o
  *   Admin colar outro token (ou o catálogo ser relido com sucesso).
  * - Remover o Conector remove o catálogo e as concessões dele (cascata): some de todo Agente na hora.
+ *
+ * No modo de cada Membro (#55), cada um liga a sua credencial em Perfil › Conectores, e a resposta
+ * usa a do autor da mensagem de origem ("usou o CRM de Ana"). Sem ela, a Ferramenta responde
+ * "indisponível" (a resposta segue) e só o autor vê o atalho "Ligar CRM". A recusa (401) marca a
+ * credencial dele como recusada e o avisa (push e o Perfil).
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { ConnectorDto, ConnectorToolDto, CreateConnectorInput } from "@shearim/contracts";
-import { asc, eq, sql } from "drizzle-orm";
+import {
+  type ConnectorCredentialMode,
+  type ConnectorDto,
+  type ConnectorToolDto,
+  type CreateConnectorInput,
+  MY_CONNECTORS_PATH,
+  type MyConnectorDto,
+} from "@shearim/contracts";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
-import { type Db, isUuid, schema } from "../db/client";
+import { type Db, isUuid, schema, type Tx } from "../db/client";
+import type { EventHub } from "../events";
 import type { Env } from "../members";
+import type { Push } from "../push";
 import type { SecretBox } from "../secrets";
-import { type ToolDefinition, ToolFailure } from "./port";
+import { type ToolContext, type ToolDefinition, ToolFailure } from "./port";
 
-const { connectors, connectorTools } = schema;
+const { connectors, connectorTools, memberConnectorCredentials, members, messages } = schema;
 
 type Connector = typeof connectors.$inferSelect;
 type CatalogRow = typeof connectorTools.$inferSelect;
@@ -114,8 +128,84 @@ function catalogFailure(name: string, err: unknown) {
   } as const;
 }
 
-export function createConnectors(deps: { db: Db; clock: Clock; secrets: SecretBox }) {
+export function createConnectors(deps: {
+  db: Db;
+  clock: Clock;
+  secrets: SecretBox;
+  /** Avisa o Membro quando a credencial dele muda (o Perfil acompanha). */
+  events?: EventHub;
+  /** O push da credencial recusada, ao dono dela. */
+  notify?: Push["notify"];
+}) {
   const { db, clock, secrets } = deps;
+
+  const modeOf = (connector: Connector): ConnectorCredentialMode =>
+    connector.credentialMode === "member" ? "member" : "workspace";
+
+  /** O autor da mensagem de origem da execução: de quem é a credencial no modo de cada Membro. */
+  async function authorOf(ctx: ToolContext) {
+    const [author] = await db
+      .select({ id: members.id, name: members.displayName })
+      .from(messages)
+      .innerJoin(members, eq(members.id, messages.authorMemberId))
+      .where(eq(messages.id, ctx.run.originMessageId));
+    return author;
+  }
+
+  async function credentialOf(connectorId: string, memberId: string) {
+    const [row] = await db
+      .select()
+      .from(memberConnectorCredentials)
+      .where(
+        and(eq(memberConnectorCredentials.connectorId, connectorId), eq(memberConnectorCredentials.memberId, memberId)),
+      );
+    return row;
+  }
+
+  function myDto(connector: Connector, credential: typeof memberConnectorCredentials.$inferSelect | undefined) {
+    return {
+      id: connector.id,
+      name: connector.name,
+      url: connector.url,
+      credentialState: !credential ? "off" : credential.state === "refused" ? "refused" : "ok",
+      refusedAt: credential?.refusedAt?.toISOString() ?? null,
+    } satisfies MyConnectorDto;
+  }
+
+  /** O Perfil do Membro acompanha a credencial dele (ligada, desligada, recusada). */
+  async function announceMine(connector: Connector, memberId: string) {
+    deps.events?.publish(
+      { members: [memberId] },
+      { type: "my_connector.updated", connector: myDto(connector, await credentialOf(connector.id, memberId)) },
+    );
+  }
+
+  /** O servidor recusou a credencial do Membro: fica recusada até ele ligar de novo, e ele é avisado. */
+  async function refuseMember(connector: Connector, memberId: string) {
+    await db
+      .update(memberConnectorCredentials)
+      .set({ state: "refused", refusedAt: clock.now() })
+      .where(
+        and(
+          eq(memberConnectorCredentials.connectorId, connector.id),
+          eq(memberConnectorCredentials.memberId, memberId),
+        ),
+      );
+    await announceMine(connector, memberId);
+    deps.notify?.(memberId, {
+      title: `O ${connector.name} recusou a sua credencial`,
+      body: `As Ferramentas do ${connector.name} ficam indisponíveis nas suas mensagens até você ligar de novo em Perfil › Conectores.`,
+      path: MY_CONNECTORS_PATH,
+      tag: `conector-${connector.id}`,
+      urgency: "normal",
+    });
+  }
+
+  async function open(sealed: { tokenCiphertext: string; tokenIv: string }, failure: string) {
+    return secrets.open({ ciphertext: sealed.tokenCiphertext, iv: sealed.tokenIv }).catch(() => {
+      throw new ToolFailure(failure);
+    });
+  }
 
   async function tokenOf(connector: Connector): Promise<string> {
     if (!connector.tokenCiphertext || !connector.tokenIv) {
@@ -133,11 +223,41 @@ export function createConnectors(deps: { db: Db; clock: Clock; secrets: SecretBo
       .where(eq(connectors.id, connectorId));
   }
 
+  /**
+   * A credencial com que a execução chama o Conector: a do Workspace, ou a do autor (no modo de cada
+   * Membro). Sem a do autor, `ToolFailure` "indisponível", com o atalho "Ligar" para ele.
+   */
+  async function credentialFor(connector: Connector, ctx: ToolContext) {
+    if (modeOf(connector) === "workspace") {
+      return { token: await tokenOf(connector), whose: "do Workspace", refused: () => markRefused(connector.id) };
+    }
+    const connect = { connectorId: connector.id, name: connector.name };
+    const author = await authorOf(ctx);
+    const credential = author && (await credentialOf(connector.id, author.id));
+    if (!author || !credential) throw new ToolFailure(`indisponível: o autor não ligou o ${connector.name}`, connect);
+    if (credential.state === "refused") {
+      throw new ToolFailure(`indisponível: o ${connector.name} recusou a credencial do autor`, connect);
+    }
+    return {
+      token: await open(credential, `a credencial de ${author.name} no ${connector.name} não abre nesta Instalação`),
+      whose: `de ${author.name}`,
+      refused: () => refuseMember(connector, author.id),
+      connect,
+    };
+  }
+
   /** Chama a Ferramenta `name` no servidor, com a credencial de agora. O texto, ou `ToolFailure`. */
-  async function callRemote(connectorId: string, name: string, args: Record<string, unknown>, signal: AbortSignal) {
+  async function callRemote(
+    connectorId: string,
+    name: string,
+    args: Record<string, unknown>,
+    signal: AbortSignal,
+    ctx: ToolContext,
+  ) {
     const [connector] = await db.select().from(connectors).where(eq(connectors.id, connectorId));
     if (!connector) throw new ToolFailure("o Conector foi removido");
-    const token = await tokenOf(connector);
+    const credential = await credentialFor(connector, ctx);
+    const token = credential.token;
     let result: Awaited<ReturnType<Client["callTool"]>>;
     try {
       result = await withRemote(connector.url, token, signal, (client) =>
@@ -146,8 +266,8 @@ export function createConnectors(deps: { db: Db; clock: Clock; secrets: SecretBo
       );
     } catch (err) {
       if (err instanceof Refused) {
-        await markRefused(connector.id);
-        throw new ToolFailure(`o ${connector.name} recusou a credencial do Workspace`);
+        await credential.refused();
+        throw new ToolFailure(`o ${connector.name} recusou a credencial ${credential.whose}`, credential.connect);
       }
       if (signal.aborted) throw err;
       console.error(`shearim: o Conector ${connector.name} falhou`, err);
@@ -163,13 +283,30 @@ export function createConnectors(deps: { db: Db; clock: Clock; secrets: SecretBo
 
   /** Uma Ferramenta do catálogo de um Conector, como a porta a executa. */
   function definitionOf(connector: Connector, row: CatalogRow): ToolDefinition {
+    const mode = modeOf(connector);
     const base = {
       id: row.tool,
       title: row.title,
-      label: `usando ${row.title} no ${connector.name}, com a credencial do Workspace`,
+      label:
+        mode === "workspace"
+          ? `usando ${row.title} no ${connector.name}, com a credencial do Workspace`
+          : `usando ${row.title} no ${connector.name}, com a credencial de quem pediu`,
+      // No modo de cada Membro, o Andamento diz de quem é a credencial: "usou o CRM de Ana".
+      ...(mode === "member"
+        ? {
+            async describe(ctx: ToolContext) {
+              const author = await authorOf(ctx);
+              if (!author) return {};
+              return {
+                label: `usando ${row.title} no ${connector.name} de ${author.name}`,
+                used: `usou o ${connector.name} de ${author.name}`,
+              };
+            },
+          }
+        : {}),
       description: row.description || row.title,
       origin: "connector" as const,
-      connector: { id: connector.id, name: connector.name, credential: "workspace" as const },
+      connector: { id: connector.id, name: connector.name, credential: mode },
       inputSchema: row.inputSchema,
     };
     const argsOf = (input: unknown) => {
@@ -181,20 +318,22 @@ export function createConnectors(deps: { db: Db; clock: Clock; secrets: SecretBo
       return {
         ...base,
         access: "read",
-        run: (_ctx, input, signal) => callRemote(connector.id, row.name, argsOf(input), signal),
+        run: (ctx, input, signal) => callRemote(connector.id, row.name, argsOf(input), signal, ctx),
       };
     }
     return {
       ...base,
       access: "write",
-      async prepare(_ctx, input) {
+      async prepare(ctx, input) {
         const args = argsOf(input);
+        // Sem a credencial do autor, nem há Pedido: a Ferramenta está indisponível.
+        const { whose } = await credentialFor(connector, ctx);
         return {
           action: { arguments: args },
-          summary: `Usar “${row.title}” no ${connector.name}, com a credencial do Workspace: ${JSON.stringify(args)}`,
+          summary: `Usar “${row.title}” no ${connector.name}, com a credencial ${whose}: ${JSON.stringify(args)}`,
         };
       },
-      perform: (_ctx, action, signal) => callRemote(connector.id, row.name, argsOf(action.arguments), signal),
+      perform: (ctx, action, signal) => callRemote(connector.id, row.name, argsOf(action.arguments), signal, ctx),
     };
   }
 
@@ -252,7 +391,7 @@ export function createConnectors(deps: { db: Db; clock: Clock; secrets: SecretBo
       id: connector.id,
       name: connector.name,
       url: connector.url,
-      credential: "workspace",
+      credential: modeOf(connector),
       credentialState: connector.credentialState === "refused" ? "refused" : "ok",
       refusedAt: connector.refusedAt?.toISOString() ?? null,
       tools: tools.map(
@@ -297,6 +436,10 @@ export function createConnectors(deps: { db: Db; clock: Clock; secrets: SecretBo
     const name = typeof input.name === "string" ? input.name.trim() : "";
     const url = typeof input.url === "string" ? input.url.trim() : "";
     const token = typeof input.token === "string" ? input.token.trim() : "";
+    const mode = input.credential ?? "workspace";
+    if (mode !== "workspace" && mode !== "member") {
+      return invalid("A credencial é do Workspace (`workspace`) ou de cada Membro (`member`).");
+    }
     if (!name) return invalid("Dê um nome ao Conector.");
     if (name.length > NAME_MAX) return invalid(`O nome do Conector tem no máximo ${NAME_MAX} caracteres.`);
     let parsed: URL | undefined;
@@ -306,7 +449,13 @@ export function createConnectors(deps: { db: Db; clock: Clock; secrets: SecretBo
     if (!parsed || !["http:", "https:"].includes(parsed.protocol)) {
       return invalid("O endereço do servidor MCP é uma URL http(s).");
     }
-    if (!token) return invalid("Cole o token do Workspace para esse servidor.");
+    if (!token) {
+      return invalid(
+        mode === "workspace"
+          ? "Cole o token do Workspace para esse servidor."
+          : "Cole um token seu para esse servidor: ele lê as Ferramentas e vira a sua credencial.",
+      );
+    }
     const [same] = await db
       .select({ id: connectors.id })
       .from(connectors)
@@ -331,16 +480,28 @@ export function createConnectors(deps: { db: Db; clock: Clock; secrets: SecretBo
           key: unique(slug(name, 24) || "conector", keys, 28),
           kind: "mcp",
           url: parsed.href,
-          credentialMode: "workspace",
-          tokenCiphertext: sealed.ciphertext,
-          tokenIv: sealed.iv,
+          credentialMode: mode,
+          // No modo de cada Membro não há credencial do Workspace: o token é a do próprio Admin.
+          tokenCiphertext: mode === "workspace" ? sealed.ciphertext : null,
+          tokenIv: mode === "workspace" ? sealed.iv : null,
           credentialState: "ok",
           createdAt: clock.now(),
         })
         .returning();
+      if (mode === "member") {
+        await tx.insert(memberConnectorCredentials).values({
+          connectorId: row!.id,
+          memberId: c.get("member").id,
+          tokenCiphertext: sealed.ciphertext,
+          tokenIv: sealed.iv,
+          state: "ok",
+          connectedAt: clock.now(),
+        });
+      }
       await saveCatalog(tx as unknown as Db, row!, remote);
       return row!;
     });
+    if (mode === "member") await announceMine(created, c.get("member").id);
     return c.json(await toDto(created), 201);
   });
 
@@ -348,9 +509,22 @@ export function createConnectors(deps: { db: Db; clock: Clock; secrets: SecretBo
   routes.get("/connectors/:id", async (c) => {
     const connector = await find(c.req.param("id"));
     if (!connector) return c.json({ error: "not_found" }, 404);
+    const me = c.get("member").id;
+    const member = modeOf(connector) === "member";
     let token: string;
     try {
-      token = await tokenOf(connector);
+      if (member) {
+        // No modo de cada Membro, o catálogo se relê com a credencial do próprio Admin.
+        const mine = await credentialOf(connector.id, me);
+        if (!mine || mine.state === "refused") {
+          throw new ToolFailure(
+            `Ligue a sua credencial do ${connector.name} em Perfil › Conectores para reler as Ferramentas.`,
+          );
+        }
+        token = await open(mine, `A sua credencial do ${connector.name} não abre nesta Instalação.`);
+      } else {
+        token = await tokenOf(connector);
+      }
     } catch (err) {
       return c.json(await toDto(connector, (err as ToolFailure).reason));
     }
@@ -360,14 +534,23 @@ export function createConnectors(deps: { db: Db; clock: Clock; secrets: SecretBo
         await saveCatalog(tx as unknown as Db, connector, remote);
         return tx
           .update(connectors)
-          .set({ credentialState: "ok", refusedAt: null })
+          .set(member ? {} : { credentialState: "ok", refusedAt: null })
           .where(eq(connectors.id, connector.id))
           .returning();
       });
       return c.json(await toDto(fresh!));
     } catch (err) {
-      if (err instanceof Refused) await markRefused(connector.id);
-      return c.json(await toDto((await find(connector.id))!, catalogFailure(connector.name, err).message));
+      if (err instanceof Refused) {
+        if (member) await refuseMember(connector, me);
+        else await markRefused(connector.id);
+      }
+      const message = catalogFailure(connector.name, err).message;
+      return c.json(
+        await toDto(
+          (await find(connector.id))!,
+          member && err instanceof Refused ? `O ${connector.name} recusou a sua credencial.` : message,
+        ),
+      );
     }
   });
 
@@ -375,6 +558,15 @@ export function createConnectors(deps: { db: Db; clock: Clock; secrets: SecretBo
   routes.put("/connectors/:id/credential", async (c) => {
     const connector = await find(c.req.param("id"));
     if (!connector) return c.json({ error: "not_found" }, 404);
+    if (modeOf(connector) === "member") {
+      return c.json(
+        {
+          error: "member_credential",
+          message: `O ${connector.name} usa a credencial de cada Membro: cada um liga a sua em Perfil › Conectores.`,
+        },
+        409,
+      );
+    }
     const input = (await c.req.json().catch(() => null)) as { token?: unknown } | null;
     const token = typeof input?.token === "string" ? input.token.trim() : "";
     if (!token)
@@ -405,5 +597,80 @@ export function createConnectors(deps: { db: Db; clock: Clock; secrets: SecretBo
     return c.body(null, 204);
   });
 
+  // ---------- Perfil › Conectores: a credencial de cada Membro ----------
+
+  /** Um Conector do modo de cada Membro, ou nada (o do Workspace não se liga pelo Perfil). */
+  async function findMemberMode(id: string) {
+    const connector = await find(id);
+    return connector && modeOf(connector) === "member" ? connector : undefined;
+  }
+
+  routes.get("/me/connectors", async (c) => {
+    const me = c.get("member").id;
+    const rows = await db
+      .select({ connector: connectors, credential: memberConnectorCredentials })
+      .from(connectors)
+      .leftJoin(
+        memberConnectorCredentials,
+        and(eq(memberConnectorCredentials.connectorId, connectors.id), eq(memberConnectorCredentials.memberId, me)),
+      )
+      .where(eq(connectors.credentialMode, "member"))
+      .orderBy(asc(connectors.createdAt), asc(connectors.name));
+    return c.json(rows.map((r) => myDto(r.connector, r.credential ?? undefined)));
+  });
+
+  /** Ligar (ou ligar de novo): vale só se o servidor aceita o token. */
+  routes.put("/me/connectors/:id/credential", async (c) => {
+    const connector = await findMemberMode(c.req.param("id"));
+    if (!connector) return c.json({ error: "not_found" }, 404);
+    const me = c.get("member").id;
+    const input = (await c.req.json().catch(() => null)) as { token?: unknown } | null;
+    const token = typeof input?.token === "string" ? input.token.trim() : "";
+    if (!token) {
+      return c.json({ error: "invalid_input", message: `Cole o seu token do ${connector.name}.` }, 400);
+    }
+    try {
+      await listRemote(connector.url, token);
+    } catch (err) {
+      return c.json(catalogFailure(connector.name, err), 422);
+    }
+    const sealed = await secrets.seal(token);
+    const values = {
+      tokenCiphertext: sealed.ciphertext,
+      tokenIv: sealed.iv,
+      state: "ok",
+      refusedAt: null,
+      connectedAt: clock.now(),
+    };
+    await db
+      .insert(memberConnectorCredentials)
+      .values({ connectorId: connector.id, memberId: me, ...values })
+      .onConflictDoUpdate({
+        target: [memberConnectorCredentials.connectorId, memberConnectorCredentials.memberId],
+        set: values,
+      });
+    await announceMine(connector, me);
+    return c.json(myDto(connector, await credentialOf(connector.id, me)));
+  });
+
+  /** Desligar: as Ferramentas do Conector ficam indisponíveis nas mensagens dele. */
+  routes.delete("/me/connectors/:id/credential", async (c) => {
+    const connector = await findMemberMode(c.req.param("id"));
+    if (!connector) return c.json({ error: "not_found" }, 404);
+    const me = c.get("member").id;
+    await db
+      .delete(memberConnectorCredentials)
+      .where(
+        and(eq(memberConnectorCredentials.connectorId, connector.id), eq(memberConnectorCredentials.memberId, me)),
+      );
+    await announceMine(connector, me);
+    return c.body(null, 204);
+  });
+
   return { definitions, routes };
+}
+
+/** O Membro saiu do Workspace: as credenciais dele nos Conectores vão junto (quem volta liga de novo). */
+export async function forgetMemberCredentials(db: Db | Tx, memberId: string) {
+  await db.delete(memberConnectorCredentials).where(eq(memberConnectorCredentials.memberId, memberId));
 }

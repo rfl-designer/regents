@@ -2,7 +2,8 @@
  * Dublê de um Conector (Spec #44, "Testing Decisions"): um servidor MCP remoto falso, em streamable
  * HTTP, que responde cada POST com JSON (sem SSE).
  *
- * - Exige `Authorization: Bearer <token>`; outro token, ou `refuse()`, é `401` (credencial recusada).
+ * - Exige `Authorization: Bearer <token>` com um dos tokens aceitos (o do Workspace, ou um de
+ *   cada Membro); outro token, `revoke(token)` ou `refuse()` é `401` (credencial recusada).
  * - `tools/list` devolve as Ferramentas roteirizadas, com ou sem `annotations.readOnlyHint`.
  * - `tools/call` roda o `handler` da Ferramenta (padrão: devolve os argumentos como texto) e grava
  *   cada chamada (`calls`), com o token que veio.
@@ -37,8 +38,12 @@ export interface FakeRemoteMcp {
   tokens(): (string | null)[];
   /** Daqui em diante, toda requisição é `401` (a credencial foi revogada lá fora). */
   refuse(on?: boolean): void;
-  /** Troca o token que o servidor aceita. */
+  /** Troca os tokens que o servidor aceita por este. */
   accept(token: string): void;
+  /** Passa a aceitar também este token (a credencial de mais um Membro). */
+  allow(token: string): void;
+  /** Deixa de aceitar este token (a credencial de um Membro foi revogada lá fora). */
+  revoke(token: string): void;
   /** Troca as Ferramentas oferecidas. */
   setTools(tools: FakeRemoteTool[]): void;
   stop(): Promise<void>;
@@ -46,8 +51,8 @@ export interface FakeRemoteMcp {
 
 type Json = Record<string, unknown>;
 
-export function startRemoteMcp(opts: { token: string; tools: FakeRemoteTool[] }): FakeRemoteMcp {
-  let token = opts.token;
+export function startRemoteMcp(opts: { token: string | string[]; tools: FakeRemoteTool[] }): FakeRemoteMcp {
+  let accepted = new Set(typeof opts.token === "string" ? [opts.token] : opts.token);
   let tools = opts.tools;
   let refusing = false;
   let listedCount = 0;
@@ -115,7 +120,7 @@ export function startRemoteMcp(opts: { token: string; tools: FakeRemoteTool[] })
     async fetch(req) {
       const presented = /^Bearer (\S+)$/.exec(req.headers.get("authorization") ?? "")?.[1] ?? null;
       seen.push(presented);
-      if (refusing || presented !== token) {
+      if (refusing || presented === null || !accepted.has(presented)) {
         return json({ error: "invalid_token" }, 401, { "WWW-Authenticate": 'Bearer error="invalid_token"' });
       }
       if (req.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "POST" } });
@@ -137,7 +142,13 @@ export function startRemoteMcp(opts: { token: string; tools: FakeRemoteTool[] })
       refusing = on;
     },
     accept: (t) => {
-      token = t;
+      accepted = new Set([t]);
+    },
+    allow: (t) => {
+      accepted.add(t);
+    },
+    revoke: (t) => {
+      accepted.delete(t);
     },
     setTools: (t) => {
       tools = t;

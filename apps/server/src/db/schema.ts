@@ -660,7 +660,7 @@ export const connectors = pgTable(
     /** `mcp`: um servidor MCP remoto. */
     kind: text().notNull(),
     url: text().notNull(),
-    /** `workspace`: uma credencial só, a do Workspace. */
+    /** `workspace`: uma credencial só, a do Workspace; `member`: a de cada Membro (`memberConnectorCredentials`). */
     credentialMode: text().notNull(),
     tokenCiphertext: text(),
     tokenIv: text(),
@@ -670,6 +670,30 @@ export const connectors = pgTable(
     createdAt: timestamp({ withTimezone: true }).notNull(),
   },
   (t) => [uniqueIndex("connectors_name_lower").on(sql`lower(${t.name})`)],
+);
+
+/**
+ * As credenciais de cada Membro nos Conectores do modo `member` (Spec #44): o token que ele colou
+ * em Perfil › Conectores, cifrado com a chave mestra, e o estado (`ok`, ou `refused` quando o
+ * servidor o recusou). Desligar apaga a linha; remover o Membro do Workspace também.
+ */
+export const memberConnectorCredentials = pgTable(
+  "member_connector_credentials",
+  {
+    connectorId: uuid()
+      .notNull()
+      .references(() => connectors.id, { onDelete: "cascade" }),
+    memberId: uuid()
+      .notNull()
+      .references(() => members.id),
+    tokenCiphertext: text().notNull(),
+    tokenIv: text().notNull(),
+    /** `ok` ou `refused`. */
+    state: text().notNull(),
+    refusedAt: timestamp({ withTimezone: true }),
+    connectedAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.connectorId, t.memberId] })],
 );
 
 /**
@@ -731,6 +755,11 @@ export const executionToolCalls = pgTable(
     /** `running`, `done` ou `failed`. */
     state: text().notNull(),
     reason: text(),
+    /** Numa de Conector com a credencial de cada Membro: "usou o CRM de Ana" (todos veem, ao terminar bem). */
+    used: text(),
+    /** Indisponível por falta da credencial do autor: o Conector do atalho "Ligar <Conector>" (só o autor vê). */
+    connectConnectorId: uuid(),
+    connectName: text(),
     startedAt: timestamp({ withTimezone: true }).notNull(),
     finishedAt: timestamp({ withTimezone: true }),
   },

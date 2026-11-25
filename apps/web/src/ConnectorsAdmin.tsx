@@ -1,4 +1,4 @@
-import type { ConnectorDto } from "@shearim/contracts";
+import type { ConnectorCredentialMode, ConnectorDto } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { ApiFailure, api } from "./api";
 import { dateTimeShort } from "./format";
@@ -100,7 +100,12 @@ function ConnectorItem(props: { connector: ConnectorDto; onChanged(c: ConnectorD
           Remover
         </button>
       </div>
-      {c.credentialState === "refused" ? (
+      {c.credential === "member" ? (
+        <p className="hint">
+          Credencial de cada Membro: cada um liga a sua em Meus Conectores, e a resposta usa a de quem pediu. O catálogo
+          se relê com a sua.
+        </p>
+      ) : c.credentialState === "refused" ? (
         <p className="error" role="alert">
           O {c.name} recusou a credencial do Workspace
           {c.refusedAt ? ` em ${dateTimeShort(c.refusedAt)}` : ""}. As Ferramentas dele falham até você colar outro
@@ -128,19 +133,21 @@ function ConnectorItem(props: { connector: ConnectorDto; onChanged(c: ConnectorD
         ))}
         {c.tools.length === 0 && <li className="hint">O servidor não oferece Ferramentas.</li>}
       </ul>
-      <form className="row" onSubmit={saveToken}>
-        <input
-          type="password"
-          aria-label={`Token novo do ${c.name}`}
-          placeholder="Colar um token novo"
-          autoComplete="off"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-        />
-        <button type="submit" disabled={busy || !token.trim()}>
-          Trocar token
-        </button>
-      </form>
+      {c.credential === "workspace" && (
+        <form className="row" onSubmit={saveToken}>
+          <input
+            type="password"
+            aria-label={`Token novo do ${c.name}`}
+            placeholder="Colar um token novo"
+            autoComplete="off"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+          />
+          <button type="submit" disabled={busy || !token.trim()}>
+            Trocar token
+          </button>
+        </form>
+      )}
       {error && (
         <span className="error" role="alert">
           {error}
@@ -154,6 +161,7 @@ function NewConnector({ onCreated }: { onCreated(c: ConnectorDto): void }) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
+  const [credential, setCredential] = useState<ConnectorCredentialMode>("workspace");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -162,7 +170,7 @@ function NewConnector({ onCreated }: { onCreated(c: ConnectorDto): void }) {
     setBusy(true);
     setError(null);
     try {
-      onCreated(await api.createConnector({ name, url, token }));
+      onCreated(await api.createConnector({ name, url, token, credential }));
       setName("");
       setUrl("");
       setToken("");
@@ -183,10 +191,30 @@ function NewConnector({ onCreated }: { onCreated(c: ConnectorDto): void }) {
         value={url}
         onChange={(e) => setUrl(e.target.value)}
       />
+      <fieldset className="row" aria-label="De quem é a credencial">
+        <label>
+          <input
+            type="radio"
+            name="credential"
+            checked={credential === "workspace"}
+            onChange={() => setCredential("workspace")}
+          />
+          do Workspace (um token só, para todos)
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="credential"
+            checked={credential === "member"}
+            onChange={() => setCredential("member")}
+          />
+          de cada Membro (cada um liga a sua no Perfil)
+        </label>
+      </fieldset>
       <input
         type="password"
-        aria-label="Token do Workspace"
-        placeholder="Token do Workspace"
+        aria-label={credential === "workspace" ? "Token do Workspace" : "O seu token"}
+        placeholder={credential === "workspace" ? "Token do Workspace" : "O seu token (vira a sua credencial)"}
         autoComplete="off"
         value={token}
         onChange={(e) => setToken(e.target.value)}

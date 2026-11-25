@@ -49,7 +49,11 @@ export interface ToolRun {
  * modelo e ao Andamento. Qualquer outro erro vira "erro inesperado na Ferramenta".
  */
 export class ToolFailure extends Error {
-  constructor(readonly reason: string) {
+  constructor(
+    readonly reason: string,
+    /** Falta a credencial do autor num Conector: o atalho "Ligar <Conector>", que só o autor vê. */
+    readonly connect?: { connectorId: string; name: string },
+  ) {
     super(reason);
   }
 }
@@ -80,6 +84,12 @@ interface ToolBase {
   title: string;
   /** O passo no Andamento enquanto roda ("listando os Agentes"). */
   label: string;
+  /**
+   * O rótulo desta execução, quando depende dela (a credencial do autor num Conector: "usando
+   * buscar cliente no CRM de Ana"), e o que o Andamento mostra a todos se terminar bem ("usou o CRM
+   * de Ana"). Sem ele, vale `label`.
+   */
+  describe?(ctx: ToolContext): Promise<{ label?: string; used?: string }>;
   /** Para o modelo e para o Admin. */
   description: string;
   origin: ToolOrigin;
@@ -219,14 +229,15 @@ export function createToolPort(deps: {
     signal.addEventListener("abort", abort, { once: true });
     const timeout = def.timeoutMs ?? defaultTimeout;
     let cancelTimer = () => {};
-    const deadline = new Promise<{ ok: false; reason: string }>((resolve) => {
+    type Failed = { ok: false; reason: string; connect?: { connectorId: string; name: string } };
+    const deadline = new Promise<Failed>((resolve) => {
       cancelTimer = clock.after(timeout, () => {
         // Resolve antes de interromper: o motivo é o prazo, não a interrupção que ele causa.
         resolve({ ok: false, reason: `não terminou em ${Math.round(timeout / 1000)} s` });
         own.abort();
       });
     });
-    const interrupted = new Promise<{ ok: false; reason: string }>((resolve) => {
+    const interrupted = new Promise<Failed>((resolve) => {
       own.signal.addEventListener("abort", () => resolve({ ok: false, reason: "a resposta foi interrompida" }), {
         once: true,
       });
@@ -238,6 +249,7 @@ export function createToolPort(deps: {
         return {
           ok: false as const,
           reason: err instanceof ToolFailure ? err.reason : "erro inesperado na Ferramenta",
+          ...(err instanceof ToolFailure && err.connect ? { connect: err.connect } : {}),
         };
       },
     );
@@ -313,7 +325,7 @@ export function createToolPort(deps: {
         (s) => def.perform({ db, run, post }, action, s),
         new AbortController().signal,
       );
-      return outcome.ok ? { ok: true, result: outcome.value } : outcome;
+      return outcome.ok ? { ok: true, result: outcome.value } : { ok: false, reason: outcome.reason };
     },
 
     async grant(agentId: string, toolId: string) {
@@ -334,24 +346,34 @@ export function createToolPort(deps: {
       /** Grava o começo de um uso e avisa o Andamento. */
       async function begin(def: ToolDefinition, label: string) {
         const id = crypto.randomUUID();
+        const own: { label?: string; used?: string } = def.describe
+          ? await def.describe({ db, run }).catch(() => ({}))
+          : {};
         await db.insert(executionToolCalls).values({
           id,
           executionId: run.executionId,
           attempt: run.attempt,
           tool: def.id,
           title: def.title,
-          label,
+          label: own.label ?? label,
+          used: own.used ?? null,
           state: "running",
           startedAt: clock.now(),
         });
         await observer.started();
         return id;
       }
-      /** Grava o fim (com o motivo, se falhou) e avisa o Andamento. */
-      async function end(id: string, failure?: string) {
+      /** Grava o fim (com o motivo, se falhou, e o atalho "Ligar", se é o caso) e avisa o Andamento. */
+      async function end(id: string, failure?: string, connect?: { connectorId: string; name: string }) {
         await db
           .update(executionToolCalls)
-          .set({ state: failure ? "failed" : "done", reason: failure ?? null, finishedAt: clock.now() })
+          .set({
+            state: failure ? "failed" : "done",
+            reason: failure ?? null,
+            connectConnectorId: connect?.connectorId ?? null,
+            connectName: connect?.name ?? null,
+            finishedAt: clock.now(),
+          })
           .where(eq(executionToolCalls.id, id));
         await observer.finished();
       }
@@ -398,7 +420,7 @@ export function createToolPort(deps: {
             def.access === "read"
               ? await execute(def, (s) => def.run({ db, run }, input, s), signal)
               : await execute(def, (s) => def.prepare({ db, run }, input, s), signal);
-          await end(id, outcome.ok ? undefined : outcome.reason);
+          await end(id, outcome.ok ? undefined : outcome.reason, outcome.ok ? undefined : outcome.connect);
           if (!outcome.ok) return { content: `A Ferramenta ${def.title} falhou: ${outcome.reason}.`, isError: true };
           if (def.access === "read") return { content: outcome.value as string, isError: false };
           const prepared = outcome.value as { action: Record<string, unknown>; summary: string };
@@ -414,7 +436,11 @@ export function createToolPort(deps: {
 
 export type ToolPort = ReturnType<typeof createToolPort>;
 
-/** Os usos de Ferramenta de cada execução, na tentativa atual dela, na ordem (para o Andamento). */
+/**
+ * Os usos de Ferramenta de cada execução, na tentativa atual dela, na ordem (para o Andamento).
+ * É a cópia do autor: traz o atalho "Ligar <Conector>" (`connect`), que a cópia de todos tira
+ * (`withoutConnect`).
+ */
 export async function toolCallsOf(
   db: Db,
   runs: readonly { id: string; attempt: number }[],
@@ -443,8 +469,17 @@ export async function toolCallsOf(
       state: row.state as ToolCallDto["state"],
       reason: row.reason,
       startedAt: row.startedAt.toISOString(),
+      ...(row.state === "done" && row.used ? { used: row.used } : {}),
+      ...(row.state === "failed" && row.connectConnectorId && row.connectName
+        ? { connect: { connectorId: row.connectConnectorId, name: row.connectName } }
+        : {}),
     });
     out.set(row.executionId, list);
   }
   return out;
+}
+
+/** Os usos como todos os veem: sem o atalho "Ligar <Conector>", que é só do autor. */
+export function withoutConnect(calls: readonly ToolCallDto[]): ToolCallDto[] {
+  return calls.map(({ connect: _, ...call }) => call);
 }

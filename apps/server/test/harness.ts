@@ -357,7 +357,7 @@ export async function fakeMessagesApi() {
 }
 
 /** Um servidor MCP remoto falso (um Conector), que fecha sozinho no fim do teste. */
-export function remoteMcp(opts: { token: string; tools: FakeRemoteTool[] }) {
+export function remoteMcp(opts: { token: string | string[]; tools: FakeRemoteTool[] }) {
   const server = startRemoteMcp(opts);
   onCleanup(() => server.stop());
   return server;

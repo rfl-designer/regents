@@ -183,6 +183,13 @@
       "when": 1795569252380,
       "tag": "0025_teto-de-ferramentas",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1795570203501,
+      "tag": "0026_credencial-do-membro",
+      "breakpoints": true
     }
   ]
 }

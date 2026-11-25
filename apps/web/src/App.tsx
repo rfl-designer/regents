@@ -8,6 +8,7 @@ import {
   INSTALLATION_PATH,
   MEMBERS_PATH,
   type MeDto,
+  MY_CONNECTORS_PATH,
   NO_IDENTITY_TEXT,
   SW_NAVIGATE_MESSAGE,
   type UnreadDto,
@@ -30,6 +31,7 @@ import { KeyBanners } from "./KeyBanners";
 import { setPresence, useServerEvents } from "./live";
 import { MembersSettings } from "./MembersAdmin";
 import { AccountOffer, expiringValidity, MyAccount, useAccount } from "./MyAccount";
+import { MyConnectors } from "./MyConnectors";
 import { NotificationsOnboarding } from "./NotificationsOnboarding";
 import { closeNotificationsOf, showBadge, usePush } from "./notifications";
 import { ProfileView } from "./ProfileView";
@@ -62,7 +64,7 @@ function explain(err: unknown): State {
   return { kind: "blocked", title: "Algo deu errado", detail: "Recarregue a página para tentar de novo." };
 }
 
-type Screen = "account" | "profile" | "notifications" | AdminView;
+type Screen = "account" | "myConnectors" | "profile" | "notifications" | AdminView;
 /** `channel` é a conversa aberta (Canal ou DM); as outras são telas (`SCREENS`). */
 type View = "channel" | Screen;
 
@@ -82,6 +84,7 @@ interface ScreenContext {
 const SCREENS: Record<Screen, { path?: string; admin?: true; render(ctx: ScreenContext): ReactNode }> = {
   profile: { render: ({ me, setMe }) => <ProfileView key={me.id} me={me} onSaved={(saved) => setMe(() => saved)} /> },
   account: { path: ACCOUNT_PATH, render: ({ account }) => <MyAccount state={account} /> },
+  myConnectors: { path: MY_CONNECTORS_PATH, render: () => <MyConnectors /> },
   notifications: { render: ({ push }) => <DevicesView push={push} /> },
   members: { path: MEMBERS_PATH, admin: true, render: ({ me }) => <MembersSettings me={me} /> },
   context: { admin: true, render: () => <WorkspaceContextSettings /> },
@@ -339,6 +342,14 @@ export function App() {
             {expiringValidity(account.account) && (
               <span className="selo" role="img" aria-label="A sua Conta do Claude vence em breve" />
             )}
+          </button>
+          <button
+            type="button"
+            className="link"
+            aria-pressed={view === "myConnectors"}
+            onClick={() => setView(view === "myConnectors" ? "channel" : "myConnectors")}
+          >
+            {view === "myConnectors" ? "Voltar à conversa" : "Meus Conectores"}
           </button>
         </div>
       </header>
