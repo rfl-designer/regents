@@ -1,5 +1,5 @@
-import { EVENTS_CLOSE_UPDATING, EVENTS_PATH, type ServerEvent } from "@shearim/contracts";
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { type AgentDto, EVENTS_CLOSE_UPDATING, EVENTS_PATH, type ServerEvent } from "@shearim/contracts";
+import { type Dispatch, type SetStateAction, useEffect, useRef, useSyncExternalStore } from "react";
 import { api } from "./api";
 
 /** Quanto esperar para reabrir o WebSocket depois que ele cai. */
@@ -150,4 +150,14 @@ export function useServerEvents(handler: Listener, enabled = true) {
       }
     };
   }, [enabled]);
+}
+
+/**
+ * Tira da lista de Agentes `setAgents` o Agente que um Admin apaga, sem esperar recarregar: quem
+ * o escolhesse depois receberia um erro.
+ */
+export function useDropDeletedAgents(setAgents: Dispatch<SetStateAction<AgentDto[] | null>>) {
+  useServerEvents((event) => {
+    if (event.type === "agent.deleted") setAgents((list) => list?.filter((a) => a.id !== event.agentId) ?? null);
+  });
 }

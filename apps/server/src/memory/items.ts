@@ -97,15 +97,26 @@ export function undoItem(db: Db, input: { id: string; now: Date }): Promise<"ok"
 
 /**
  * Corrige o item `id` pela mão de `by`: a versão nova, com a mesma origem e o mesmo escopo,
- * substitui a anterior. Devolve o id da nova, ou `archived` se o item já não estava ativo.
+ * substitui a anterior. Devolve o id da nova, `archived` se o item já não estava ativo, ou
+ * `not_found` se ele é da Memória de um Agente apagado.
  */
 export function correctItem(
   db: Db,
   input: { id: string; text: string; by: Pick<Member, "id" | "role">; now: Date },
-): Promise<string | "archived"> {
+): Promise<string | "archived" | "not_found"> {
   return db.transaction(async (tx) => {
     const old = await lockActiveItem(tx, input.id);
     if (!old) return "archived";
+    // A trava no Agente faz o DELETE dele esperar esta correção, e `forgetAgent` leva a versão
+    // nova junto. Se o DELETE chegou antes, a correção não cria Memória de um Agente apagado.
+    if (old.agentId) {
+      const [owner] = await tx
+        .select({ deletedAt: agents.deletedAt })
+        .from(agents)
+        .where(eq(agents.id, old.agentId))
+        .for("share");
+      if (!owner || owner.deletedAt) return "not_found";
+    }
     return replaceItem(tx, old, {
       text: input.text,
       originMessageId: old.originMessageId,

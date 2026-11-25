@@ -8,7 +8,16 @@
  * O que está fora do alcance não chega ao modelo de jeito nenhum, nem pelo título.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, DmDto, ExecutionDto, MeDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
+import {
+  type AgentDto,
+  type ChannelDto,
+  type DmDto,
+  type ExecutionDto,
+  type MeDto,
+  type MemoryItemDto,
+  type MessageDto,
+  OPEN_STATES,
+} from "@shearim/contracts";
 import { type ScriptedRun, scriptedBrain } from "./fakes/scripted-brain";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 
@@ -103,10 +112,11 @@ async function pedidoAoFaro(t: TestApp, who: Person, conversationId: string, bod
     return lista.length > antes ? lista : undefined;
   });
   const pedido = chamadas[antes]!.body;
-  // Espera a extração dessa resposta, para a próxima troca não cruzar com ela.
+  // Espera a extração dessa resposta, para a próxima troca não cruzar com ela. A extração que
+  // descartou algo fica à vista, já terminada.
   await eventually("a resposta terminar", async () => {
-    const abertas = await (await t.as(who).get(`/api/conversations/${conversationId}/executions`)).json();
-    return abertas.length === 0 ? true : undefined;
+    const lista: ExecutionDto[] = await (await t.as(who).get(`/api/conversations/${conversationId}/executions`)).json();
+    return lista.some((e) => OPEN_STATES.includes(e.state)) ? undefined : true;
   });
   return JSON.stringify({ system: pedido.system, messages: pedido.messages });
 }
@@ -201,7 +211,7 @@ describe("a Memória do Agente acompanha o alcance", () => {
     expect(depois).not.toContain(DO_FINANCEIRO);
   });
 
-  test("uma lição de #geral substituída numa resposta em #financeiro fica em #geral: a versão nova é um item de #financeiro e não vaza", async () => {
+  test("a extração não substitui, numa resposta em #financeiro, uma lição de #geral: a operação sai à vista e a lição fica como estava", async () => {
     const t = await testApp();
     const { faro, geral, financeiro } = await workspace(t);
     const licao = await ensinar(t, bruno, faro, geral.id, DO_GERAL);
@@ -210,22 +220,21 @@ describe("a Memória do Agente acompanha o alcance", () => {
 
     const emFinanceiro = await pedidoAoFaro(t, ana, financeiro.id, "@faro põe sempre o valor da Acme no fim");
     expect(emFinanceiro).toContain(`- ${DO_GERAL}`);
-    await eventually("a versão nova da lição", async () =>
-      (await memoriaDoAgente(t, ana, faro.id)).some((i) => i.text === nova && i.state === "active") ? true : undefined,
-    );
+    // Uma versão nova de #financeiro não arquivaria a de #geral: as duas entrariam juntas aqui.
+    const [andamento] = await eventually("o Andamento da extração", async () => {
+      const abertas: ExecutionDto[] = await (
+        await t.as(ana).get(`/api/conversations/${financeiro.id}/executions`)
+      ).json();
+      const daExtracao = abertas.filter((e) => e.kind === "memory" && e.reason);
+      return daExtracao.length ? daExtracao : undefined;
+    });
+    expect(andamento!.reason).toContain("o item a substituir é de outra conversa");
     const daAna = await memoriaDoAgente(t, ana, faro.id);
-    expect(daAna.find((i) => i.text === nova)?.conversationId).toBe(financeiro.id);
-    // A lição de #geral não foi arquivada: continua lá, para quem vê #geral.
-    const daJuliana = await memoriaDoAgente(t, juliana, faro.id);
-    expect(daJuliana.map((i) => [i.text, i.state])).toEqual([[DO_GERAL, "active"]]);
+    expect(daAna.map((i) => [i.text, i.state])).toEqual([[DO_GERAL, "active"]]);
 
-    const emGeral = await pedidoAoFaro(t, bruno, geral.id);
-    expect(emGeral).toContain(`- ${DO_GERAL}`);
-    expect(emGeral).not.toContain("Acme");
-    // Onde as duas se alcançam, o Agente vê as duas versões.
     const deNovo = await pedidoAoFaro(t, ana, financeiro.id);
     expect(deNovo).toContain(`- ${DO_GERAL}`);
-    expect(deNovo).toContain(`- ${nova}`);
+    expect(deNovo).not.toContain(nova);
   });
 
   test("a extração recalcula o alcance na hora em que roda: a lição de #financeiro que saiu do alcance entre a entrega e a extração não entra nela nem é substituída", async () => {

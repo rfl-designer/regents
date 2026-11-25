@@ -28,6 +28,8 @@
  * - `SHEARIM_VAPID_CONTACT`: o `sub` do VAPID (`mailto:` com domínio real; o `deploy/setup.sh`
  *   grava no `.env`). Sem ela, só em desenvolvimento, um `mailto:` de exemplo.
  * - `SHEARIM_MEMORY_MODEL`: o modelo pequeno da extração da Memória (padrão `claude-haiku-5-5`).
+ * - `SHEARIM_MEMORY_SUMMARY_CHARS`: o orçamento do resumo da Memória que entra em cada resposta,
+ *   em caracteres (padrão 4000). Um valor que não é inteiro maior que zero impede o servidor de subir.
  */
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";

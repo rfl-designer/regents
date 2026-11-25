@@ -387,3 +387,20 @@ describe("a extração nunca guarda na Memória do Workspace", () => {
     expect(naConversa.every((i) => i.scope !== "workspace")).toBe(true);
   });
 });
+
+describe("a extração vê a Memória do Workspace só para leitura", () => {
+  test("o item do Workspace entra na extração sem id, para ela não guardar de novo na Memória da Conversa", async () => {
+    const t = await testApp();
+    const { produto } = await produtoComFaro(t);
+    const doWorkspace = await escrever(t, "O reembolso sai pelo Flouz.");
+
+    await enviar(t, bruno, produto.id, "@faro lembra que o reembolso sai pelo Flouz");
+
+    const [extracao] = await t.anthropic.waitForExtractions(1, 5_000);
+    await t.drain();
+    const entrada = JSON.stringify(extracao!.body.messages);
+    expect(entrada).toContain("só para leitura");
+    expect(entrada).toContain("- (Workspace) O reembolso sai pelo Flouz.");
+    expect(entrada).not.toContain(doWorkspace.id);
+  });
+});

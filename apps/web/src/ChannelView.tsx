@@ -31,7 +31,7 @@ import { Avatar } from "./Avatar";
 import { agentToolsText } from "./agent-tools";
 import { api } from "./api";
 import { hourMinute, weekdayShort } from "./format";
-import { useServerEvents } from "./live";
+import { useDropDeletedAgents, useServerEvents } from "./live";
 import { MemoryArchived, MemoryItem, sortMemory } from "./Memory";
 import { downLabel, upLabel, useReading } from "./reading";
 import { useAction } from "./use-action";
@@ -520,8 +520,9 @@ function MessageGroups({
     const cancellable = mine && running.some((e) => e.kind !== "memory" && OPEN_STATES.includes(e.state));
     const cancel = () => api.cancelMessage(conversationId, m.id).then((list) => list.forEach(showExecution));
     // "⚠ pela Chave do Workspace" fica sob a mensagem; o autor vê também o porquê, enquanto a
-    // resposta sai (no Andamento) e depois dela (na própria resposta).
-    const byKey = running.find((e) => e.payer === "key");
+    // resposta sai (no Andamento) e depois dela (na própria resposta). A extração da Memória não
+    // conta: ela pode rodar pela Chave quando a resposta saiu pela Conta.
+    const byKey = running.find((e) => e.kind !== "memory" && e.payer === "key");
     const paidAnswer = answers.find((r) => r.payer === "key");
     const paid =
       byKey || paidAnswer
@@ -1346,6 +1347,7 @@ function AddAgent({
   useEffect(() => {
     api.agents().then(setAgents, () => setAgents([]));
   }, []);
+  useDropDeletedAgents(setAgents);
 
   const inside = new Set(channel.participants.filter((p) => p.kind === "agent").map((p) => p.id));
   const outside = agents?.filter((a) => !inside.has(a.id)) ?? [];

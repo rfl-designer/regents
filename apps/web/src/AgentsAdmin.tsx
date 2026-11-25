@@ -13,7 +13,7 @@ import { agentToolsText } from "./agent-tools";
 import { api, messageOf } from "./api";
 import { dateTimeShort } from "./format";
 import { INCIDENT_TEXT, usd } from "./KeyBanners";
-import { useServerEvents } from "./live";
+import { useDropDeletedAgents, useServerEvents } from "./live";
 
 const MODEL_LABEL: Record<AgentModel, string> = {
   "claude-opus-5-5": "Claude Opus 5.5",
@@ -112,6 +112,7 @@ export function AgentsSettings() {
   useEffect(() => {
     api.agents().then(setAgents, () => setLoadError(true));
   }, []);
+  useDropDeletedAgents(setAgents);
   // O gasto na Chave anda a cada resposta que ela paga.
   useServerEvents((event) => {
     if (event.type !== "agent_budget.updated") return;

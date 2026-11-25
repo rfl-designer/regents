@@ -3,6 +3,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { agentToolsText } from "./agent-tools";
 import { ApiFailure, api } from "./api";
 import { dmTitle } from "./DmView";
+import { useDropDeletedAgents } from "./live";
 
 interface Props {
   me: MeDto;
@@ -231,6 +232,7 @@ function NewDm({ me, onCancel, onOpened }: { me: MeDto; onCancel(): void; onOpen
   useEffect(() => {
     api.agents().then(setAgents, () => setError("Não foi possível carregar os Agentes. Tente de novo."));
   }, []);
+  useDropDeletedAgents(setAgents);
 
   function toggle(id: string) {
     setChosen((prev) => {

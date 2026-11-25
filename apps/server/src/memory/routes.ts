@@ -77,6 +77,7 @@ export function memoryRoutes(deps: { db: Db; clock: Clock; events: EventHub }) {
     if (!text) return invalidText(c);
     const id = await correctItem(db, { id: item.id, text, by: c.get("member"), now: clock.now() });
     if (id === "archived") return c.json({ error: "archived" }, 409);
+    if (id === "not_found") return c.json({ error: "not_found" }, 404);
     await publishMemory(db, events, [item.id, id]);
     const [created] = await selectMemory(db, inArray(schema.memoryItems.id, [id]));
     return c.json(created, 201);
