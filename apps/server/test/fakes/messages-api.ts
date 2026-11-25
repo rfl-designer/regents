@@ -47,8 +47,15 @@ export interface FakeReply {
    * As server tools da web que o lado da Anthropic roda antes do texto: um bloco `server_tool_use`
    * e o resultado (`web_search_tool_result`/`web_fetch_tool_result`) por item, ou o erro dele
    * (`error`: o `error_code`). Cada busca sem erro conta em `usage.server_tool_use.web_search_requests`.
+   * `page`: o texto da página que o `web_fetch` trouxe (padrão "A página.").
    */
-  serverToolUse?: { name: "web_search" | "web_fetch"; input?: Record<string, unknown>; id?: string; error?: string }[];
+  serverToolUse?: {
+    name: "web_search" | "web_fetch";
+    input?: Record<string, unknown>;
+    id?: string;
+    error?: string;
+    page?: string;
+  }[];
 }
 
 /** Uma chamada que chegou ao falso. */
@@ -293,7 +300,7 @@ export async function startFakeMessagesApi(
                     retrieved_at: "2026-11-24T12:00:00Z",
                     content: {
                       type: "document",
-                      source: { type: "text", media_type: "text/plain", data: "A página." },
+                      source: { type: "text", media_type: "text/plain", data: server.page ?? "A página." },
                     },
                   };
             await send("content_block_start", {

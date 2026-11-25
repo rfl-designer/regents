@@ -171,6 +171,12 @@ export const api = {
   /** Corrige um item da Memória: devolve a versão nova (a anterior fica arquivada e chega por evento). */
   correctMemory: (itemId: string, text: string) =>
     call<MemoryItemDto>(`/api/memory/${itemId}/correct`, json("POST", { text })),
+  /** Só o Admin: promove um item de Canal público ao Workspace. Devolve a versão do Workspace. */
+  promoteMemory: (itemId: string) => call<MemoryItemDto>(`/api/memory/${itemId}/promote`, { method: "POST" }),
+  /** A Memória do Workspace (todo Membro vê): ativos e arquivados, do mais novo ao mais velho. */
+  workspaceMemory: () => call<MemoryItemDto[]>("/api/workspace-memory"),
+  /** Só o Admin: escreve um item direto na Memória do Workspace. */
+  writeWorkspaceMemory: (text: string) => call<MemoryItemDto>("/api/workspace-memory", json("POST", { text })),
   /** Os Desfechos da Articuladora numa conversa (uma DM não tem). */
   outcomes: (conversationId: string) => call<OutcomeDto[]>(`/api/conversations/${conversationId}/outcomes`),
   updateAgent: (agentId: string, input: UpdateAgentInput) =>

@@ -127,6 +127,7 @@ export function ChannelView({ channel, me, onChanged, focus }: Props) {
         onCloseMemory={() => setMemoryOpen(false)}
         agentOpen={agentOpen}
         onCloseAgent={() => setAgentOpen(null)}
+        promotable={channel.kind === "public"}
         // Escrever num Canal público é entrar nele; o `channel.updated` também chega, mas a tela não espera.
         onSent={() => {
           if (!joined) api.channel(channel.id).then(onChanged, () => {});
@@ -154,6 +155,7 @@ export function Conversation({
   onCloseMemory,
   agentOpen = null,
   onCloseAgent,
+  promotable = false,
 }: {
   conversationId: string;
   label: string;
@@ -166,6 +168,8 @@ export function Conversation({
   /** A tela do Agente aberta ao lado (#65), pelo id: o cabeçalho do Canal ou da DM a abre. */
   agentOpen?: string | null;
   onCloseAgent?(): void;
+  /** Os itens da Memória daqui podem ir ao Workspace (Canal público): o Admin vê "Promover ao Workspace". */
+  promotable?: boolean;
   /**
    * A mensagem para onde a notificação levou (a da falha, com "Tentar de novo"): quando ela
    * chega, vem para o meio da tela e pisca; numa Thread, a Thread abre.
@@ -381,6 +385,8 @@ export function Conversation({
         <MemoryPanel
           label={label}
           items={items}
+          isAdmin={me.role === "admin"}
+          promotable={promotable && me.role === "admin"}
           onChanged={(item) => setMemory((prev) => ({ ...prev, [item.id]: item }))}
           onOpen={openOrigin}
           onClose={() => onCloseMemory?.()}
@@ -1120,18 +1126,24 @@ function CancelButton({ onCancel }: { onCancel(): Promise<void> }) {
 /**
  * A lista "Memória" da conversa, ao lado (no celular, por cima): o que os Agentes sabem dali, cada
  * item com a mensagem de origem (que leva até ela, na Thread se nasceu numa), com Desfazer e
- * Corrigir. Quem vê a lista vê a conversa, e quem vê a conversa desfaz e corrige. Os arquivados
- * (desfeitos ou substituídos) ficam à parte, embaixo.
+ * Corrigir. Quem vê a lista vê a conversa, e quem vê a conversa desfaz e corrige; o item promovido
+ * à Memória do Workspace só o Admin. Num Canal público, o Admin tem "Promover ao Workspace"
+ * (`promotable`). Os arquivados (desfeitos, substituídos ou promovidos) ficam à parte, embaixo.
  */
 function MemoryPanel({
   label,
   items,
+  isAdmin,
+  promotable,
   onOpen,
   onChanged,
   onClose,
 }: {
   label: string;
   items: MemoryItemDto[];
+  isAdmin: boolean;
+  /** Os itens daqui vão ao Workspace: o Admin num Canal público. */
+  promotable: boolean;
   onOpen(item: MemoryItemDto): void;
   /** O item que a ação devolveu (o evento `memory.updated` também chega). */
   onChanged(item: MemoryItemDto): void;
@@ -1154,7 +1166,14 @@ function MemoryPanel({
         ) : (
           <ul className="memory-items" aria-label="Itens da Memória">
             {active.map((i) => (
-              <MemoryItem key={i.id} item={i} onOpen={onOpen} onChanged={onChanged} />
+              <MemoryItem
+                key={i.id}
+                item={i}
+                editable={i.scope !== "workspace" || isAdmin}
+                onPromote={promotable && i.scope === "conversation" ? () => api.promoteMemory(i.id) : undefined}
+                onOpen={onOpen}
+                onChanged={onChanged}
+              />
             ))}
           </ul>
         )}
@@ -1164,7 +1183,7 @@ function MemoryPanel({
   );
 }
 
-/** Os itens arquivados de uma lista de Memória, à parte: "desfeito" ou "substituído por: …". */
+/** Os itens arquivados de uma lista de Memória, à parte, cada um com o `archivedNote` dele. */
 export function MemoryArchived({ archived, all }: { archived: MemoryItemDto[]; all: MemoryItemDto[] }) {
   if (archived.length === 0) return null;
   const byId = new Map(all.map((i) => [i.id, i]));
@@ -1172,38 +1191,46 @@ export function MemoryArchived({ archived, all }: { archived: MemoryItemDto[]; a
     <section className="memory-archived" aria-label="Arquivados">
       <h2 className="memory-subhead">Arquivados</h2>
       <ul className="memory-items">
-        {archived.map((i) => {
-          const next = i.replacedById ? byId.get(i.replacedById) : undefined;
-          return (
-            <li key={i.id} className="memory-item archived">
-              <p className="memory-text">{i.text}</p>
-              <p className="micro muted">
-                {i.replacedById ? `substituído por: ${next?.text ?? "uma versão nova"}` : "desfeito"}
-              </p>
-            </li>
-          );
-        })}
+        {archived.map((i) => (
+          <li key={i.id} className="memory-item archived">
+            <p className="memory-text">{i.text}</p>
+            <p className="micro muted">{archivedNote(i, i.replacedById ? byId.get(i.replacedById) : undefined)}</p>
+          </li>
+        ))}
       </ul>
     </section>
   );
 }
 
+/** O que diz um item arquivado: desfeito, substituído pela versão nova ou promovido ao Workspace. */
+export function archivedNote(item: MemoryItemDto, next: MemoryItemDto | undefined) {
+  if (!item.replacedById) return "desfeito";
+  if (item.scope !== "workspace" && next?.scope === "workspace") return "promovido ao Workspace";
+  return `substituído por: ${next?.text ?? "uma versão nova"}`;
+}
+
 /**
  * Um item ativo de uma lista de Memória: o texto, de qual Agente é (na Memória do Agente), a
- * origem, e Desfazer ou Corrigir (com "Voltar").
+ * origem, e Desfazer ou Corrigir (com "Voltar") quando quem olha pode (`editable`); "Promover ao
+ * Workspace" quando há `onPromote`. Sem `onOpen`, a origem é só texto.
  */
 export function MemoryItem({
   item: i,
+  editable,
+  onPromote,
   onOpen,
   onChanged,
 }: {
   item: MemoryItemDto;
-  onOpen(item: MemoryItemDto): void;
+  editable: boolean;
+  onPromote?(): Promise<MemoryItemDto>;
+  onOpen?(item: MemoryItemDto): void;
   onChanged(item: MemoryItemDto): void;
 }) {
   const [correcting, setCorrecting] = useState(false);
   const [text, setText] = useState(i.text);
   const undo = useAction(() => api.undoMemory(i.id).then(onChanged));
+  const promote = useAction(async () => onChanged(await onPromote!()));
   const correct = useAction(() =>
     api.correctMemory(i.id, text).then((next) => {
       onChanged(next);
@@ -1240,15 +1267,29 @@ export function MemoryItem({
       ) : (
         <p className="memory-text">
           {i.text}
-          {i.agent && <span className="tag">Memória de {i.agent.name}</span>}
+          {i.agent && (
+            <>
+              {" "}
+              <span className="tag">Memória de {i.agent.name}</span>
+            </>
+          )}
+          {i.scope === "workspace" && i.conversationId && (
+            <>
+              {" "}
+              <span className="tag">no Workspace</span>
+            </>
+          )}
         </p>
       )}
-      {i.origin && (
-        <button type="button" className="link-quiet micro memory-origin" onClick={() => onOpen(i)}>
-          de {i.origin.author}: “{i.origin.excerpt}”{i.origin.threadRootId ? " · na Thread" : ""}
-        </button>
-      )}
-      {!correcting && (
+      {i.origin &&
+        (onOpen ? (
+          <button type="button" className="link-quiet micro memory-origin" onClick={() => onOpen(i)}>
+            {originText(i.origin)}
+          </button>
+        ) : (
+          <p className="micro muted memory-origin">{originText(i.origin)}</p>
+        ))}
+      {!correcting && editable && (
         <div className="memory-actions">
           <button type="button" className="link micro" disabled={undo.busy} onClick={undo.act}>
             Desfazer
@@ -1263,11 +1304,21 @@ export function MemoryItem({
           >
             Corrigir
           </button>
+          {onPromote && (
+            <button type="button" className="link micro" disabled={promote.busy} onClick={promote.act}>
+              Promover ao Workspace
+            </button>
+          )}
           {undo.failed && <span className="error">Não deu para desfazer. Tente de novo.</span>}
+          {promote.failed && <span className="error">Não deu para promover. Tente de novo.</span>}
         </div>
       )}
     </li>
   );
+}
+
+function originText(origin: NonNullable<MemoryItemDto["origin"]>) {
+  return `de ${origin.author}: “${origin.excerpt}”${origin.threadRootId ? " · na Thread" : ""}`;
 }
 
 function ChannelHeader({

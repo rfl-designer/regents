@@ -41,6 +41,7 @@ import { ProfileView } from "./ProfileView";
 import { InstallOnIphone, PushBanners } from "./PushBanners";
 import { type AdminView, Sidebar } from "./Sidebar";
 import { WorkspaceContextSettings } from "./WorkspaceContext";
+import { WorkspaceMemory } from "./WorkspaceMemory";
 
 type State =
   | { kind: "loading" }
@@ -67,7 +68,7 @@ function explain(err: unknown): State {
   return { kind: "blocked", title: "Algo deu errado", detail: "Recarregue a página para tentar de novo." };
 }
 
-type Screen = "account" | "myConnectors" | "profile" | "notifications" | AdminView;
+type Screen = "account" | "myConnectors" | "profile" | "notifications" | "workspaceMemory" | AdminView;
 /** `channel` é a conversa aberta (Canal ou DM); as outras são telas (`SCREENS`). */
 type View = "channel" | Screen;
 
@@ -89,6 +90,7 @@ const SCREENS: Record<Screen, { path?: string; admin?: true; render(ctx: ScreenC
   account: { path: ACCOUNT_PATH, render: ({ account }) => <MyAccount state={account} /> },
   myConnectors: { path: MY_CONNECTORS_PATH, render: () => <MyConnectors /> },
   notifications: { render: ({ push }) => <DevicesView push={push} /> },
+  workspaceMemory: { render: ({ me }) => <WorkspaceMemory me={me} /> },
   members: { path: MEMBERS_PATH, admin: true, render: ({ me }) => <MembersSettings me={me} /> },
   context: { admin: true, render: () => <WorkspaceContextSettings /> },
   settings: { admin: true, render: () => <ChannelSettings /> },
@@ -387,6 +389,8 @@ export function App() {
             open(opened.id);
           }}
           onOpenAdmin={setView}
+          workspaceMemoryOpen={view === "workspaceMemory"}
+          onOpenWorkspaceMemory={() => setView("workspaceMemory")}
         />
         {view !== "channel" ? (
           SCREENS[view].render({ me: state.me, account, push, installation, setMe })

@@ -105,6 +105,7 @@ export function AgentPanel({
                     <MemoryItem
                       key={i.id}
                       item={i}
+                      editable
                       onChanged={changed}
                       onOpen={(item) => {
                         if (item.conversationId === conversationId) onOpen(item);
