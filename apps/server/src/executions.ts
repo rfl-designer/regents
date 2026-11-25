@@ -32,6 +32,7 @@ import { buildContext, type Call } from "./context";
 import { type Db, schema, type Tx } from "./db/client";
 import { type EventHub, reaches, without } from "./events";
 import { type KeyLedger, monthOf } from "./key-budget";
+import { remembers } from "./memory/enabled";
 import { buildExtraction, DEFAULT_MEMORY_MODEL, MEMORY_SCHEMA, parseOperations } from "./memory/extraction";
 import { insertExtracted, publishMemory } from "./memory/items";
 import { recordMentions } from "./mentions";
@@ -660,7 +661,19 @@ export function createExecutions(deps: {
 
   async function run(job: Row, agent: Agent, payer: Choice, controller: AbortController) {
     if (job.kind === "route") return route(job, payer, controller, agent);
-    if (job.kind === "memory") return extract(job, payer, controller);
+    if (job.kind === "memory") {
+      // O Admin desligou a Memória do Agente com a extração já na fila (#67): ela termina sem ler
+      // nada. Relida agora: a linha da passada pela fila pode ser de antes de quem pague liberar.
+      const [now] = await db
+        .select({ memoryEnabled: agents.memoryEnabled })
+        .from(agents)
+        .where(eq(agents.id, agent.id));
+      if (!now || !remembers(now)) {
+        if (await close(job, "done")) await publish(job.id);
+        return;
+      }
+      return extract(job, payer, controller);
+    }
     // Os itens de Memória que entraram no contexto da tentativa que responde: a resposta os guarda.
     let memoryItemIds: string[] = [];
     const result = await byPayer(job, payer, controller, async (payer) => {
@@ -735,7 +748,8 @@ export function createExecutions(deps: {
         : [];
       if (!(await close(job, "done", { replyMessageId: reply.id, memoryItemIds }, tx))) return undefined;
       // A extração da Memória entra na fila junto com a entrega: as duas nunca se separam (ADR 0003).
-      return { followed, extraction: await enqueueExtraction(tx, job) };
+      // Com a Memória do Agente desligada (#67), não entra.
+      return { followed, extraction: remembers(agent) ? await enqueueExtraction(tx, job) : undefined };
     });
     if (!delivered) return;
     // Todos recebem a resposta; o autor da origem, a cópia com o porquê ligado à Conta dele.
@@ -757,7 +771,7 @@ export function createExecutions(deps: {
     await reading.messageCreated(replyDto);
     push.messageCreated(replyDto, channel);
     await publish(job.id);
-    await publish(delivered.extraction);
+    if (delivered.extraction) await publish(delivered.extraction);
     wake();
   }
 

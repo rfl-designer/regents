@@ -232,6 +232,13 @@
       "when": 1795615273863,
       "tag": "0032_memoria-na-resposta",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1795616401580,
+      "tag": "0033_memoria-ligada-por-agente",
+      "breakpoints": true
     }
   ]
 }

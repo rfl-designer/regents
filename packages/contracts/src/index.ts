@@ -409,6 +409,11 @@ export interface AgentDto {
    * "acessa CRM com a credencial do Workspace".
    */
   reach: string[];
+  /**
+   * A Memória do Agente ligada, para todo Membro (spec #60, #67). Vem ligada, inclusive na
+   * Articuladora; só o Admin muda. Desligada, ele não guarda nem lê Memória.
+   */
+  memoryEnabled: boolean;
   instructions?: string;
   /** Só para o Admin: os repositórios do GitHub a que o Agente está restrito (nulo: todos os da instalação). */
   githubRepositories?: string[] | null;
@@ -439,10 +444,13 @@ export interface CreateAgentInput {
 
 /**
  * Corpo de `PATCH /api/agents/:id` (só Admin). Campo ausente fica. Da Articuladora (`builtin`),
- * só `name`, `photo` e `model`: `description` e `instructions` dão `403 builtin_locked`.
- * Trocar o nome troca o identificador de Menção (`handle`).
+ * só `name`, `photo`, `model`, `monthlyBudgetUsd` e `memoryEnabled`: `description` e
+ * `instructions` dão `403 builtin_locked`. Trocar o nome troca o identificador de Menção (`handle`).
  */
-export type UpdateAgentInput = Partial<CreateAgentInput>;
+export type UpdateAgentInput = Partial<CreateAgentInput> & {
+  /** Liga ou desliga a Memória do Agente (#67). */
+  memoryEnabled?: boolean;
+};
 
 // ---------- GitHub, o Conector embutido (ADR 0010) ----------
 

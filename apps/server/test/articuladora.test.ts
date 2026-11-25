@@ -46,6 +46,8 @@ describe("a Articuladora existe em todo Workspace", () => {
         monthlyBudgetUsd: null,
         keySpendUsd: 0,
         overBudget: false,
+        // A Memória vem ligada, inclusive na Articuladora (#67).
+        memoryEnabled: true,
       },
     ]);
   });

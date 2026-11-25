@@ -4,6 +4,7 @@ import type { Agent } from "./agents";
 import { withBuiltinText } from "./articuladora";
 import { type Db, schema } from "./db/client";
 import { isActive } from "./members";
+import { remembers } from "./memory/enabled";
 import { DEFAULT_SUMMARY_CHARS, memorySummary } from "./memory/summary";
 import type { ModelMessage } from "./model/port";
 import { workspaceMapFor } from "./routing";
@@ -136,7 +137,10 @@ export async function buildContext(
     ...team.map((a) => `- ${a.name}${a.id === agent.id ? " (você)" : ""}${a.description ? `: ${a.description}` : ""}`),
   ].join("\n");
 
-  const memory = await memorySummary(db, { conversationId: conversation!.id, budget: memoryBudget });
+  // Com a Memória do Agente desligada (#67), a resposta não lê Memória nenhuma.
+  const memory = remembers(row)
+    ? await memorySummary(db, { conversationId: conversation!.id, budget: memoryBudget })
+    : { text: "", shown: [] };
   const system = [
     preamble,
     section("Contexto do Workspace", await readWorkspaceContext(db)),
