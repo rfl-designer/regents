@@ -64,7 +64,9 @@ describe("Repositórios do GitHub por Agente", () => {
     await repos.getByRole("button", "Salvar repositórios").tap();
 
     await expect(repos).toContainText("Salvo.");
-    await expect(item).toContainText("acessa o GitHub com a credencial do Workspace, só no repositório time/site");
+    // A lista é configuração do Admin: a descrição do Agente não a repete.
+    await expect(item).toContainText("acessa o GitHub com a credencial do Workspace");
+    await expect(item).not.toContainText("só no repositório");
     const salvo = await chamar<{ repositories: string[] | null }>(app, "GET", `/api/agents/${criado.id}/github`);
     expect(salvo.repositories).toEqual(["time/site"]);
   });

@@ -9,7 +9,7 @@ import {
 } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
-import { agentToolsText, withGitHubRepositories, withGranted } from "./agent-tools";
+import { agentToolsText } from "./agent-tools";
 import { ApiFailure, api } from "./api";
 import { dateTimeShort } from "./format";
 import { INCIDENT_TEXT, usd } from "./KeyBanners";
@@ -184,8 +184,15 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
                 setEditing(false);
               }}
             />
-            <AgentTools agent={a} onChanged={(tools) => onChanged(withGranted(a, tools))} />
-            <AgentGitHub agent={a} onChanged={(repos) => onChanged(withGitHubRepositories(a, repos))} />
+            <AgentTools
+              agent={a}
+              onChanged={async () => {
+                // As Ferramentas e a linha de alcance ("acessa CRM com…") como o servidor as diz.
+                const fresh = (await api.agents().catch(() => [])).find((x) => x.id === a.id);
+                if (fresh) onChanged(fresh);
+              }}
+            />
+            <AgentGitHub agent={a} onChanged={(repos) => onChanged({ ...a, githubRepositories: repos })} />
           </>
         )}
       </div>

@@ -604,7 +604,7 @@ describe("os repositórios do GitHub por Agente", () => {
   );
 
   test(
-    "a descrição do Agente diz que ele acessa o GitHub com a credencial do Workspace e, com lista, em quais repositórios",
+    "a descrição do Agente diz que ele acessa o GitHub com a credencial do Workspace; a lista de repositórios não aparece nela, é só do Admin",
     async () => {
       const { t, faro } = await comGitHub({ repositories: ["time/site", "time/infra", "time/docs"] });
       await t.addMember(bruno, { by: juliana });
@@ -615,13 +615,14 @@ describe("os repositórios do GitHub por Agente", () => {
       expect((await agente(t, faro.id)).githubRepositories).toBeNull();
 
       expect((await restringir(t, faro.id, ["time/site", "time/docs"])).status).toBe(200);
-      expect((await agente(t, faro.id, bruno)).reach).toEqual([`${linha}, só nos repositórios time/docs e time/site`]);
+      expect((await agente(t, faro.id, bruno)).reach).toEqual([linha]);
+      expect((await agente(t, faro.id)).reach).toEqual([linha]);
       // A lista em si é da configuração, só do Admin.
       expect((await agente(t, faro.id, bruno)).githubRepositories).toBeUndefined();
       expect((await agente(t, faro.id)).githubRepositories).toEqual(["time/docs", "time/site"]);
 
       await restringir(t, faro.id, ["time/site"]);
-      expect((await agente(t, faro.id, bruno)).reach).toEqual([`${linha}, só no repositório time/site`]);
+      expect((await agente(t, faro.id, bruno)).reach).toEqual([linha]);
 
       // Sem Ferramenta do GitHub, a descrição não fala do GitHub, mesmo com lista.
       for (const id of LEITURAS) await t.as(juliana).delete(`/api/agents/${faro.id}/tools/${id}`);
