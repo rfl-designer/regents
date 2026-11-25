@@ -733,3 +733,34 @@ export const approvalRequests = pgTable(
   },
   (t) => [index().on(t.channelId, t.seq), index().on(t.executionId)],
 );
+
+/**
+ * O GitHub App da Instalação e a instalação dele na conta do time (ADR 0010): uma linha só, uma
+ * instalação por Workspace. Os segredos do App (a chave privada, o segredo do webhook e o do
+ * cliente) ficam num JSON cifrado com a chave mestra, como a Chave do Workspace.
+ */
+export const githubApp = pgTable(
+  "github_app",
+  {
+    id: integer().primaryKey().default(1),
+    /** O `state` do fluxo em andamento (manifest ou instalação), conferido no retorno e apagado nele. */
+    pendingState: text(),
+    /** O endereço da Instalação de onde o fluxo começou (os retornos do manifest). */
+    origin: text(),
+    appId: bigint({ mode: "number" }),
+    slug: text(),
+    name: text(),
+    owner: text(),
+    htmlUrl: text(),
+    secretsCiphertext: text(),
+    secretsIv: text(),
+    createdAt: timestamp({ withTimezone: true }),
+    installationId: bigint({ mode: "number" }),
+    installationAccount: text(),
+    installedAt: timestamp({ withTimezone: true }),
+    /** A instalação que o GitHub deixou de reconhecer: o motivo e quando o Shearim viu. */
+    failureReason: text(),
+    failedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [check("github_app_uma_linha", sql`${t.id} = 1`)],
+);

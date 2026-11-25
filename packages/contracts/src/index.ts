@@ -428,13 +428,51 @@ export interface CreateAgentInput {
  */
 export type UpdateAgentInput = Partial<CreateAgentInput>;
 
+// ---------- GitHub, o Conector embutido (ADR 0010) ----------
+
+/**
+ * O GitHub do Workspace, só para o Admin (`GET /api/github`):
+ * - `none`: nenhum GitHub App criado ("Criar o GitHub App");
+ * - `created`: o App existe, falta instalar na conta do time ("Instalar no GitHub");
+ * - `installed`: instalado; as Ferramentas do GitHub alcançam os repositórios escolhidos lá.
+ *
+ * `failure` é a instalação que o GitHub deixou de reconhecer (removida ou suspensa lá), vista na
+ * última chamada de uma Ferramenta: as Ferramentas falham com motivo até o Admin instalar de novo.
+ * Os segredos do App nunca voltam.
+ */
+export interface GitHubDto {
+  state: "none" | "created" | "installed";
+  app: { name: string; slug: string; owner: string; htmlUrl: string } | null;
+  installation: { id: number; account: string; installedAt: string } | null;
+  failure: { reason: string; at: string } | null;
+}
+
+/** Corpo de `POST /api/github/manifest`: o endereço da Instalação e, opcional, a organização dona do App. */
+export interface StartGitHubManifestInput {
+  /** O `location.origin` do PWA: para onde o GitHub manda o navegador de volta. */
+  origin: string;
+  /** A organização do time no GitHub; sem ela, o App fica na conta pessoal de quem cria. */
+  organization?: string;
+}
+
+/** O formulário que o PWA envia ao GitHub (`POST action`, campo `manifest`). */
+export interface GitHubManifestDto {
+  action: string;
+  manifest: string;
+}
+
+/** `POST /api/github/installation`: a página do GitHub onde o Admin instala o App e escolhe os repositórios. */
+export interface GitHubInstallDto {
+  url: string;
+}
+
 // ---------- Ferramentas (Spec #44) ----------
 
 /**
- * De onde vem uma Ferramenta: o próprio Workspace ou a web. As dos Conectores entram depois,
- * cada uma com o Conector dela.
+ * De onde vem uma Ferramenta: o próprio Workspace, a web ou o GitHub (o Conector embutido, ADR
+ * 0010). As dos Conectores MCP entram depois, cada uma com o Conector dela.
  */
-export type ToolOrigin = "workspace" | "web";
+export type ToolOrigin = "workspace" | "web" | "github";
 /** `read` só lê; `write` escreve, e toda escrita passa por um Pedido de aprovação. */
 export type ToolAccess = "read" | "write";
 
@@ -891,6 +929,8 @@ export const messagePath = (conversationId: string, messageId: string) =>
 export const INSTALLATION_PATH = "/instalacao";
 /** A seção Membros (o Admin decide os Pedidos de entrada): para onde leva o push de cada pedido. */
 export const MEMBERS_PATH = "/membros";
+/** O GitHub do Workspace (ADR 0010): para onde voltam os retornos do manifest e da instalação. */
+export const GITHUB_PATH = "/github";
 /** A Chave do Workspace: para onde leva o push do incidente da Chave. */
 export const WORKSPACE_KEY_PATH = "/chave";
 /** Os Agentes (orçamento e gasto): para onde leva o push do estouro de orçamento. */

@@ -15,6 +15,9 @@ import type { Db } from "./db/client";
 import { dmRoutes } from "./dms";
 import { createEventHub } from "./events";
 import { createExecutions, type ExecutionHooks, type ExecutionLimits } from "./executions";
+import { createGitHub, type GitHubConfig } from "./github/connector";
+import { githubRoutes } from "./github/routes";
+import { githubTools } from "./github/tools";
 import type { Identity, IdentityPort } from "./identity/port";
 import { IdentityUnavailableError } from "./identity/whois";
 import { createInstallation, type InstallationConfig } from "./installation/status";
@@ -72,6 +75,8 @@ export interface AppDeps {
    * (padrão: as Ferramentas do Workspace; os testes juntam Ferramentas que travam ou falham).
    */
   tools?: { timeoutMs?: number; definitions?: readonly ToolDefinition[] };
+  /** Onde fica o GitHub (padrão: github.com). Os testes apontam para o falso. */
+  github?: Partial<GitHubConfig>;
 }
 
 export type AppHooks = JoinRequestHooks & ExecutionHooks & KeyHooks & AccountHooks;
@@ -136,10 +141,12 @@ export function createApp(deps: AppDeps) {
   });
   const reading = createReading({ db, clock, events });
   const ledger = createKeyLedger({ db, clock, events, hooks });
+  // O GitHub, o Conector embutido (ADR 0010): as Ferramentas dele vêm depois das do Workspace.
+  const github = createGitHub({ db, clock, secrets, config: deps.github });
   const tools = createToolPort({
     db,
     clock,
-    definitions: deps.tools?.definitions ?? WORKSPACE_TOOLS,
+    definitions: [...(deps.tools?.definitions ?? WORKSPACE_TOOLS), ...githubTools(github)],
     timeoutMs: deps.tools?.timeoutMs,
   });
   // As mensagens novas (de pessoa e as respostas de Agente) vão ao push pelo mesmo `messageCreated`.
@@ -238,6 +245,7 @@ export function createApp(deps: AppDeps) {
   );
   app.route("/api", workspaceKeyRoutes({ db, clock, secrets, onChanged: () => reconsider() }));
   app.route("/api", workspaceContextRoutes({ db }));
+  app.route("/api", githubRoutes({ github }));
   app.route("/api", installation.routes);
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));

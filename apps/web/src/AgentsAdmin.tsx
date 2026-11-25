@@ -277,7 +277,7 @@ function EditAgent({ agent, onSaved }: { agent: AgentDto; onSaved(agent: AgentDt
   );
 }
 
-const ORIGIN_LABEL: Record<ToolOrigin, string> = { workspace: "Do Workspace", web: "Da web" };
+const ORIGIN_LABEL: Record<ToolOrigin, string> = { workspace: "Do Workspace", web: "Da web", github: "Do GitHub" };
 
 /**
  * As Ferramentas do Agente, agrupadas por origem, cada uma marcada como leitura ou escrita (toda
