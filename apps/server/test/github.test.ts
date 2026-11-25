@@ -13,7 +13,7 @@
  * - Uma instalação removida no GitHub vira falha da Ferramenta com motivo, e o Admin a vê.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ExecutionDto, GitHubDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, AgentGitHubDto, ChannelDto, ExecutionDto, GitHubDto, MessageDto } from "@shearim/contracts";
 import { schema } from "../src/db/client";
 import type { FakeGitHub } from "./fakes/github-api";
 import { toolResults } from "./fakes/messages-api";
@@ -195,7 +195,7 @@ const LEITURAS = [
  * O GitHub ligado: dois repositórios na conta do time, o App criado e instalado só no `time/site`,
  * a Chave gravada e o Faro, com as leituras do GitHub, no #geral.
  */
-async function comGitHub() {
+async function comGitHub(opts: { repositories?: string[] } = {}) {
   const gh = await fakeGitHub();
   gh.repo({
     fullName: "time/site",
@@ -213,11 +213,12 @@ async function comGitHub() {
     ],
   });
   gh.repo({ fullName: "time/infra", files: { "segredo.tf": "senha" } });
+  gh.repo({ fullName: "time/docs" });
   const t = await testApp({ github: gh.config });
   await t.as(juliana).get("/api/me");
   await t.as(juliana).put("/api/workspace-key", { apiKey: CHAVE });
   await criarApp(t, { organization: "time" });
-  await instalar(t, gh, { repositories: ["time/site"] });
+  await instalar(t, gh, { repositories: opts.repositories ?? ["time/site"] });
   const faro: AgentDto = await (
     await t.as(juliana).post("/api/agents", {
       name: "Faro",
@@ -432,6 +433,184 @@ describe("a instalação removida no GitHub", () => {
 
       await instalar(t, gh, { repositories: ["time/site"] });
       expect((await github(t)).failure).toBeNull();
+    },
+    LONGO,
+  );
+});
+
+/** O que o Admin vê dos repositórios de um Agente na tela dele. */
+async function repositoriosDo(t: TestApp, agentId: string): Promise<AgentGitHubDto> {
+  const res = await t.as(juliana).get(`/api/agents/${agentId}/github`);
+  expect(res.status).toBe(200);
+  return res.json();
+}
+
+async function restringir(t: TestApp, agentId: string, repositories: string[] | null) {
+  return t.as(juliana).put(`/api/agents/${agentId}/github`, { repositories });
+}
+
+async function agente(t: TestApp, id: string, who: Person = juliana): Promise<AgentDto> {
+  const lista = (await (await t.as(who).get("/api/agents")).json()) as AgentDto[];
+  return lista.find((a) => a.id === id)!;
+}
+
+describe("os repositórios do GitHub por Agente", () => {
+  test(
+    "na tela do Agente, o Admin vê os repositórios que a instalação alcança; sem lista, o Agente alcança todos",
+    async () => {
+      const { t, gh, faro, geral } = await comGitHub({ repositories: ["time/site", "time/infra"] });
+
+      expect(await repositoriosDo(t, faro.id)).toEqual({
+        repositories: null,
+        available: ["time/infra", "time/site"],
+        failure: null,
+      });
+
+      const antes = gh.tokens.length;
+      t.anthropic.reply(
+        {
+          toolUse: [
+            { id: "t1", name: "github_listar_repositorios" },
+            { id: "t2", name: "github_ler_arquivo", input: { repositorio: "time/infra", caminho: "segredo.tf" } },
+          ],
+        },
+        { text: "Pronto." },
+      );
+      const origem = await enviar(t, geral.id, "@Faro o que tem na infra?");
+      await respostaA(t, geral.id, origem);
+
+      const r = resultados(t);
+      expect(r.get("t1")!.content).toContain("time/site");
+      expect(r.get("t1")!.content).toContain("time/infra");
+      expect(r.get("t2")!.is_error).toBeFalsy();
+      expect(r.get("t2")!.content).toContain("senha");
+      expect(gh.tokens.slice(antes).map((k) => k.repositories)).toEqual([null, ["infra"]]);
+    },
+    LONGO,
+  );
+
+  test(
+    "com lista, as Ferramentas do GitHub desse Agente não veem nem alcançam os outros repositórios",
+    async () => {
+      const { t, gh, faro, geral } = await comGitHub({ repositories: ["time/site", "time/infra"] });
+      const res = await restringir(t, faro.id, ["time/site"]);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        repositories: ["time/site"],
+        available: ["time/infra", "time/site"],
+        failure: null,
+      });
+      expect((await repositoriosDo(t, faro.id)).repositories).toEqual(["time/site"]);
+
+      const antes = gh.tokens.length;
+      t.anthropic.reply(
+        {
+          toolUse: [
+            { id: "t1", name: "github_listar_repositorios" },
+            { id: "t2", name: "github_ler_arquivo", input: { repositorio: "time/infra", caminho: "segredo.tf" } },
+            { id: "t3", name: "github_listar_issues", input: { repositorio: "Time/Infra" } },
+            { id: "t4", name: "github_ler_arquivo", input: { repositorio: "time/site", caminho: "README.md" } },
+          ],
+        },
+        { text: "Só o site." },
+      );
+      const origem = await enviar(t, geral.id, "@Faro o que tem na infra?");
+      await respostaA(t, geral.id, origem);
+
+      const r = resultados(t);
+      // Não vê: a listagem só traz os da lista.
+      expect(r.get("t1")!.content).toContain("time/site");
+      expect(r.get("t1")!.content).not.toContain("time/infra");
+      // Não alcança: falha com motivo, sem nenhum token para o outro repositório.
+      for (const id of ["t2", "t3"]) {
+        expect(r.get(id)).toMatchObject({ is_error: true });
+        expect(r.get(id)!.content).toContain("não está entre os repositórios do GitHub que este Agente alcança");
+      }
+      expect(r.get("t2")!.content).not.toContain("senha");
+      expect(r.get("t4")!.content).toContain("Para rodar: bun dev");
+      expect(gh.tokens.slice(antes).map((k) => k.repositories)).toEqual([["site"], ["site"]]);
+    },
+    LONGO,
+  );
+
+  test(
+    "tirar a lista devolve ao Agente tudo o que a instalação alcança",
+    async () => {
+      const { t, faro } = await comGitHub({ repositories: ["time/site", "time/infra"] });
+      await restringir(t, faro.id, ["time/site"]);
+
+      const res = await restringir(t, faro.id, null);
+
+      expect(res.status).toBe(200);
+      expect((await res.json()).repositories).toBeNull();
+      expect((await repositoriosDo(t, faro.id)).repositories).toBeNull();
+    },
+    LONGO,
+  );
+
+  test(
+    "a lista só aceita repositórios que a instalação alcança, nunca vazia, e só o Admin a mexe",
+    async () => {
+      const { t, faro } = await comGitHub();
+      await t.addMember(bruno, { by: juliana });
+
+      const fora = await restringir(t, faro.id, ["time/infra"]);
+      expect(fora.status).toBe(400);
+      expect((await fora.json()).message).toContain("time/infra não está entre os que a instalação do GitHub alcança");
+      expect((await restringir(t, faro.id, [])).status).toBe(400);
+      expect((await restringir(t, faro.id, "time/site" as unknown as string[])).status).toBe(400);
+      expect((await repositoriosDo(t, faro.id)).repositories).toBeNull();
+
+      expect((await t.as(bruno).get(`/api/agents/${faro.id}/github`)).status).toBe(403);
+      expect((await t.as(bruno).put(`/api/agents/${faro.id}/github`, { repositories: ["time/site"] })).status).toBe(
+        403,
+      );
+      expect((await t.as(juliana).get(`/api/agents/${crypto.randomUUID()}/github`)).status).toBe(404);
+    },
+    LONGO,
+  );
+
+  test(
+    "sem o GitHub instalado, a tela do Agente diz por que não há repositórios para escolher",
+    async () => {
+      const { t } = await semGitHub();
+      const faro: AgentDto = await (
+        await t.as(juliana).post("/api/agents", { name: "Faro", photo: null, model: "claude-sonnet-5-5" })
+      ).json();
+
+      expect(await repositoriosDo(t, faro.id)).toEqual({
+        repositories: null,
+        available: [],
+        failure: "o GitHub não está instalado no Workspace",
+      });
+      expect((await restringir(t, faro.id, ["time/site"])).status).toBe(409);
+    },
+    LONGO,
+  );
+
+  test(
+    "a descrição do Agente diz que ele acessa o GitHub com a credencial do Workspace e, com lista, em quais repositórios",
+    async () => {
+      const { t, faro } = await comGitHub({ repositories: ["time/site", "time/infra", "time/docs"] });
+      await t.addMember(bruno, { by: juliana });
+      const linha = "acessa o GitHub com a credencial do Workspace";
+
+      // Sem lista: tudo o que a instalação alcança. Todo Membro vê a linha.
+      expect((await agente(t, faro.id, bruno)).reach).toEqual([linha]);
+      expect((await agente(t, faro.id)).githubRepositories).toBeNull();
+
+      expect((await restringir(t, faro.id, ["time/site", "time/docs"])).status).toBe(200);
+      expect((await agente(t, faro.id, bruno)).reach).toEqual([`${linha}, só nos repositórios time/docs e time/site`]);
+      // A lista em si é da configuração, só do Admin.
+      expect((await agente(t, faro.id, bruno)).githubRepositories).toBeUndefined();
+      expect((await agente(t, faro.id)).githubRepositories).toEqual(["time/docs", "time/site"]);
+
+      await restringir(t, faro.id, ["time/site"]);
+      expect((await agente(t, faro.id, bruno)).reach).toEqual([`${linha}, só no repositório time/site`]);
+
+      // Sem Ferramenta do GitHub, a descrição não fala do GitHub, mesmo com lista.
+      for (const id of LEITURAS) await t.as(juliana).delete(`/api/agents/${faro.id}/tools/${id}`);
+      expect((await agente(t, faro.id, bruno)).reach).toEqual([]);
     },
     LONGO,
   );

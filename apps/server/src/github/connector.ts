@@ -1,12 +1,19 @@
 import { createPrivateKey, sign } from "node:crypto";
 import type { GitHubDto } from "@shearim/contracts";
-import { eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
 import type { SecretBox } from "../secrets";
 import { ToolFailure } from "../tools/port";
 
-const { githubApp } = schema;
+const { githubApp, agentGithubRepositories } = schema;
+
+/** O escopo de um token de instalação: um repositório, alguns (`dono/nome`) ou, sem os dois, todos. */
+export interface GitHubScope {
+  repository?: string;
+  repositories?: readonly string[];
+  permissions: GitHubPermissions;
+}
 
 /** Onde fica o GitHub: a web (por onde passa o navegador do Admin) e a API. */
 export interface GitHubConfig {
@@ -198,19 +205,23 @@ export function createGitHub(deps: { db: Db; clock: Clock; secrets: SecretBox; c
     },
 
     /**
-     * Um token de instalação curto, pedido na hora, limitado ao repositório (`owner/nome`; sem
-     * ele, todos os que a instalação alcança) e às permissões da Ferramenta. Falha com motivo.
+     * Um token de instalação curto, pedido na hora, limitado ao repositório (`dono/nome`) ou aos
+     * repositórios do escopo (sem eles, todos os que a instalação alcança) e às permissões da
+     * Ferramenta. Falha com motivo.
      */
-    async token(scope: { repository?: string; permissions: GitHubPermissions }, signal?: AbortSignal) {
+    async token(scope: GitHubScope, signal?: AbortSignal) {
       const r = await row();
       if (!r?.installationId) throw new ToolFailure("o GitHub não está instalado no Workspace");
+      const wanted = scope.repository ? [scope.repository] : scope.repositories;
       let repositories: string[] | undefined;
-      if (scope.repository) {
-        const [owner, name, ...rest] = scope.repository.split("/");
-        if (!owner || !name || rest.length) throw new ToolFailure("informe o repositório como dono/nome");
-        if (r.installationAccount && owner.toLowerCase() !== r.installationAccount.toLowerCase())
-          throw new ToolFailure(`o repositório ${scope.repository} não está entre os que o GitHub App alcança`);
-        repositories = [name];
+      if (wanted) {
+        repositories = wanted.map((full) => {
+          const [owner, name, ...rest] = full.split("/");
+          if (!owner || !name || rest.length) throw new ToolFailure("informe o repositório como dono/nome");
+          if (r.installationAccount && owner.toLowerCase() !== r.installationAccount.toLowerCase())
+            throw new ToolFailure(`o repositório ${full} não está entre os que o GitHub App alcança`);
+          return name;
+        });
       }
       let res: Response;
       try {
@@ -229,7 +240,11 @@ export function createGitHub(deps: { db: Db; clock: Clock; secrets: SecretBox; c
         throw new ToolFailure(INSTALLATION_GONE);
       }
       if (res.status === 422)
-        throw new ToolFailure(`o repositório ${scope.repository ?? ""} não está entre os que o GitHub App alcança`);
+        throw new ToolFailure(
+          wanted?.length === 1
+            ? `o repositório ${wanted[0]} não está entre os que o GitHub App alcança`
+            : `algum dos repositórios ${wanted?.join(", ") ?? ""} não está entre os que o GitHub App alcança`,
+        );
       if (!res.ok) throw new ToolFailure(`o GitHub recusou o token de instalação (${res.status})`);
       return ((await res.json()) as { token: string }).token;
     },
@@ -239,7 +254,7 @@ export function createGitHub(deps: { db: Db; clock: Clock; secrets: SecretBox; c
      * `get` da API com ele. `get` devolve o JSON, `null` no 404 (a Ferramenta diz o que não
      * achou) ou falha com motivo.
      */
-    async session(scope: { repository?: string; permissions: GitHubPermissions }, signal: AbortSignal) {
+    async session(scope: GitHubScope, signal: AbortSignal) {
       const token = await github.token(scope, signal);
       return {
         async get<T>(path: string): Promise<T | null> {
@@ -263,6 +278,43 @@ export function createGitHub(deps: { db: Db; clock: Clock; secrets: SecretBox; c
           return (await res.json()) as T;
         },
       };
+    },
+
+    /** Os repositórios que a instalação alcança agora (`dono/nome`, em ordem), perguntados ao GitHub. */
+    async installationRepositories(signal?: AbortSignal): Promise<string[]> {
+      const api = await github.session({ permissions: { metadata: "read" } }, signal ?? new AbortController().signal);
+      const res = await api.get<{ repositories: { full_name: string }[] }>("/installation/repositories?per_page=100");
+      return (res?.repositories ?? []).map((repo) => repo.full_name).sort((a, b) => a.localeCompare(b));
+    },
+
+    /**
+     * Os repositórios a que o Admin restringiu cada Agente (todos, ou só `agentIds`). Agente sem
+     * lista fica de fora do mapa: alcança tudo o que a instalação alcança.
+     */
+    async agentRepositories(agentIds?: readonly string[]): Promise<Map<string, string[]>> {
+      const out = new Map<string, string[]>();
+      if (agentIds && agentIds.length === 0) return out;
+      const rows = await db
+        .select()
+        .from(agentGithubRepositories)
+        .where(agentIds ? inArray(agentGithubRepositories.agentId, [...agentIds]) : undefined)
+        .orderBy(asc(agentGithubRepositories.repository));
+      for (const r of rows) out.set(r.agentId, [...(out.get(r.agentId) ?? []), r.repository]);
+      return out;
+    },
+
+    /** A lista de um Agente (nula: todos os da instalação). */
+    async repositoriesOf(agentId: string): Promise<string[] | null> {
+      return (await github.agentRepositories([agentId])).get(agentId) ?? null;
+    },
+
+    /** Troca a lista de um Agente (nula: tira a lista). Quem chama já conferiu os repositórios. */
+    async restrict(agentId: string, repositories: readonly string[] | null) {
+      await db.transaction(async (tx) => {
+        await tx.delete(agentGithubRepositories).where(eq(agentGithubRepositories.agentId, agentId));
+        if (repositories?.length)
+          await tx.insert(agentGithubRepositories).values(repositories.map((repository) => ({ agentId, repository })));
+      });
     },
   };
   return github;

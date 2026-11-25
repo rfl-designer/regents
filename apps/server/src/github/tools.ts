@@ -91,10 +91,18 @@ export function githubTools(github: GitHub): ToolDefinition[] {
     ...def,
     origin: "github",
     access: "read",
-    async run(_ctx, input, signal) {
+    async run(ctx, input, signal) {
       const repository = opts.repository === false ? undefined : str(input, "repositorio", "o repositório");
       if (repository) repoPath(repository);
-      return run(await github.session({ repository, permissions }, signal), input, repository);
+      // A lista do Agente (#58): o token nem pede os outros repositórios, então eles não aparecem
+      // numa listagem e uma leitura deles falha antes de chegar ao GitHub.
+      const allowed = await github.repositoriesOf(ctx.run.agentId);
+      if (repository && allowed && !allowed.some((r) => r.toLowerCase() === repository.toLowerCase()))
+        throw new ToolFailure(
+          `o repositório ${repository} não está entre os repositórios do GitHub que este Agente alcança`,
+        );
+      const scope = repository ? { repository } : { repositories: allowed ?? undefined };
+      return run(await github.session({ ...scope, permissions }, signal), input, repository);
     },
   });
 

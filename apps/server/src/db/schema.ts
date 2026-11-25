@@ -818,3 +818,18 @@ export const githubApp = pgTable(
   },
   (t) => [check("github_app_uma_linha", sql`${t.id} = 1`)],
 );
+
+/**
+ * Os repositórios do GitHub a que o Admin restringiu um Agente (Spec #44), como `dono/nome`. Sem
+ * linha, o Agente alcança tudo o que a instalação alcança; com linhas, só estes.
+ */
+export const agentGithubRepositories = pgTable(
+  "agent_github_repositories",
+  {
+    agentId: uuid()
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    repository: text().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.agentId, t.repository] })],
+);
