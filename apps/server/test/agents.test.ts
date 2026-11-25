@@ -98,6 +98,8 @@ describe("Agentes", () => {
       ...faro,
       // Nasce sem Ferramentas: o Admin as concede na tela do Agente (Spec #44).
       tools: [],
+      // Sem Conector, nenhuma linha de alcance na descrição pública.
+      reach: [],
       // O orçamento e o gasto na Chave, só para o Admin (#28).
       monthlyBudgetUsd: null,
       keySpendUsd: 0,

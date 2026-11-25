@@ -28,6 +28,7 @@ import { secretBox } from "../src/secrets";
 import { FAKE_LOGIN_CODE, type FakeClaude, fakeClaude } from "./fake-claude";
 import { startFakeMessagesApi } from "./fakes/messages-api";
 import { type Delivery, type FakeSubscription, type PushCollector, startPushCollector } from "./fakes/push-collector";
+import { type FakeRemoteTool, startRemoteMcp } from "./fakes/remote-mcp";
 
 // ---------- limpeza automática (o preload roda `runCleanups` no afterEach) ----------
 
@@ -353,6 +354,13 @@ export async function fakeMessagesApi() {
   const api = await startFakeMessagesApi();
   onCleanup(() => api.stop());
   return api;
+}
+
+/** Um servidor MCP remoto falso (um Conector), que fecha sozinho no fim do teste. */
+export function remoteMcp(opts: { token: string; tools: FakeRemoteTool[] }) {
+  const server = startRemoteMcp(opts);
+  onCleanup(() => server.stop());
+  return server;
 }
 
 /** O coletor de push (o dublê dos push services), que fecha sozinho no fim do teste. */

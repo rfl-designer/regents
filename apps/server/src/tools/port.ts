@@ -1,4 +1,11 @@
-import type { AgentToolSummaryDto, MessageDto, ToolAccess, ToolCallDto, ToolOrigin } from "@shearim/contracts";
+import type {
+  AgentToolSummaryDto,
+  MessageDto,
+  ToolAccess,
+  ToolCallDto,
+  ToolConnectorDto,
+  ToolOrigin,
+} from "@shearim/contracts";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
@@ -76,6 +83,8 @@ interface ToolBase {
   /** Para o modelo e para o Admin. */
   description: string;
   origin: ToolOrigin;
+  /** Só nas de um Conector: qual, e de quem é a credencial (a concessão aponta para ele). */
+  connector?: ToolConnectorDto;
   /** O JSON Schema da entrada. */
   inputSchema: Record<string, unknown>;
   /** O prazo desta Ferramenta (padrão: o da Instalação). */
@@ -179,19 +188,28 @@ export interface ToolObserver {
 export function createToolPort(deps: {
   db: Db;
   clock: Clock;
-  /** O catálogo (padrão: as Ferramentas do Workspace). */
+  /** O catálogo fixo (padrão: as Ferramentas do Workspace). */
   definitions: readonly ToolDefinition[];
+  /**
+   * O catálogo que muda (as Ferramentas dos Conectores), lido a cada uso: remover um Conector tira
+   * as Ferramentas dele na hora, também de uma resposta em curso.
+   */
+  extra?: () => Promise<readonly ToolDefinition[]>;
   /** O prazo de uma chamada sem prazo próprio (padrão: `TOOL_TIMEOUT_MS`). */
   timeoutMs?: number;
 }) {
   const { db, clock, definitions } = deps;
-  const byId = new Map(definitions.map((d) => [d.id, d]));
   const defaultTimeout = deps.timeoutMs ?? TOOL_TIMEOUT_MS;
+
+  /** O catálogo de agora: o fixo e o dos Conectores. */
+  async function catalog(): Promise<ToolDefinition[]> {
+    return [...definitions, ...((await deps.extra?.()) ?? [])];
+  }
 
   async function grantedTo(agentId: string): Promise<ToolDefinition[]> {
     const rows = await db.select({ tool: agentTools.tool }).from(agentTools).where(eq(agentTools.agentId, agentId));
     const granted = new Set(rows.map((r) => r.tool));
-    return definitions.filter((d) => granted.has(d.id));
+    return (await catalog()).filter((d) => granted.has(d.id));
   }
 
   /** Roda `work` com o prazo da definição; devolve o que ele devolveu ou o motivo da falha. */
@@ -232,18 +250,19 @@ export function createToolPort(deps: {
   }
 
   return {
-    definitions,
+    catalog,
 
-    /** As Ferramentas do Workspace, com a marca de concedida ao Agente (a tela do Agente, só Admin). */
+    /** O catálogo, com a marca de concedida ao Agente (a tela do Agente, só Admin). */
     async forAgent(agentId: string) {
       const granted = new Set((await grantedTo(agentId)).map((d) => d.id));
-      return definitions.map((d) => ({
+      return (await catalog()).map((d) => ({
         id: d.id,
         title: d.title,
         description: d.description,
         origin: d.origin,
         access: d.access,
         granted: granted.has(d.id),
+        ...(d.connector ? { connector: d.connector } : {}),
       }));
     },
 
@@ -259,18 +278,23 @@ export function createToolPort(deps: {
         .select()
         .from(agentTools)
         .where(agentIds ? inArray(agentTools.agentId, [...agentIds]) : undefined);
-      for (const def of definitions) {
+      for (const def of await catalog()) {
         for (const row of rows) {
           if (row.tool !== def.id) continue;
           const list = out.get(row.agentId) ?? [];
-          list.push({ id: def.id, title: def.title, origin: def.origin });
+          list.push({
+            id: def.id,
+            title: def.title,
+            origin: def.origin,
+            ...(def.connector ? { connector: def.connector } : {}),
+          });
           out.set(row.agentId, list);
         }
       }
       return out;
     },
 
-    exists: (toolId: string) => byId.has(toolId),
+    exists: async (toolId: string) => (await catalog()).some((d) => d.id === toolId),
 
     /**
      * Executa a ação de um Pedido aprovado (ADR 0011), sem passar pelo modelo: a Ferramenta ainda
@@ -293,7 +317,12 @@ export function createToolPort(deps: {
     },
 
     async grant(agentId: string, toolId: string) {
-      await db.insert(agentTools).values({ agentId, tool: toolId, grantedAt: clock.now() }).onConflictDoNothing();
+      const def = (await catalog()).find((d) => d.id === toolId);
+      if (!def) return;
+      await db
+        .insert(agentTools)
+        .values({ agentId, tool: toolId, connectorId: def.connector?.id ?? null, grantedAt: clock.now() })
+        .onConflictDoNothing();
     },
 
     async revoke(agentId: string, toolId: string) {
@@ -329,7 +358,7 @@ export function createToolPort(deps: {
 
       return {
         async track(name, label) {
-          const def = byId.get(name);
+          const def = (await catalog()).find((d) => d.id === name);
           if (!def) return async () => {};
           const id = await begin(def, label);
           let ended: Promise<void> | undefined;

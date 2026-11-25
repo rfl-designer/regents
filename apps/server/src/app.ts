@@ -32,6 +32,7 @@ import { createPush, type PushConfig } from "./push";
 import { createReading, unreadOf } from "./reading";
 import type { SecretBox } from "./secrets";
 import { threadRoutes } from "./threads";
+import { createConnectors } from "./tools/connectors";
 import { createMcpEndpoint } from "./tools/mcp";
 import { createToolPort, type ToolDefinition } from "./tools/port";
 import { agentToolRoutes } from "./tools/routes";
@@ -140,10 +141,13 @@ export function createApp(deps: AppDeps) {
   });
   const reading = createReading({ db, clock, events });
   const ledger = createKeyLedger({ db, clock, events, hooks });
+  // Os Conectores trazem as Ferramentas deles ao catálogo, lidas a cada uso.
+  const connectors = createConnectors({ db, clock, secrets });
   const tools = createToolPort({
     db,
     clock,
     definitions: deps.tools?.definitions ?? [...WORKSPACE_TOOLS, ...WEB_TOOLS],
+    extra: connectors.definitions,
     timeoutMs: deps.tools?.timeoutMs,
   });
   // As mensagens novas (de pessoa e as respostas de Agente) vão ao push pelo mesmo `messageCreated`.
@@ -230,6 +234,7 @@ export function createApp(deps: AppDeps) {
   app.route("/api", accounts.routes);
   app.route("/api", agentRoutes({ db, clock, ledger, tools, onBudgetChanged: () => reconsider() }));
   app.route("/api", agentToolRoutes({ db, tools }));
+  app.route("/api", connectors.routes);
   app.route(
     "/api",
     approvalRoutes({

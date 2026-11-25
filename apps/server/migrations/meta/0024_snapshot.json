@@ -1,5 +1,5 @@
 {
-  "id": "67a0f06e-4621-4267-ad4a-1168232dc2e6",
+  "id": "0b0d1f9e-b046-424f-bf54-989a1880da6e",
   "prevId": "34059ab4-1813-4d2a-a244-e5d6cdecb48b",
   "version": "7",
   "dialect": "postgresql",
@@ -139,6 +139,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "connector_id": {
+          "name": "connector_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "granted_at": {
           "name": "granted_at",
           "type": "timestamp with time zone",
@@ -154,6 +160,19 @@
           "tableTo": "agents",
           "columnsFrom": [
             "agent_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "agent_tools_connector_id_connectors_id_fk": {
+          "name": "agent_tools_connector_id_connectors_id_fk",
+          "tableFrom": "agent_tools",
+          "tableTo": "connectors",
+          "columnsFrom": [
+            "connector_id"
           ],
           "columnsTo": [
             "id"
@@ -857,6 +876,206 @@
       },
       "isRLSEnabled": false
     },
+    "public.connector_tools": {
+      "name": "connector_tools",
+      "schema": "",
+      "columns": {
+        "tool": {
+          "name": "tool",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "connector_id": {
+          "name": "connector_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "input_schema": {
+          "name": "input_schema",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "read_only": {
+          "name": "read_only",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "connector_tools_connector_id_position_index": {
+          "name": "connector_tools_connector_id_position_index",
+          "columns": [
+            {
+              "expression": "connector_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "position",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "connector_tools_connector_id_connectors_id_fk": {
+          "name": "connector_tools_connector_id_connectors_id_fk",
+          "tableFrom": "connector_tools",
+          "tableTo": "connectors",
+          "columnsFrom": [
+            "connector_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.connectors": {
+      "name": "connectors",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "url": {
+          "name": "url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "credential_mode": {
+          "name": "credential_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_ciphertext": {
+          "name": "token_ciphertext",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "token_iv": {
+          "name": "token_iv",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "credential_state": {
+          "name": "credential_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "refused_at": {
+          "name": "refused_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "connectors_name_lower": {
+          "name": "connectors_name_lower",
+          "columns": [
+            {
+              "expression": "lower(\"name\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "connectors_key_unique": {
+          "name": "connectors_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.devices": {
       "name": "devices",
       "schema": "",
@@ -1332,13 +1551,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
-        },
-        "tool_limit": {
-          "name": "tool_limit",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "approval_request_id": {
           "name": "approval_request_id",

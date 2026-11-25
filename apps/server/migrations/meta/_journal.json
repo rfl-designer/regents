@@ -173,8 +173,15 @@
     {
       "idx": 24,
       "version": "7",
-      "when": 1795564916328,
-      "tag": "0024_teto-de-ferramentas",
+      "when": 1795564884929,
+      "tag": "0024_conectores",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1795569252380,
+      "tag": "0025_teto-de-ferramentas",
       "breakpoints": true
     }
   ]
