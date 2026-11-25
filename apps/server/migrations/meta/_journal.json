@@ -169,6 +169,13 @@
       "when": 1795560895134,
       "tag": "0023_pedido-de-aprovacao",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795564916328,
+      "tag": "0024_teto-de-ferramentas",
+      "breakpoints": true
     }
   ]
 }

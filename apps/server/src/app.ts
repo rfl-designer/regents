@@ -68,10 +68,11 @@ export interface AppDeps {
   /** Os tetos de concorrência das execuções (padrão: 2 por Conta, 4 na Chave, 8 processos). */
   limits?: Partial<ExecutionLimits>;
   /**
-   * A porta de Ferramentas: o prazo padrão de uma chamada (`SHEARIM_TOOL_TIMEOUT_S`) e o catálogo
+   * A porta de Ferramentas: o prazo padrão de uma chamada (`SHEARIM_TOOL_TIMEOUT_S`), o teto de
+   * turnos de Ferramenta de uma resposta (`SHEARIM_TOOL_MAX_TURNS`, padrão 20) e o catálogo
    * (padrão: as Ferramentas do Workspace; os testes juntam Ferramentas que travam ou falham).
    */
-  tools?: { timeoutMs?: number; definitions?: readonly ToolDefinition[] };
+  tools?: { timeoutMs?: number; maxTurns?: number; definitions?: readonly ToolDefinition[] };
 }
 
 export type AppHooks = JoinRequestHooks & ExecutionHooks & KeyHooks & AccountHooks;
@@ -156,6 +157,7 @@ export function createApp(deps: AppDeps) {
     ledger,
     tools,
     limits: deps.limits,
+    maxToolTurns: deps.tools?.maxTurns,
   });
   // A volta da Conta (ou a troca da Chave, ou do orçamento) solta quem espera por ela na fila.
   const reconsider = (memberId?: string) => void executions.reconsider(memberId).catch(() => {});

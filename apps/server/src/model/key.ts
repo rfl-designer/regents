@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { ModelBrain, ModelEvent } from "./port";
+import { MAX_TOOL_TURNS, type ModelBrain, type ModelEvent, toolLimitNote } from "./port";
 
 /** Preço por milhão de tokens (entrada, saída), em dólares, para o gasto na Chave (#28). */
 const PRICES: Record<string, { input: number; output: number }> = {
@@ -54,6 +54,14 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
         const messages: Anthropic.MessageParam[] = [...request.messages];
         /** Já saiu texto num turno anterior: o do turno seguinte vem depois de uma linha em branco. */
         let wrote = false;
+        /** O teto de turnos de Ferramenta (#53) e os turnos que já pediram Ferramentas. */
+        const maxTurns = request.maxToolTurns ?? MAX_TOOL_TURNS;
+        let toolTurns = 0;
+        /**
+         * Chegou ao teto: a última chamada vai sem Ferramentas. Elas continuam declaradas (o
+         * histórico tem `tool_use`), mas `tool_choice: none` impede o modelo de pedi-las.
+         */
+        let capped = false;
         // O vai-e-vem de `tool_use`: cada turno que pede Ferramentas recebe os resultados e segue.
         for (;;) {
           turn.inputTokens = 0;
@@ -66,6 +74,7 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
               system: request.system,
               messages,
               ...(apiTools.length && { tools: apiTools }),
+              ...(capped && { tool_choice: { type: "none" as const } }),
               ...(request.output && {
                 output_config: { format: { type: "json_schema", schema: request.output.schema } },
               }),
@@ -106,7 +115,7 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
             break;
           }
           const calls = final.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-          if (final.stop_reason !== "tool_use" || !tools || calls.length === 0) {
+          if (final.stop_reason !== "tool_use" || !tools || calls.length === 0 || capped) {
             terminal = { type: "done", usage: sum(), costUsd: costUsd(model, sum()) };
             break;
           }
@@ -124,7 +133,15 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
             });
           }
           messages.push({ role: "assistant", content: final.content as Anthropic.ContentBlockParam[] });
-          messages.push({ role: "user", content: results });
+          toolTurns++;
+          if (toolTurns >= maxTurns) {
+            capped = true;
+            yield { type: "tool_limit" };
+          }
+          messages.push({
+            role: "user",
+            content: [...results, ...(capped ? [{ type: "text" as const, text: toolLimitNote(maxTurns) }] : [])],
+          });
         }
       } catch (err) {
         if (signal.aborted || err instanceof Anthropic.APIUserAbortError) return;

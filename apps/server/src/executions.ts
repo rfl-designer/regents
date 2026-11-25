@@ -224,6 +224,8 @@ export function createExecutions(deps: {
   tools: ToolPort;
   /** Os tetos de concorrência (padrão: os da Spec, `DEFAULT_LIMITS`). */
   limits?: Partial<ExecutionLimits>;
+  /** O teto de turnos de Ferramenta de uma resposta (padrão: `MAX_TOOL_TURNS`, 20; #53). */
+  maxToolTurns?: number;
 }): Executions {
   const { db, clock, events, model, secrets, hooks, reading, ledger, push } = deps;
   const limits: ExecutionLimits = { ...DEFAULT_LIMITS, ...deps.limits };
@@ -339,6 +341,7 @@ export function createExecutions(deps: {
           heldUntil: null,
           apiRetryAttempt: null,
           apiRetryMax: null,
+          toolLimit: false,
           attempt: sql`${executions.attempt} + 1`,
         })
         .where(and(eq(executions.id, candidate.id), readyAt(now), onTurn(now)))
@@ -565,7 +568,13 @@ export function createExecutions(deps: {
           i === context.messages.length - 1 ? { ...m, content: `${m.content}\n\n${note}` } : m,
         );
       }
-      return { model: agent.model, ...context, payer, ...(offered.length ? { tools } : {}) };
+      return {
+        model: agent.model,
+        ...context,
+        payer,
+        // A continuação de um Pedido é uma execução nova: conta o teto do zero.
+        ...(offered.length ? { tools, maxToolTurns: deps.maxToolTurns } : {}),
+      };
     });
     if (!result) return;
     const { text, end } = result;
@@ -682,12 +691,21 @@ export function createExecutions(deps: {
         .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
       await publish(job.id);
     }
+    /** "parou no limite de Ferramentas": a última chamada, sem Ferramentas, vem agora. */
+    async function showToolLimit() {
+      await db
+        .update(executions)
+        .set({ toolLimit: true })
+        .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
+      await publish(job.id);
+    }
     try {
       for await (const event of model.run(request, signal)) {
         if (isProgress(event)) watchdog.reset();
         if (event.type === "api_retry") await showApiRetry(event);
         else if ((event.type === "text" || event.type === "thinking") && apiRetrying) await showApiRetry(null);
         if (event.type === "text") text += event.text;
+        else if (event.type === "tool_limit") await showToolLimit();
         else if (event.type === "usage")
           spent.usage = { model: event.model, usage: event.usage, costUsd: event.costUsd };
         else if (event.type === "done") {
@@ -1242,7 +1260,9 @@ function onTurn(now: Date) {
 
 /** Contam como progresso para a vigia: texto, pensamento e nova tentativa da API (nunca `ping`). */
 function isProgress(event: ModelEvent) {
-  return event.type === "text" || event.type === "thinking" || event.type === "api_retry";
+  return (
+    event.type === "text" || event.type === "thinking" || event.type === "tool_limit" || event.type === "api_retry"
+  );
 }
 
 /**
@@ -1356,6 +1376,7 @@ async function selectViews(
       yourAccount: null,
       replyMessageId: e.replyMessageId,
       tools: tools.get(e.id) ?? [],
+      toolLimit: e.toolLimit,
     };
     // A Conta explica o que se vê quando outra coisa paga, espera ou não age no lugar dela.
     const explains = everyone.held || everyone.payer === "key" || e.state === "not_acting";
