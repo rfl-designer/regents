@@ -338,7 +338,8 @@ export function createPush(deps: {
       const who = `${approval.agent.displayName} pede sua aprovação`;
       await deliverNotice(authorId, {
         title: isChannelKind(conversation.kind) ? `#${conversation.name} · ${who}` : who,
-        body: approval.summary,
+        // O resumo leva o texto inteiro da escrita: o push service recusa corpo grande (~4 KB).
+        body: excerpt(approval.summary),
         path: messagePath(approval.channelId, approval.originMessageId),
         tag: `aprovacao-${approval.id}`,
         topic: approval.id.replaceAll("-", ""),

@@ -15,6 +15,7 @@ import type { AgentDto, ApprovalRequestDto, ChannelDto, ExecutionDto, MessageDto
 import { and, eq } from "drizzle-orm";
 import { approvalTtlFromEnv } from "../src/approvals";
 import { schema } from "../src/db/client";
+import { EXCERPT_MAX } from "../src/push";
 import type { WriteTool } from "../src/tools/port";
 import { WORKSPACE_TOOLS } from "../src/tools/workspace";
 import { toolResults } from "./fakes/messages-api";
@@ -712,6 +713,28 @@ describe("o Pedido que ninguém decide", () => {
       await respostaA(t, geral.id, origem);
       // Ninguém mais recebeu o push do Pedido: só o autor decide.
       expect(t.push.deliveries.filter((d) => d.tag === `aprovacao-${pedido.id}`)).toHaveLength(1);
+    },
+    LONGO,
+  );
+
+  test(
+    "o push de um Pedido com texto longo leva só o começo do resumo (o push service recusa corpo grande)",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t);
+      const doBruno = await t.pushDevice(bruno);
+      const texto = "Atenção: ".repeat(400).trim();
+
+      t.anthropic.reply({ toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto } }] });
+      await enviar(t, geral.id, "@Faro avisa no #anuncios");
+      const pedido = await pedidoPendente(t, geral.id);
+      expect(pedido.summary).toBe(`Postar em #anuncios: “${texto}”`);
+
+      const push = await doBruno.next({ timeoutMs: 10_000 });
+      const { body } = (push.payload as { notification: { body: string } }).notification;
+      expect(body.length).toBeLessThanOrEqual(EXCERPT_MAX);
+      expect(body.startsWith("Postar em #anuncios: “Atenção: Atenção:")).toBe(true);
+      expect(body.endsWith("…")).toBe(true);
     },
     LONGO,
   );

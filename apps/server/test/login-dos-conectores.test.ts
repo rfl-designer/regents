@@ -181,6 +181,56 @@ describe("ligar pelo login do servidor", () => {
     },
     LONGO,
   );
+
+  /**
+   * O Admin troca a credencial enquanto uma renovação está no meio: a renovação parada no servidor
+   * de login volta depois. Devolve o que a resposta usou e o Conector como ficou.
+   */
+  async function trocarNoMeioDaRenovacao(recusar: boolean) {
+    const t = await testApp();
+    const { faro, geral } = await workspace(t);
+    const crm = remoteMcp({ tools: CRM_TOOLS, oauth: {} });
+    crm.oauth.loginAs("time-no-crm");
+    const { conector, id } = await adicionarPeloLogin(t, crm);
+    await t.as(juliana).put(`/api/agents/${faro.id}/tools/${id("buscar cliente")}`);
+
+    const renovacao = crm.oauth.holdRenewal();
+    if (recusar) crm.oauth.refuseRenewal();
+    crm.revoke(crm.oauth.tokenOf("time-no-crm")!);
+    t.anthropic.reply({ toolUse: [{ name: id("buscar cliente"), input: { nome: "Acme" } }] }, { text: "Pronto." });
+    const origem = await enviar(t, geral.id, "@Faro a Acme é cliente?");
+    await renovacao.arrived;
+
+    crm.allow("token-colado");
+    const trocado = await t.as(juliana).put(`/api/connectors/${conector.id}/credential`, { token: "token-colado" });
+    expect(trocado.status).toBe(200);
+    renovacao.release();
+    await respostaA(t, geral.id, origem);
+
+    await perguntar(t, geral, id("buscar cliente"));
+    const [depois] = await conectores(t);
+    return { crm, depois: depois! };
+  }
+
+  test(
+    "a renovação que volta depois de o Admin colar um token novo não grava o login antigo por cima",
+    async () => {
+      const { crm, depois } = await trocarNoMeioDaRenovacao(false);
+      expect(crm.calls.at(-1)).toMatchObject({ token: "token-colado" });
+      expect(depois.credentialState).toBe("ok");
+    },
+    LONGO,
+  );
+
+  test(
+    "a renovação recusada que volta depois de o Admin colar um token novo não marca o novo como recusado",
+    async () => {
+      const { crm, depois } = await trocarNoMeioDaRenovacao(true);
+      expect(depois).toMatchObject({ credentialState: "ok", refusedAt: null });
+      expect(crm.calls.map((c) => c.token)).toEqual(["token-colado", "token-colado"]);
+    },
+    LONGO,
+  );
 });
 
 describe("a credencial de cada Membro pelo login", () => {

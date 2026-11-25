@@ -409,6 +409,26 @@ describe("credencial recusada", () => {
     },
     LONGO,
   );
+
+  test(
+    "um nome novo que daria o mesmo id de um nome que já existia ganha outro id, e o antigo fica com o dele",
+    async () => {
+      const t = await testApp();
+      await workspace(t);
+      const crm = remoteMcp({ token: TOKEN, tools: CRM_TOOLS });
+      const conector = await adicionarCrm(t, crm.url);
+      const antigo = conector.tools.find((f) => f.name === "criar-oportunidade")!.id;
+
+      // "criar_oportunidade" vira o mesmo id de "criar-oportunidade", e vem antes na lista.
+      crm.setTools([{ name: "criar_oportunidade" }, ...CRM_TOOLS]);
+      const relido: ConnectorDto = await (await t.as(juliana).get(`/api/connectors/${conector.id}`)).json();
+      expect(relido.catalogError).toBeNull();
+      expect(relido.tools.map((f) => f.name)).toEqual(["criar_oportunidade", "buscar_cliente", "criar-oportunidade"]);
+      expect(relido.tools.find((f) => f.name === "criar-oportunidade")!.id).toBe(antigo);
+      expect(new Set(relido.tools.map((f) => f.id)).size).toBe(3);
+    },
+    LONGO,
+  );
 });
 
 describe("remover o Conector", () => {

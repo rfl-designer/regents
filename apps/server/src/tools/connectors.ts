@@ -216,6 +216,9 @@ export function createConnectors(deps: {
       if (!connector) return "failed" as const;
       const row = memberId ? await credentialOf(connectorId, memberId) : connector;
       if (!row?.oauthCiphertext || !row.oauthIv) return "failed" as const;
+      // A renovação só vale para o login que ela leu: se o Admin colou um token ou o dono ligou de
+      // novo no meio, a credencial nova fica, e quem chamou a relê ("renewed").
+      const sameGrant = row.oauthCiphertext;
       try {
         const grant = JSON.parse(
           await secrets.open({ ciphertext: row.oauthCiphertext, iv: row.oauthIv }),
@@ -229,17 +232,22 @@ export function createConnectors(deps: {
               and(
                 eq(memberConnectorCredentials.connectorId, connectorId),
                 eq(memberConnectorCredentials.memberId, memberId),
+                eq(memberConnectorCredentials.oauthCiphertext, sameGrant),
               ),
             );
         } else {
-          await db.update(connectors).set(stored).where(eq(connectors.id, connectorId));
+          await db
+            .update(connectors)
+            .set(stored)
+            .where(and(eq(connectors.id, connectorId), eq(connectors.oauthCiphertext, sameGrant)));
         }
         return "renewed" as const;
       } catch (err) {
         if (err instanceof LoginRefused) {
-          if (memberId) await refuseMember(connector, memberId);
-          else await markRefused(connectorId);
-          return "refused" as const;
+          const refused = memberId
+            ? await refuseMember(connector, memberId, sameGrant)
+            : await markRefused(connectorId, sameGrant);
+          return refused ? ("refused" as const) : ("renewed" as const);
         }
         console.error(`shearim: a renovação da credencial do Conector ${connector.name} falhou`, err);
         return "failed" as const;
@@ -329,17 +337,23 @@ export function createConnectors(deps: {
     );
   }
 
-  /** O servidor recusou a credencial do Membro: fica recusada até ele ligar de novo, e ele é avisado. */
-  async function refuseMember(connector: Connector, memberId: string) {
-    await db
+  /**
+   * O servidor recusou a credencial do Membro: fica recusada até ele ligar de novo, e ele é avisado.
+   * Com `grant`, só se ela ainda é a desse login (ele pode ter ligado de novo no meio).
+   */
+  async function refuseMember(connector: Connector, memberId: string, grant?: string) {
+    const marked = await db
       .update(memberConnectorCredentials)
       .set({ state: "refused", refusedAt: clock.now() })
       .where(
         and(
           eq(memberConnectorCredentials.connectorId, connector.id),
           eq(memberConnectorCredentials.memberId, memberId),
+          grant ? eq(memberConnectorCredentials.oauthCiphertext, grant) : undefined,
         ),
-      );
+      )
+      .returning({ memberId: memberConnectorCredentials.memberId });
+    if (grant && marked.length === 0) return false;
     await announceMine(connector, memberId);
     deps.notify?.(memberId, {
       title: `O ${connector.name} recusou a sua credencial`,
@@ -348,6 +362,7 @@ export function createConnectors(deps: {
       tag: `conector-${connector.id}`,
       urgency: "normal",
     });
+    return true;
   }
 
   async function open(sealed: { tokenCiphertext: string; tokenIv: string }, failure: string) {
@@ -374,11 +389,14 @@ export function createConnectors(deps: {
     });
   }
 
-  async function markRefused(connectorId: string) {
-    await db
+  /** Marca a credencial do Workspace como recusada (com `grant`, só se ela ainda é a desse login). */
+  async function markRefused(connectorId: string, grant?: string) {
+    const marked = await db
       .update(connectors)
       .set({ credentialState: "refused", refusedAt: clock.now() })
-      .where(eq(connectors.id, connectorId));
+      .where(and(eq(connectors.id, connectorId), grant ? eq(connectors.oauthCiphertext, grant) : undefined))
+      .returning({ id: connectors.id });
+    return marked.length > 0;
   }
 
   /** O token de acesso de um Membro, renovado antes se vence logo. */
@@ -547,7 +565,8 @@ export function createConnectors(deps: {
       .select({ tool: connectorTools.tool })
       .from(connectorTools)
       .where(sql`${connectorTools.connectorId} <> ${connector.id}`);
-    const taken = new Set(others.map((o) => o.tool));
+    // Os ids antigos deste Conector também: um nome novo nunca pega o id de um nome que já existia.
+    const taken = new Set([...others.map((o) => o.tool), ...previous.map((p) => p.tool)]);
     const rows: CatalogRow[] = [];
     const seen = new Set<string>();
     for (const tool of remote) {

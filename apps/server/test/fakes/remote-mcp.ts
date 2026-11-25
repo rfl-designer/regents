@@ -47,6 +47,11 @@ export interface FakeOAuth {
   renewals(): number;
   /** Daqui em diante, renovar é `invalid_grant` (o login foi revogado lá fora). */
   refuseRenewal(on?: boolean): void;
+  /**
+   * A próxima renovação fica parada no servidor até `release()` (`arrived` resolve quando ela
+   * chega): para trocar a credencial no meio de uma renovação.
+   */
+  holdRenewal(): { arrived: Promise<void>; release(): void };
   /** Os `redirect_uri` dos clientes que se registraram. */
   registeredRedirects(): string[];
   /** Os parâmetros de cada `/authorize` que chegou. */
@@ -155,6 +160,7 @@ export function startRemoteMcp(opts: {
   let nextUser = "alguem";
   let denying = false;
   let refusingRenewal = false;
+  let held: { arrive: () => void; gate: Promise<void> } | undefined;
   let renewed = 0;
   let serial = 0;
   const clients = new Map<string, string[]>();
@@ -246,6 +252,12 @@ export function startRemoteMcp(opts: {
         return issue(code.user, code.clientId);
       }
       if (grant === "refresh_token") {
+        if (held) {
+          const { arrive, gate } = held;
+          held = undefined;
+          arrive();
+          await gate;
+        }
         const token = form.get("refresh_token") ?? "";
         const known = refreshes.get(token);
         if (refusingRenewal || !known || known.clientId !== form.get("client_id")) {
@@ -298,6 +310,15 @@ export function startRemoteMcp(opts: {
       renewals: () => renewed,
       refuseRenewal: (on = true) => {
         refusingRenewal = on;
+      },
+      holdRenewal: () => {
+        let arrive!: () => void;
+        let release!: () => void;
+        const arrived = new Promise<void>((r) => {
+          arrive = r;
+        });
+        held = { arrive, gate: new Promise<void>((r) => (release = r)) };
+        return { arrived, release };
       },
       registeredRedirects: () => [...clients.values()].flat(),
       authorizations,
