@@ -19,27 +19,27 @@ const { memoryItems, messages, members, agents, channels } = schema;
 export const EXCERPT_LENGTH = 200;
 
 /**
- * Grava, na transação `tx`, os itens que a extração `executionId` tirou da troca da mensagem de
- * origem `originMessageId`, na conversa `conversationId`: na Memória da Conversa ou na Memória do
- * Agente `agentId` (que respondeu), como cada um pede. Devolve os ids, na ordem.
+ * Grava, na transação `tx`, os itens que a extração `executionId` tirou de uma troca da conversa
+ * `conversationId`, cada um com a mensagem de pessoa que ele cita como origem: na Memória da
+ * Conversa ou na Memória do Agente `agentId` (que respondeu), como cada um pede. Devolve os ids,
+ * na ordem.
  */
 export async function insertExtracted(
   tx: Db | Tx,
   input: {
     conversationId: string;
-    originMessageId: string;
     agentId: string;
     executionId: string;
-    items: readonly { scope: "conversation" | "agent"; text: string }[];
+    items: readonly { scope: "conversation" | "agent"; text: string; originMessageId: string }[];
     now: Date;
   },
 ): Promise<string[]> {
   if (input.items.length === 0) return [];
-  const rows = input.items.map(({ scope, text }) => ({
+  const rows = input.items.map(({ scope, text, originMessageId }) => ({
     id: crypto.randomUUID(),
     scope,
     conversationId: input.conversationId,
-    originMessageId: input.originMessageId,
+    originMessageId,
     agentId: scope === "agent" ? input.agentId : null,
     text,
     createdBy: "extraction" as const,
@@ -118,11 +118,10 @@ export function correctItem(
 
 /**
  * Substitui o item ativo `old` (já travado em `tx`) por uma versão nova com o mesmo escopo (ou o
- * do Workspace, na promoção) e o mesmo Agente, e arquiva o anterior, que aponta para ela (nada é
- * apagado). A origem é a de `next`: a correção de gente mantém a mensagem e a conversa do item; a
- * extração põe a mensagem em que a pessoa mudou o fato e a conversa dela, que pode ser outra
- * quando a lição veio de outra conversa do alcance (#68): a versão nova nunca alcança mais do que
- * a conversa em que foi dita (ADR 0012). Devolve o id da nova.
+ * do Workspace, na promoção), a mesma conversa e o mesmo Agente, e arquiva o anterior, que aponta
+ * para ela (nada é apagado). A mensagem de origem é a de `next`: a correção de gente e a promoção
+ * mantêm a do item; a extração põe a mensagem de pessoa que ela cita, sempre da conversa do item
+ * (o item de outra conversa ela não substitui: `saveOperations`). Devolve o id da nova.
  */
 export async function replaceItem(
   tx: Tx,
@@ -130,8 +129,6 @@ export async function replaceItem(
   next: {
     text: string;
     originMessageId: string | null;
-    /** A conversa da origem nova, se não é a do item (a extração, #68). */
-    conversationId?: string;
     createdBy: Item["createdBy"];
     createdByMemberId?: string;
     executionId?: string;
@@ -144,7 +141,7 @@ export async function replaceItem(
   await tx.insert(memoryItems).values({
     id,
     scope: next.scope ?? old.scope,
-    conversationId: next.conversationId ?? old.conversationId,
+    conversationId: old.conversationId,
     originMessageId: next.originMessageId,
     agentId: old.agentId,
     text: next.text,

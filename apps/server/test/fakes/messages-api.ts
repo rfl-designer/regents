@@ -12,8 +12,11 @@
  * A extração da Memória (ADR 0013) é reconhecida pelo schema da saída estruturada
  * (`isExtraction`) e tem fila e registro próprios: `api.remember({...})` roteiriza a próxima,
  * `api.extractions` guarda as que chegaram, e sem roteiro ela não guarda nada (`operacoes: []`).
+ * A operação roteirizada sem `mensagem` cita a última mensagem de pessoa da troca.
  * Assim, o roteiro e as contagens das respostas (`reply`, `requests`) não mudam por causa dela.
  */
+
+import { citeLastPerson } from "./memory-citation";
 
 /** O que o falso responde a uma chamada. Sem nada, responde um texto curto. */
 export interface FakeReply {
@@ -379,9 +382,13 @@ export async function startFakeMessagesApi(
       if (accepted.size && !accepted.has(recorded.apiKey)) {
         return errorResponse(401, "authentication_error", "invalid x-api-key");
       }
-      const reply = extraction
+      let reply = extraction
         ? (memoryScript.shift() ?? opts.defaultExtraction?.(recorded) ?? NOTHING_TO_REMEMBER)
         : (script.shift() ?? defaultReply(recorded));
+      // A operação roteirizada sem citação cita a última mensagem de pessoa (`memory-citation.ts`).
+      if (extraction && reply.json !== undefined) {
+        reply = { ...reply, json: citeLastPerson(reply.json, lastUserText(body)) };
+      }
       if (reply.status) {
         return errorResponse(reply.status, reply.errorType ?? "api_error", reply.errorMessage ?? "Erro do falso");
       }

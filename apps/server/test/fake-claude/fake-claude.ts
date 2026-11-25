@@ -14,6 +14,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileS
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { citeLastPerson } from "../fakes/memory-citation";
 import {
   DEFAULT_FAKE_ACCOUNT,
   FAKE_ACCESS_TOKEN,
@@ -259,6 +260,9 @@ function errorEnd(end: Extract<FakeEnd, { result: "error" }>): number {
   return 1;
 }
 
+/** O prompt do `-p` (a entrada da extração, para a citação padrão). */
+let prompt = "";
+
 function successEnd(end: Extract<FakeEnd, { result: "success" }>, text: string): number {
   line({
     type: "result",
@@ -271,7 +275,9 @@ function successEnd(end: Extract<FakeEnd, { result: "success" }>, text: string):
     total_cost_usd: end.costUsd ?? 0.0001,
     usage: end.usage ?? usage,
     ...(end.credentialExpiresAt ? { credential_expires_at: end.credentialExpiresAt } : {}),
-    ...(end.structuredOutput !== undefined ? { structured_output: end.structuredOutput } : {}),
+    ...(end.structuredOutput !== undefined
+      ? { structured_output: isExtraction ? citeLastPerson(end.structuredOutput, prompt) : end.structuredOutput }
+      : {}),
   });
   return 0;
 }
@@ -474,6 +480,7 @@ async function steps(run: Extract<FakeRun, { kind: "steps" }>): Promise<number> 
 async function print(): Promise<number> {
   // O prompt chega pelo stdin (ou como argumento, na validação); lê até o fim antes de começar.
   const stdin = await new Response(Bun.stdin.stream()).text();
+  prompt = stdin;
   const run: FakeRun = loggedInAccount()
     ? nextRun()
     : { kind: "error", error: "authentication_failed", apiErrorStatus: 401, message: "Not logged in" };

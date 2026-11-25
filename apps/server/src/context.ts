@@ -228,6 +228,7 @@ export async function recentMessages(db: Db, origin: Origin, n: number) {
   const [self] = await select().where(eq(messages.id, origin.id));
   const root = origin.threadRootId ? await select().where(eq(messages.id, origin.threadRootId)) : [];
   return [...root, ...before.reverse(), self!].map((m) => ({
+    id: m.id,
     body: m.body,
     agentId: m.agentId,
     author: m.agentName ?? m.memberName ?? "Alguém",

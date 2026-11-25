@@ -14,6 +14,7 @@ import {
   gt,
   gte,
   inArray,
+  isNotNull,
   isNull,
   lte,
   min,
@@ -127,12 +128,14 @@ const STALL_REASON: Record<ExecutionStep, string> = {
 };
 
 /**
- * A extração da Memória só aparece no Andamento quando não guardou (ADR 0013): o que ela guardou
- * chega como item de Memória, e sem nada a guardar não há linha. Enquanto roda, fica fora da vista.
+ * A extração da Memória só aparece no Andamento quando não guardou (ADR 0013): quando falhou ou
+ * não agiu, e quando terminou descartando parte do que devolveu (`done` com motivo). O que ela
+ * guardou chega como item de Memória, e sem nada a guardar não há linha. Enquanto roda, fica fora
+ * da vista.
  */
 const SHOWN_EXTRACTION: readonly ExecutionState[] = ["failed", "not_acting"];
-const hiddenExtraction = (e: Pick<ExecutionDto, "kind" | "state">) =>
-  e.kind === "memory" && !SHOWN_EXTRACTION.includes(e.state);
+const hiddenExtraction = (e: Pick<ExecutionDto, "kind" | "state" | "reason">) =>
+  e.kind === "memory" && !SHOWN_EXTRACTION.includes(e.state) && !(e.state === "done" && e.reason);
 const RESTART_REASON = "o servidor reiniciou";
 /** A extração da Memória devolveu outra coisa que não as operações pedidas (pela Chave ou pela Conta). */
 const OUT_OF_FORMAT_REASON = "a extração não devolveu a Memória no formato pedido";
@@ -810,10 +813,11 @@ export function createExecutions(deps: {
 
   /**
    * A extração da Memória (ADR 0013): lê a troca da resposta entregue com o modelo pequeno da
-   * Instalação, em saída estruturada, paga como qualquer execução, e guarda o que ela devolver na
-   * Memória da Conversa, com a mensagem de origem (criar, ou substituir um item que entrou na
-   * resposta: `saveOperations`). Os itens e o fim juntos: um cancelamento que
-   * chegou antes ganha, e nada fica guardado.
+   * Instalação, em saída estruturada, paga como qualquer execução, e guarda o que ela devolver,
+   * cada item com a mensagem de pessoa que ele cita (criar, ou substituir um item que entrou na
+   * resposta: `saveOperations`). O que ela descartou fica no motivo do fim (`done` com `reason`),
+   * à vista no Andamento. Os itens e o fim juntos: um cancelamento que chegou antes ganha, e nada
+   * fica guardado.
    */
   async function extract(job: Row, payer: Choice, controller: AbortController) {
     const result = await byPayer(job, payer, controller, async (payer) => {
@@ -829,8 +833,8 @@ export function createExecutions(deps: {
       return fail(job, OUT_OF_FORMAT_REASON, { retryable: false });
     }
     if (end?.type !== "done") return fail(job, failureReason(end), failureOpts(end));
-    const operations = parseOperations(text);
-    if (!operations) return fail(job, OUT_OF_FORMAT_REASON, { retryable: false });
+    const parsed = parseOperations(text);
+    if (!parsed) return fail(job, OUT_OF_FORMAT_REASON, { retryable: false });
 
     const saved = await db.transaction(async (tx) => {
       const [row] = await tx
@@ -839,16 +843,17 @@ export function createExecutions(deps: {
         .where(eq(executions.id, job.id))
         .for("update");
       if (row?.state !== "running") return undefined;
-      const ids = await saveOperations(tx, {
+      const { changed, discarded } = await saveOperations(tx, {
         executionId: job.id,
         sourceExecutionId: job.sourceExecutionId!,
         agentId: job.agentId,
         conversationId: job.channelId,
-        originMessageId: job.originMessageId,
-        operations,
+        operations: parsed.operations,
         now: clock.now(),
       });
-      return (await close(job, "done", {}, tx)) ? ids : undefined;
+      // O descartado fica no motivo do Andamento, à vista ("não guardou na Memória: …").
+      const reason = [...parsed.discarded, ...discarded].join("; ") || undefined;
+      return (await close(job, "done", { reason }, tx)) ? changed : undefined;
     });
     if (!saved) return;
     await publishMemory(db, events, saved);
@@ -1429,7 +1434,15 @@ export function createExecutions(deps: {
     continueAfter,
 
     openIn: async (channelId, viewerId) =>
-      (await views(and(eq(executions.channelId, channelId), ne(executions.state, "done"))))
+      (
+        await views(
+          and(
+            eq(executions.channelId, channelId),
+            // A extração que descartou algo fica à vista depois de terminar (`hiddenExtraction`).
+            or(ne(executions.state, "done"), and(eq(executions.kind, "memory"), isNotNull(executions.reason))),
+          ),
+        )
+      )
         .filter((v) => !hiddenExtraction(v.everyone))
         .map((v) => (v.authorId === viewerId ? v.author : v.everyone)),
 
@@ -1685,7 +1698,8 @@ async function selectViews(
     rows.map(({ e }) => ({ id: e.id, attempt: e.attempt })),
   );
   return rows.map(({ e, agentName, agentPhoto, authorId, account }) => {
-    const reason = WITH_REASON.includes(e.state) ? e.reason : null;
+    // A extração da Memória em `done` traz o que descartou (`hiddenExtraction`).
+    const reason = WITH_REASON.includes(e.state) || (e.kind === "memory" && e.state === "done") ? e.reason : null;
     const everyone: ExecutionDto = {
       id: e.id,
       kind: e.kind,

@@ -56,10 +56,13 @@ function append(prev: MessageDto[] | null, arrived: MessageDto[]) {
   return [...(prev ?? []), ...arrived.filter((m) => !have.has(m.id))];
 }
 
-/** O Andamento que ainda aparece: o que virou resposta sai (a resposta toma o lugar dele). */
+/**
+ * O Andamento que ainda aparece: o que virou resposta sai (a resposta toma o lugar dele). A
+ * extração da Memória que descartou algo fica, com o motivo.
+ */
 function upsertExecution(prev: Record<string, ExecutionDto>, e: ExecutionDto) {
   const next = { ...prev };
-  if (e.state === "done") delete next[e.id];
+  if (e.state === "done" && !(e.kind === "memory" && e.reason)) delete next[e.id];
   else next[e.id] = e;
   return next;
 }
@@ -875,8 +878,9 @@ function Progress({
 }) {
   const name = e.agent.displayName;
   if (e.kind === "memory") {
-    // A extração só aparece quando não guardou: a resposta já chegou, então sem "Tentar de novo".
-    if (e.state !== "failed" && e.state !== "not_acting") return null;
+    // A extração só aparece quando não guardou (tudo ou parte, em `done` com motivo): a resposta já
+    // chegou, então sem "Tentar de novo".
+    if (e.state !== "failed" && e.state !== "not_acting" && !(e.state === "done" && e.reason)) return null;
     return (
       <p className="memory-line failed" role="status">
         não guardou na Memória: {e.reason ?? "erro desconhecido"}

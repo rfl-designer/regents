@@ -31,7 +31,8 @@
  * mensagem de pessoa que o Agente respondeu traga `[lembrar: <texto>]`: aí ela guarda o texto na
  * Memória da Conversa. Com `[substituir: <trecho> => <texto>]`, ela substitui o item da Memória que
  * entrou na resposta e contém o trecho. Com `[lição: <texto>]`, guarda o texto na Memória do Agente
- * que respondeu (#65).
+ * que respondeu (#65). Com `[sem citar: <texto>]`, devolve também o texto sem citar mensagem
+ * nenhuma, que o Shearim descarta e mostra no Andamento.
  *
  * O GitHub é o falso dos testes do servidor (`test/fakes/github-api.ts`), com `time/site` e
  * `time/infra` na conta do time: criar o App e instalá-lo passam por ele (o "navegador do Admin"
@@ -118,6 +119,7 @@ const anthropic = await startFakeMessagesApi({
 /**
  * A extração da Memória: guarda o `[lembrar: …]` da última mensagem de pessoa da troca (a que o
  * Agente respondeu). A entrada traz as mensagens de pessoa, uma por parágrafo, antes da resposta.
+ * A citação dessa mensagem, a Messages API falsa põe sozinha (`memory-citation.ts`).
  */
 function lembrar(req: RecordedRequest): FakeReply {
   const pessoas = lastUserText(req.body).split("## A resposta de")[0] ?? "";
@@ -134,7 +136,13 @@ function lembrar(req: RecordedRequest): FakeReply {
     const id = linha?.match(/^- \[([^\]]+)\]/)?.[1];
     return { json: { operacoes: id ? [{ acao: "substituir", id, texto: troca[2] }] : [] }, delayMs: 0 };
   }
-  return { json: { operacoes: texto ? [{ acao: "criar", texto }] : [] }, delayMs: 0 };
+  // `[sem citar: …]`: uma operação sem citação, que o Shearim descarta (e mostra no Andamento).
+  const semCitar = ultima.match(/\[sem citar: ([^\]]+)\]/)?.[1];
+  const operacoes = [
+    ...(texto ? [{ acao: "criar", texto }] : []),
+    ...(semCitar ? [{ acao: "criar", texto: semCitar, mensagem: "" }] : []),
+  ];
+  return { json: { operacoes }, delayMs: 0 };
 }
 
 /** O Desfecho do roteamento, pelo marcador no texto da mensagem e pelos Agentes do Canal no `system`. */

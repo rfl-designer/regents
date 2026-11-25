@@ -11,9 +11,11 @@
  *
  * A extração da Memória (ADR 0013), reconhecida pelo schema (`operacoes`), não entra em
  * `nextRun`/`runs`: sem `scriptExtractions`, ela responde sozinha que não há nada a guardar;
- * com `scriptExtractions: true`, o teste a pega em `nextExtraction()` e emite os eventos dela.
+ * com `scriptExtractions: true`, o teste a pega em `nextExtraction()` e emite os eventos dela. No
+ * texto emitido, a operação sem `mensagem` cita a última mensagem de pessoa da troca.
  */
 import type { ModelBrain, ModelEvent, ModelRequest } from "../../src/model/port";
+import { citeLastPersonText } from "./memory-citation";
 
 export interface ScriptedRun {
   request: ModelRequest;
@@ -69,6 +71,8 @@ export function scriptedBrain(opts: { scriptExtractions?: boolean } = {}) {
         yield { type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 };
         return;
       }
+      const extraction = isExtractionRequest(request);
+      const input = request.messages.map((m) => m.content).join("\n");
       const queue: { event: ModelEvent; done: () => void }[] = [];
       let notify: (() => void) | undefined;
       const run: ScriptedRun = {
@@ -90,7 +94,9 @@ export function scriptedBrain(opts: { scriptExtractions?: boolean } = {}) {
           }
           if (signal.aborted) return;
           const item = queue.shift()!;
-          yield item.event;
+          yield extraction && item.event.type === "text"
+            ? { ...item.event, text: citeLastPersonText(item.event.text, input) }
+            : item.event;
           // Voltou aqui: o Shearim já tratou o evento e pediu o próximo.
           item.done();
           if (TERMINAL.has(item.event.type)) return;

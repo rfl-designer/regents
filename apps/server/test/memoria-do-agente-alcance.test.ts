@@ -8,7 +8,8 @@
  * O que está fora do alcance não chega ao modelo de jeito nenhum, nem pelo título.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, DmDto, MeDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, DmDto, ExecutionDto, MeDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
+import { type ScriptedRun, scriptedBrain } from "./fakes/scripted-brain";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
@@ -200,7 +201,7 @@ describe("a Memória do Agente acompanha o alcance", () => {
     expect(depois).not.toContain(DO_FINANCEIRO);
   });
 
-  test("uma lição de #geral substituída numa resposta em #financeiro não leva a versão nova para #geral", async () => {
+  test("uma lição de #geral substituída numa resposta em #financeiro fica em #geral: a versão nova é um item de #financeiro e não vaza", async () => {
     const t = await testApp();
     const { faro, geral, financeiro } = await workspace(t);
     const licao = await ensinar(t, bruno, faro, geral.id, DO_GERAL);
@@ -212,11 +213,78 @@ describe("a Memória do Agente acompanha o alcance", () => {
     await eventually("a versão nova da lição", async () =>
       (await memoriaDoAgente(t, ana, faro.id)).some((i) => i.text === nova && i.state === "active") ? true : undefined,
     );
-    // Quem não vê #financeiro não vê a versão nova.
-    expect((await memoriaDoAgente(t, juliana, faro.id)).map((i) => i.text)).not.toContain(nova);
+    const daAna = await memoriaDoAgente(t, ana, faro.id);
+    expect(daAna.find((i) => i.text === nova)?.conversationId).toBe(financeiro.id);
+    // A lição de #geral não foi arquivada: continua lá, para quem vê #geral.
+    const daJuliana = await memoriaDoAgente(t, juliana, faro.id);
+    expect(daJuliana.map((i) => [i.text, i.state])).toEqual([[DO_GERAL, "active"]]);
 
     const emGeral = await pedidoAoFaro(t, bruno, geral.id);
+    expect(emGeral).toContain(`- ${DO_GERAL}`);
     expect(emGeral).not.toContain("Acme");
-    expect(await pedidoAoFaro(t, ana, financeiro.id)).toContain(`- ${nova}`);
+    // Onde as duas se alcançam, o Agente vê as duas versões.
+    const deNovo = await pedidoAoFaro(t, ana, financeiro.id);
+    expect(deNovo).toContain(`- ${DO_GERAL}`);
+    expect(deNovo).toContain(`- ${nova}`);
+  });
+
+  test("a extração recalcula o alcance na hora em que roda: a lição de #financeiro que saiu do alcance entre a entrega e a extração não entra nela nem é substituída", async () => {
+    const cerebro = scriptedBrain({ scriptExtractions: true });
+    const t = await testApp({ keyBrain: cerebro.brain });
+    const { me, faro, financeiro } = await workspace(t);
+    const texto = (run: ScriptedRun) => run.request.messages.map((m) => m.content).join("\n");
+    const responder = async (run: ScriptedRun, text: string) => {
+      await run.emit({ type: "text", text });
+      await run.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
+    };
+
+    // A Ana ensina ao Faro, em #financeiro.
+    await enviar(t, ana, financeiro.id, `@faro daqui para a frente: ${DO_FINANCEIRO}`);
+    await responder(await cerebro.nextRun(), "Combinado.");
+    await responder(
+      await cerebro.nextExtraction(),
+      JSON.stringify({ operacoes: [{ acao: "criar", escopo: "agente", texto: DO_FINANCEIRO }] }),
+    );
+    const [licao] = await eventually("a lição na Memória do Agente", async () => {
+      const lista = await memoriaDoAgente(t, ana, faro.id);
+      return lista.length ? lista : undefined;
+    });
+
+    // #projeto, privado da Ana e do Bruno: o alcance tem #financeiro (os dois participam).
+    const projeto = await canal(t, ana, "projeto", "private");
+    await t.as(ana).post(`/api/channels/${projeto.id}/participants`, { memberId: me.Bruno!.id });
+    await t.as(ana).post(`/api/channels/${projeto.id}/agents`, { agentId: faro.id });
+
+    // A primeira extração de #projeto fica rodando: a da segunda resposta espera a vez dela.
+    await enviar(t, ana, projeto.id, "@faro primeira");
+    await responder(await cerebro.nextRun(), "Primeira resposta.");
+    const primeira = await cerebro.nextExtraction();
+    await enviar(t, ana, projeto.id, "@faro põe o valor da Acme no relatório");
+    const segunda = await cerebro.nextRun();
+    expect(texto(segunda) + segunda.request.system).toContain(DO_FINANCEIRO);
+    await responder(segunda, "Segunda resposta.");
+
+    // Entre a entrega e a extração, a Juliana entra em #projeto: #financeiro sai do alcance.
+    const daJuliana: MeDto = await (await t.as(juliana).get("/api/me")).json();
+    const entrou = await t.as(ana).post(`/api/channels/${projeto.id}/participants`, { memberId: daJuliana.id });
+    expect(entrou.status).toBe(200);
+    await responder(primeira, JSON.stringify({ operacoes: [] }));
+
+    const extracao = await cerebro.nextExtraction();
+    expect(texto(extracao)).not.toContain(DO_FINANCEIRO);
+    expect(texto(extracao)).not.toContain(licao!.id);
+    await responder(
+      extracao,
+      JSON.stringify({ operacoes: [{ acao: "substituir", id: licao!.id, texto: "Pôr o valor da Acme no fim." }] }),
+    );
+
+    const [andamento] = await eventually("o Andamento da extração", async () => {
+      const abertas: ExecutionDto[] = await (await t.as(ana).get(`/api/conversations/${projeto.id}/executions`)).json();
+      const daExtracao = abertas.filter((e) => e.kind === "memory");
+      return daExtracao.length ? daExtracao : undefined;
+    });
+    expect(andamento!.reason).toContain("o item a substituir não está na Memória desta troca");
+    const depois = await memoriaDoAgente(t, ana, faro.id);
+    expect(depois.map((i) => [i.text, i.state])).toEqual([[DO_FINANCEIRO, "active"]]);
   });
 });

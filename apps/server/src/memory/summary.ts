@@ -44,9 +44,12 @@ const PRECEDENCE =
 /**
  * As conversas de origem cuja Memória do Agente entra numa resposta (#68, ADR 0012): as do alcance
  * da resposta, o mesmo das Ferramentas do Workspace (`reachOf`), calculado na hora, com a
- * participação de agora.
+ * participação de agora. A extração recalcula o mesmo na hora em que roda (`extraction.ts`).
  */
-async function agentOrigins(db: Db, input: { conversationId: string; originMessageId: string }): Promise<string[]> {
+export async function agentOrigins(
+  db: Db,
+  input: { conversationId: string; originMessageId: string },
+): Promise<string[]> {
   const reach = await reachOf(db, { channelId: input.conversationId, originMessageId: input.originMessageId });
   return reach.conversations.map((c) => c.id);
 }

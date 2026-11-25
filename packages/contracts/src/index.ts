@@ -857,7 +857,9 @@ export interface ExecutionDto {
   /**
    * Motivo da falha (em `retrying` e `failed`), de "Agentes não agem" ou do cancelamento que não foi
    * de quem escreveu (`cancelled`, ex. "quem escreveu saiu do Workspace"), em pt-BR, para completar
-   * a frase "Faro não respondeu: …". Nulo nos outros estados e no cancelamento por quem escreveu.
+   * a frase "Faro não respondeu: …". Na extração da Memória (`memory`) em `done`, o que ela
+   * devolveu e não foi guardado ("não guardou na Memória: …"), nulo quando guardou tudo. Nulo nos
+   * outros estados e no cancelamento por quem escreveu.
    * Quando o motivo é estado da Conta do autor (ex. "a sua Conta do Claude não pode ser usada
    * agora"), só a cópia do autor o traz; os outros veem um motivo que não fala da Conta.
    */

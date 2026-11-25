@@ -66,6 +66,32 @@ describe("Memória da Conversa", () => {
     await expect(lista.getByRole("listitem").filter({ hasText: fato })).toContainText(`de Pessoa Dev: “${pergunta}”`);
   });
 
+  test('o que a extração descarta aparece no Andamento ("não guardou na Memória: …"), junto do que guardou', {
+    timeout: 120_000,
+  }, async ({ app, screen }) => {
+    const agente = await agenteNoGeral(app);
+    const fato = `A reunião é às terças ${Date.now()}.`;
+    await app.open("/");
+    const mensagens = screen.getByRole("list", "Mensagens de #geral");
+    await expect(mensagens).toHaveAttribute("aria-busy", "false");
+    const pergunta = `@${agente} anota [lembrar: ${fato}] [sem citar: O Agente disse isso.]`;
+
+    await screen.getByRole("textbox", "Mensagem para #geral").fill(pergunta);
+    await screen.getByRole("button", "Enviar").tap();
+
+    const origem = mensagens.getByRole("listitem").filter({ hasText: pergunta });
+    await expect(origem.getByRole("status").filter({ hasText: "não guardou na Memória" })).toHaveText(
+      'não guardou na Memória: "O Agente disse isso.": não cita uma mensagem de pessoa da troca',
+      { timeout: 30_000 },
+    );
+    await expect(origem.getByRole("status").filter({ hasText: `guardou na Memória: ${fato}` })).toBeVisible();
+    // Continua à vista depois de recarregar.
+    await app.open("/");
+    await expect(
+      screen.getByRole("list", "Mensagens de #geral").getByRole("status").filter({ hasText: "O Agente disse isso." }),
+    ).toBeVisible({ timeout: 30_000 });
+  });
+
   test("Desfazer tira o item da lista Memória e o mostra em Arquivados", { timeout: 120_000 }, async ({
     app,
     screen,
