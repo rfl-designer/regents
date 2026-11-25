@@ -5,7 +5,7 @@ import {
   OPEN_STATES,
   type YourAccountDto,
 } from "@shearim/contracts";
-import { type AnyColumn, and, asc, desc, eq, gt, inArray, lte, min, ne, or, type SQL, sql } from "drizzle-orm";
+import { type AnyColumn, and, asc, desc, eq, gt, inArray, isNull, lte, min, ne, or, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { type AccountStanding, accountStanding } from "./accounts";
 import type { Agent } from "./agents";
@@ -89,6 +89,10 @@ const STALL_REASON: Record<ExecutionStep, string> = {
   tool: "ficou 2 minutos sem escrever nada",
 };
 const RESTART_REASON = "o servidor reiniciou";
+/** Quando a expiração dos Pedidos falha, a nova tentativa sai depois disso. */
+const EXPIRY_RETRY_MS = 60_000;
+/** A causa do resultado incerto de uma ação aprovada que o servidor deixou no meio. */
+const RESTART_DURING_ACTION = "o servidor reiniciou durante a ação";
 
 /** Por que uma execução em andamento foi interrompida (o `reason` do `AbortSignal`). */
 type Interruption = "stalled" | "cancelled" | "shutdown" | "approval";
@@ -304,10 +308,30 @@ export function createExecutions(deps: {
     wake();
   }
 
-  /** Ao subir: toda execução em andamento ficou sem processo vivo e vira "o servidor reiniciou". */
+  /**
+   * Ao subir: toda execução em andamento ficou sem processo vivo e vira "o servidor reiniciou". E o
+   * Pedido decidido cuja continuação não saiu (o servidor caiu entre a decisão e ela) continua
+   * agora (ADR 0003). A ação aprovada sem resultado gravado não se repete: pode ter sido feita, e o
+   * resultado fica incerto.
+   */
   async function recover() {
     const orphans = await db.select().from(executions).where(eq(executions.state, "running"));
     for (const job of orphans) await fail(job, RESTART_REASON);
+    const decided = await db
+      .select({ r: approvalRequests })
+      .from(approvalRequests)
+      .innerJoin(executions, eq(executions.id, approvalRequests.executionId))
+      .where(and(eq(executions.state, "awaiting_approval"), inArray(approvalRequests.state, ["approved", "rejected"])));
+    for (const { r } of decided) {
+      if (r.state === "approved" && r.result === null && r.failure === null) {
+        await db
+          .update(approvalRequests)
+          .set({ failure: await deps.tools.uncertainReason(r.tool, RESTART_DURING_ACTION), uncertain: true })
+          .where(and(eq(approvalRequests.id, r.id), isNull(approvalRequests.result), isNull(approvalRequests.failure)));
+        await publishApproval(db, events, r.id, "approval.updated");
+      }
+      await continueAfter(r.executionId, r.id);
+    }
   }
 
   /**
@@ -1115,9 +1139,22 @@ export function createExecutions(deps: {
     expiryAlarm?.cancel();
     const cancel = clock.after(Math.max(0, at.getTime() - clock.now().getTime()), () => {
       expiryAlarm = undefined;
-      void expireApprovals().catch((err) => console.error("shearim: a expiração dos Pedidos falhou", err));
+      void expireOrRetry();
     });
     expiryAlarm = { at: at.getTime(), cancel };
+  }
+
+  /**
+   * Expira o que venceu; se falhar no meio (o próximo alarme não chegou a ser armado), tenta de novo
+   * em `EXPIRY_RETRY_MS`: nenhum Pedido fica pendente depois do prazo.
+   */
+  async function expireOrRetry() {
+    try {
+      await expireApprovals();
+    } catch (err) {
+      console.error("shearim: a expiração dos Pedidos falhou; tenta de novo em 1 min", err);
+      armExpiry(new Date(clock.now().getTime() + EXPIRY_RETRY_MS));
+    }
   }
 
   async function expireApprovals() {
@@ -1156,6 +1193,29 @@ export function createExecutions(deps: {
     if (next?.at) armExpiry(new Date(next.at));
   }
 
+  async function continueAfter(executionId: string, approvalRequestId: string) {
+    const ids = await db.transaction(async (tx) => {
+      const [waited] = await tx.select().from(executions).where(eq(executions.id, executionId)).for("update");
+      if (!waited || !(await transition(waited.id, "done", {}, { from: "awaiting_approval", tx }))) return [];
+      const id = crypto.randomUUID();
+      await tx.insert(executions).values({
+        id,
+        kind: waited.kind,
+        channelId: waited.channelId,
+        originMessageId: waited.originMessageId,
+        threadRootId: waited.threadRootId,
+        agentId: waited.agentId,
+        state: "queued",
+        since: clock.now(),
+        arrivedAt: waited.arrivedAt,
+        approvalRequestId,
+      });
+      return [waited.id, id];
+    });
+    for (const id of ids) await publish(id);
+    wake();
+  }
+
   async function stop() {
     expiryAlarm?.cancel();
     expiryAlarm = undefined;
@@ -1172,28 +1232,7 @@ export function createExecutions(deps: {
     enqueue: (tx, origin, calls) => insertRows(tx, origin, calls, clock.now()),
     queued,
 
-    async continueAfter(executionId, approvalRequestId) {
-      const ids = await db.transaction(async (tx) => {
-        const [waited] = await tx.select().from(executions).where(eq(executions.id, executionId)).for("update");
-        if (!waited || !(await transition(waited.id, "done", {}, { from: "awaiting_approval", tx }))) return [];
-        const id = crypto.randomUUID();
-        await tx.insert(executions).values({
-          id,
-          kind: waited.kind,
-          channelId: waited.channelId,
-          originMessageId: waited.originMessageId,
-          threadRootId: waited.threadRootId,
-          agentId: waited.agentId,
-          state: "queued",
-          since: clock.now(),
-          arrivedAt: waited.arrivedAt,
-          approvalRequestId,
-        });
-        return [waited.id, id];
-      });
-      for (const id of ids) await publish(id);
-      wake();
-    },
+    continueAfter,
 
     openIn: async (channelId, viewerId) =>
       (await views(and(eq(executions.channelId, channelId), ne(executions.state, "done")))).map((v) =>
@@ -1230,7 +1269,7 @@ export function createExecutions(deps: {
       if (loop) return;
       stopping = false;
       watchMonthTurn();
-      void expireApprovals().catch((err) => console.error("shearim: a expiração dos Pedidos falhou", err));
+      void expireOrRetry();
       loop = work();
     },
 

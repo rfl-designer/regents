@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { type Db, isUuid, schema } from "../db/client";
-import type { Env } from "../members";
+import { adminOnly, type Env } from "../members";
 import type { ToolPort } from "./port";
 
 /**
@@ -18,16 +18,14 @@ export function agentToolRoutes(deps: { db: Db; tools: ToolPort }) {
     return Boolean(row);
   }
 
-  routes.get("/agents/:id/tools", async (c) => {
-    if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
+  routes.get("/agents/:id/tools", adminOnly, async (c) => {
     const id = c.req.param("id");
     if (!(await agentExists(id))) return c.json({ error: "not_found" }, 404);
     return c.json(await tools.forAgent(id));
   });
 
   for (const method of ["put", "delete"] as const) {
-    routes[method]("/agents/:id/tools/:tool", async (c) => {
-      if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
+    routes[method]("/agents/:id/tools/:tool", adminOnly, async (c) => {
       const id = c.req.param("id");
       const tool = c.req.param("tool");
       if (!(await agentExists(id)) || !(await tools.exists(tool))) return c.json({ error: "not_found" }, 404);

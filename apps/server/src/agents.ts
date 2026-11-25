@@ -228,7 +228,7 @@ export function toAgentDto(
     model: a.model as AgentModel,
     builtin: a.builtin,
     tools: opts.tools,
-    reach: reachLines(opts.tools, opts.githubRepositories ?? null),
+    reach: reachLines(opts.tools),
   };
   if (opts.admin) {
     dto.instructions = a.instructions;
@@ -243,23 +243,13 @@ export function toAgentDto(
 
 /**
  * "acessa CRM com a credencial do Workspace": uma linha por Conector das Ferramentas dele, e uma
- * pelo GitHub (sempre com a credencial do Workspace, ADR 0010), com os repositórios da lista dele.
+ * pelo GitHub (sempre com a credencial do Workspace, ADR 0010). A lista de repositórios do Agente
+ * é configuração do Admin (`githubRepositories`) e não entra aqui.
  */
-export function reachLines(
-  tools: readonly AgentToolSummaryDto[],
-  githubRepositories: readonly string[] | null = null,
-): string[] {
+export function reachLines(tools: readonly AgentToolSummaryDto[]): string[] {
   const names = new Set<string>();
   for (const t of tools) if (t.connector?.credential === "workspace") names.add(t.connector.name);
   const lines = [...names].map((name) => `acessa ${name} com a credencial do Workspace`);
-  if (tools.some((t) => t.origin === "github")) lines.push(githubReachLine(githubRepositories));
+  if (tools.some((t) => t.origin === "github")) lines.push("acessa o GitHub com a credencial do Workspace");
   return lines;
-}
-
-/** "acessa o GitHub com a credencial do Workspace, só nos repositórios time/docs e time/site". */
-export function githubReachLine(repositories: readonly string[] | null): string {
-  const line = "acessa o GitHub com a credencial do Workspace";
-  if (!repositories?.length) return line;
-  if (repositories.length === 1) return `${line}, só no repositório ${repositories[0]}`;
-  return `${line}, só nos repositórios ${repositories.slice(0, -1).join(", ")} e ${repositories.at(-1)}`;
 }

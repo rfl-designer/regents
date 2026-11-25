@@ -9,8 +9,8 @@ import {
 } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
-import { agentToolsText, withGitHubRepositories, withGranted } from "./agent-tools";
-import { ApiFailure, api } from "./api";
+import { agentToolsText } from "./agent-tools";
+import { api, messageOf } from "./api";
 import { dateTimeShort } from "./format";
 import { INCIDENT_TEXT, usd } from "./KeyBanners";
 import { useServerEvents } from "./live";
@@ -30,11 +30,6 @@ function budgetInput(text: string): number | null | undefined {
   return Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 const BUDGET_INVALID = "O orçamento mensal é um valor em dólares, zero ou mais (vazio: sem teto).";
-
-function messageOf(err: unknown, fallback: string) {
-  const body = err instanceof ApiFailure ? err.body : null;
-  return body && "message" in body ? body.message : fallback;
-}
 
 /** Só para o Admin: a Chave do Workspace. Ela é gravada daqui e nunca mais aparece. */
 export function WorkspaceKeySettings() {
@@ -184,8 +179,15 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
                 setEditing(false);
               }}
             />
-            <AgentTools agent={a} onChanged={(tools) => onChanged(withGranted(a, tools))} />
-            <AgentGitHub agent={a} onChanged={(repos) => onChanged(withGitHubRepositories(a, repos))} />
+            <AgentTools
+              agent={a}
+              onChanged={async () => {
+                // As Ferramentas e a linha de alcance ("acessa CRM com…") como o servidor as diz.
+                const fresh = (await api.agents().catch(() => [])).find((x) => x.id === a.id);
+                if (fresh) onChanged(fresh);
+              }}
+            />
+            <AgentGitHub agent={a} onChanged={(repos) => onChanged({ ...a, githubRepositories: repos })} />
           </>
         )}
       </div>

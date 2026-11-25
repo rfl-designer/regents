@@ -15,6 +15,8 @@ import type { AgentDto, ApprovalRequestDto, ChannelDto, ExecutionDto, MessageDto
 import { and, eq } from "drizzle-orm";
 import { approvalTtlFromEnv } from "../src/approvals";
 import { schema } from "../src/db/client";
+import type { WriteTool } from "../src/tools/port";
+import { WORKSPACE_TOOLS } from "../src/tools/workspace";
 import { toolResults } from "./fakes/messages-api";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
 
@@ -544,6 +546,46 @@ describe("o Pedido que ninguém decide", () => {
   );
 
   test(
+    "se a expiração de um Pedido falha no meio, o alarme se rearma e o próximo Pedido ainda expira",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t);
+      t.anthropic.reply(
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "Um." } }] },
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "Dois." } }] },
+      );
+      await enviar(t, geral.id, "@Faro avisa um");
+      await pedidoPendente(t, geral.id, 1);
+      t.clock.advance(HORA);
+      await enviar(t, geral.id, "@Faro avisa dois");
+      await pedidoPendente(t, geral.id, 2);
+
+      // O anúncio da primeira expiração falha (uma vez): a volta da expiração para no meio.
+      const publish = t.events.publish;
+      let falhou = false;
+      t.events.publish = (to, event) => {
+        if (!falhou && event.type === "execution.updated" && event.execution.reason === "a aprovação expirou") {
+          falhou = true;
+          throw new Error("o anúncio caiu");
+        }
+        publish.call(t.events, to, event);
+      };
+      t.clock.advance(23 * HORA);
+      await eventually("o anúncio da expiração falhar", async () => falhou);
+      expect((await pedidos(t, geral.id)).map((p) => p.state)).toEqual(["expired", "pending"]);
+
+      // A nova tentativa, um minuto depois, arma o alarme do segundo.
+      t.clock.advance(60_000);
+      t.clock.advance(HORA - 60_000);
+      await eventually("o segundo Pedido expirar", async () => {
+        t.clock.advance(1);
+        return (await pedidos(t, geral.id))[1]!.state === "expired";
+      });
+    },
+    LONGO,
+  );
+
+  test(
     "o prazo é o da Instalação (SHEARIM_APPROVAL_TTL_H), e o Pedido vencido com o servidor parado expira ao subir",
     async () => {
       expect(approvalTtlFromEnv({})).toBeUndefined();
@@ -695,6 +737,144 @@ describe("o Pedido que ninguém decide", () => {
       t.clock.advance(24 * HORA);
       await eventually("o Pedido expirar", async () => (await pedidos(t, geral.id))[1]!.state === "expired", 10_000);
       expect(await badge()).toBe(0);
+    },
+    LONGO,
+  );
+});
+
+/**
+ * Uma escrita de teste (do GitHub, para o "confira no GitHub") cujo `perform` não termina sozinho:
+ * `comecou` resolve quando o Shearim começa a ação, e `soltar` a termina.
+ */
+function escritaLenta() {
+  let comecar = () => {};
+  const comecou = new Promise<void>((r) => {
+    comecar = r;
+  });
+  let soltar = (_: string) => {};
+  const definition: WriteTool = {
+    id: "registrar_pedido",
+    title: "registrar o pedido",
+    label: "registrando o pedido",
+    description: "Registra o pedido no sistema de fora.",
+    origin: "github",
+    access: "write",
+    inputSchema: { type: "object", properties: {} },
+    prepare: async () => ({ action: { pedido: 1 }, summary: "Registrar o pedido 1" }),
+    perform: () => {
+      comecar();
+      return new Promise<string>((resolve) => {
+        soltar = resolve;
+      });
+    },
+  };
+  return { definition, comecou, soltar: (texto: string) => soltar(texto) };
+}
+
+/** O Workspace com a escrita lenta concedida ao Faro, e o Pedido dela pendente no #geral. */
+async function pedidoDaEscritaLenta(t: TestApp, faroId: string, geralId: string, continuacao: string) {
+  expect((await t.as(juliana).put(`/api/agents/${faroId}/tools/registrar_pedido`)).status).toBe(200);
+  t.anthropic.reply({ toolUse: [{ name: "registrar_pedido", input: {} }] }, { text: continuacao });
+  const origem = await enviar(t, geralId, "@Faro registra o pedido 1");
+  return { origem, pedido: await pedidoPendente(t, geralId) };
+}
+
+describe("a escrita aprovada que não termina", () => {
+  test(
+    "a escrita que estoura o prazo tem resultado incerto, no Pedido e na continuação, nunca uma falha seca",
+    async () => {
+      const lenta = escritaLenta();
+      const t = await testApp({ tools: { definitions: [...WORKSPACE_TOOLS, lenta.definition] } });
+      const { faro, geral } = await workspace(t);
+      const { origem, pedido } = await pedidoDaEscritaLenta(t, faro.id, geral.id, "Pode ter saído; confira.");
+
+      const aprovado = aprovar(t, pedido);
+      await lenta.comecou;
+      t.clock.advance(60_000);
+      const res = await aprovado;
+      expect(res.status).toBe(200);
+      const incerto = "não terminou em 60 s; pode ter sido feita — confira no GitHub";
+      expect(await res.json()).toMatchObject({ state: "approved", result: null, failure: incerto, uncertain: true });
+      expect((await pedidos(t, geral.id))[0]).toMatchObject({ failure: incerto, uncertain: true });
+
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Pode ter saído; confira.");
+      const continuacao = textoDe(respostas(t)[1]!);
+      expect(continuacao).toContain(`Bruno aprovou, mas o resultado é incerto: ${incerto}`);
+      expect(continuacao).not.toContain("a ação falhou");
+    },
+    LONGO,
+  );
+
+  test(
+    "o servidor reinicia no meio da ação aprovada: ao subir, o Pedido fica com resultado incerto e a resposta continua, sem repetir a escrita",
+    async () => {
+      const lenta = escritaLenta();
+      const t = await testApp({ tools: { definitions: [...WORKSPACE_TOOLS, lenta.definition] } });
+      const { faro, geral } = await workspace(t);
+      const { origem, pedido } = await pedidoDaEscritaLenta(t, faro.id, geral.id, "Pode ter saído; confira.");
+      let acoes = 0;
+      const perform = lenta.definition.perform;
+      lenta.definition.perform = (...args) => {
+        acoes++;
+        return perform(...args);
+      };
+
+      // O servidor cai com a ação em curso: a aprovação já foi gravada, o resultado não.
+      void aprovar(t, pedido).catch(() => {});
+      await lenta.comecou;
+      await t.restart();
+
+      const incerto = "o servidor reiniciou durante a ação; pode ter sido feita — confira no GitHub";
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Pode ter saído; confira.");
+      expect((await pedidos(t, geral.id))[0]).toMatchObject({
+        state: "approved",
+        result: null,
+        failure: incerto,
+        uncertain: true,
+      });
+      expect(textoDe(respostas(t)[1]!)).toContain(`Bruno aprovou, mas o resultado é incerto: ${incerto}`);
+      // A escrita não foi repetida na subida.
+      expect(acoes).toBe(1);
+      expect(
+        (await (await t.as(juliana).get(`/api/conversations/${geral.id}/executions`)).json()) as ExecutionDto[],
+      ).toEqual([]);
+    },
+    LONGO,
+  );
+
+  test(
+    "o servidor cai entre a decisão e a continuação: ao subir, a continuação sai (na recusa e na aprovação já feita)",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t);
+      t.anthropic.reply(
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "Um." } }] },
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "Dois." } }] },
+      );
+      const primeira = await enviar(t, geral.id, "@Faro avisa um");
+      const recusado = await pedidoPendente(t, geral.id, 1);
+      const segunda = await enviar(t, geral.id, "@Faro avisa dois");
+      const aprovado = await pedidoPendente(t, geral.id, 2);
+
+      // A queda entre gravar a decisão (e o resultado da ação) e enfileirar a continuação não tem
+      // como ser provocada pela borda: a decisão gravada sem continuação é posta no banco.
+      await t.shutdown();
+      await t.db
+        .update(schema.approvalRequests)
+        .set({ state: "rejected", decidedAt: t.clock.now() })
+        .where(eq(schema.approvalRequests.id, recusado.id));
+      await t.db
+        .update(schema.approvalRequests)
+        .set({ state: "approved", decidedAt: t.clock.now(), result: "mensagem postada em #anuncios" })
+        .where(eq(schema.approvalRequests.id, aprovado.id));
+      t.anthropic.reply({ text: "Tudo bem, não avisei." }, { text: "Avisei." });
+      await t.restart();
+
+      const respostasNoGeral = [await respostaA(t, geral.id, primeira), await respostaA(t, geral.id, segunda)];
+      expect(respostasNoGeral.map((m) => m.body).sort()).toEqual(["Avisei.", "Tudo bem, não avisei."]);
+      const continuacoes = respostas(t).slice(2).map(textoDe).join("\n");
+      expect(continuacoes).toContain("Bruno recusou, sem dar motivo");
+      expect(continuacoes).toContain("Bruno aprovou, e o Shearim fez: mensagem postada em #anuncios");
     },
     LONGO,
   );

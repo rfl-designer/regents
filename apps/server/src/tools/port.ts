@@ -85,11 +85,12 @@ interface ToolBase {
   /** O passo no Andamento enquanto roda ("listando os Agentes"). */
   label: string;
   /**
-   * O rótulo desta execução, quando depende dela (a credencial do autor num Conector: "usando
-   * buscar cliente no CRM de Ana"), e o que o Andamento mostra a todos se terminar bem ("usou o CRM
-   * de Ana"). Sem ele, vale `label`.
+   * O rótulo desta chamada, quando depende dela (a credencial do autor num Conector: "usando
+   * buscar cliente no CRM de Ana"; a entrada: "buscando em #produto", "lendo a issue 214 de
+   * time/site"), e o que o Andamento mostra a todos se terminar bem ("usou o CRM de Ana"). Sem ele,
+   * vale `label`. O Andamento é visto por todos da conversa: só nomeie o que está no alcance.
    */
-  describe?(ctx: ToolContext): Promise<{ label?: string; used?: string }>;
+  describe?(ctx: ToolContext, input: unknown): Promise<{ label?: string; used?: string }>;
   /** Para o modelo e para o Admin. */
   description: string;
   origin: ToolOrigin;
@@ -107,6 +108,10 @@ export interface ReadTool extends ToolBase {
   /** Roda e devolve o resultado como texto; falha com `ToolFailure`. Deve largar quando `signal` abortar. */
   run(ctx: ToolContext, input: unknown, signal: AbortSignal): Promise<string>;
 }
+
+/** O fim da descrição de toda escrita, para o modelo: ela passa por Pedido de aprovação (ADR 0011). */
+export const WRITE_NOTE =
+  "Antes de sair, quem escreveu a mensagem que você responde aprova ou recusa: a resposta termina aqui e continua depois da decisão.";
 
 /**
  * Uma Ferramenta que escreve (ADR 0011): não roda durante a resposta. A porta confere a entrada e o
@@ -229,11 +234,11 @@ export function createToolPort(deps: {
     signal.addEventListener("abort", abort, { once: true });
     const timeout = def.timeoutMs ?? defaultTimeout;
     let cancelTimer = () => {};
-    type Failed = { ok: false; reason: string; connect?: { connectorId: string; name: string } };
+    type Failed = { ok: false; reason: string; connect?: { connectorId: string; name: string }; timedOut?: true };
     const deadline = new Promise<Failed>((resolve) => {
       cancelTimer = clock.after(timeout, () => {
         // Resolve antes de interromper: o motivo é o prazo, não a interrupção que ele causa.
-        resolve({ ok: false, reason: `não terminou em ${Math.round(timeout / 1000)} s` });
+        resolve({ ok: false, reason: `não terminou em ${Math.round(timeout / 1000)} s`, timedOut: true });
         own.abort();
       });
     });
@@ -310,14 +315,16 @@ export function createToolPort(deps: {
 
     /**
      * Executa a ação de um Pedido aprovado (ADR 0011), sem passar pelo modelo: a Ferramenta ainda
-     * tem de estar concedida ao Agente, e ela confere o alcance de novo. Nunca lança.
+     * tem de estar concedida ao Agente, e ela confere o alcance de novo. Nunca lança. A que estoura
+     * o prazo pode ter sido feita lá fora: o resultado é incerto (`uncertain`), e o motivo diz onde
+     * conferir.
      */
     async perform(
       tool: string,
       run: ToolRun,
       action: Record<string, unknown>,
       post: PostAsAgent,
-    ): Promise<{ ok: true; result: string } | { ok: false; reason: string }> {
+    ): Promise<{ ok: true; result: string } | { ok: false; reason: string; uncertain?: true }> {
       const def = (await grantedTo(run.agentId)).find((d) => d.id === tool);
       if (def?.access !== "write") return { ok: false, reason: "a Ferramenta não está mais disponível para o Agente" };
       const outcome = await execute(
@@ -325,7 +332,20 @@ export function createToolPort(deps: {
         (s) => def.perform({ db, run, post }, action, s),
         new AbortController().signal,
       );
-      return outcome.ok ? { ok: true, result: outcome.value } : { ok: false, reason: outcome.reason };
+      if (outcome.ok) return { ok: true, result: outcome.value };
+      if ("timedOut" in outcome) return { ok: false, reason: uncertainReason(def, outcome.reason), uncertain: true };
+      return { ok: false, reason: outcome.reason };
+    },
+
+    /**
+     * O motivo de uma escrita que pode ter sido feita sem o Shearim saber ("o servidor reiniciou
+     * durante a ação"): a causa e onde conferir.
+     */
+    async uncertainReason(tool: string, cause: string) {
+      return uncertainReason(
+        (await catalog()).find((d) => d.id === tool),
+        cause,
+      );
     },
 
     async grant(agentId: string, toolId: string) {
@@ -344,10 +364,10 @@ export function createToolPort(deps: {
     /** As Ferramentas de uma execução, com cada uso gravado e avisado a `observer`. */
     forExecution(run: ToolRun, observer: ToolObserver): ExecutionTools {
       /** Grava o começo de um uso e avisa o Andamento. */
-      async function begin(def: ToolDefinition, label: string) {
+      async function begin(def: ToolDefinition, label: string, input?: unknown) {
         const id = crypto.randomUUID();
         const own: { label?: string; used?: string } = def.describe
-          ? await def.describe({ db, run }).catch(() => ({}))
+          ? await def.describe({ db, run }, input).catch(() => ({}))
           : {};
         await db.insert(executionToolCalls).values({
           id,
@@ -414,7 +434,7 @@ export function createToolPort(deps: {
           if (!def || runsInBrain(def)) {
             return { content: `A Ferramenta ${name} não está disponível para você.`, isError: true };
           }
-          const id = await begin(def, def.label);
+          const id = await begin(def, def.label, input);
           // A escrita não roda aqui: só a conferência e a ação exata, que vira o Pedido de aprovação.
           const outcome =
             def.access === "read"
@@ -422,7 +442,7 @@ export function createToolPort(deps: {
               : await execute(def, (s) => def.prepare({ db, run }, input, s), signal);
           await end(id, outcome.ok ? undefined : outcome.reason, outcome.ok ? undefined : outcome.connect);
           if (!outcome.ok) return { content: `A Ferramenta ${def.title} falhou: ${outcome.reason}.`, isError: true };
-          if (def.access === "read") return { content: outcome.value as string, isError: false };
+          if (def.access === "read") return { content: markAsData(def.id, outcome.value as string), isError: false };
           const prepared = outcome.value as { action: Record<string, unknown>; summary: string };
           // A execução termina aqui (o `signal` aborta): o que volta ao modelo não chega a ser lido.
           return (await observer.approvalRequested({ tool: def, ...prepared }))
@@ -435,6 +455,26 @@ export function createToolPort(deps: {
 }
 
 export type ToolPort = ReturnType<typeof createToolPort>;
+
+/**
+ * O resultado de uma Ferramenta como os dois cérebros o entregam ao modelo: entre marcadores
+ * explícitos de dado (Spec #44), com um marcador forjado dentro do conteúdo neutralizado.
+ */
+export function markAsData(tool: string, content: string) {
+  const safe = content.replace(/<(\/?)(resultado_de_ferramenta)/gi, "&lt;$1$2");
+  return `<resultado_de_ferramenta nome="${tool}">\n${safe}\n</resultado_de_ferramenta>`;
+}
+
+/** "<causa>; pode ter sido feita — confira no GitHub": a escrita de resultado incerto. */
+function uncertainReason(def: ToolDefinition | undefined, cause: string) {
+  const where =
+    def?.origin === "github"
+      ? "no GitHub"
+      : def?.origin === "connector" && def.connector
+        ? `em ${def.connector.name}`
+        : "na conversa";
+  return `${cause}; pode ter sido feita — confira ${where}`;
+}
 
 /**
  * Os usos de Ferramenta de cada execução, na tentativa atual dela, na ordem (para o Andamento).

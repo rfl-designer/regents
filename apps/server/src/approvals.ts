@@ -1,5 +1,5 @@
 import type { ApprovalRequestDto, RejectApprovalInput } from "@shearim/contracts";
-import { and, asc, eq, type SQL } from "drizzle-orm";
+import { and, asc, eq, isNull, type SQL } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import type { Clock } from "./clock";
 import { findVisibleConversation } from "./conversations";
@@ -106,6 +106,7 @@ async function views(db: Db, where: SQL | undefined): Promise<ApprovalRequestDto
     rejectReason: r.rejectReason,
     result: r.result,
     failure: r.failure,
+    uncertain: r.uncertain,
     createdAt: r.createdAt.toISOString(),
     expiresAt: r.expiresAt.toISOString(),
     decidedAt: r.decidedAt?.toISOString() ?? null,
@@ -152,6 +153,9 @@ export async function continuationNote(db: Db, approvalRequestId: string) {
     const asked = `- Você pediu: ${r.summary}.`;
     if (r.state === "rejected") {
       return `${asked} ${r.authorName} recusou${r.rejectReason ? `, com o motivo: ${r.rejectReason}` : ", sem dar motivo"}.`;
+    }
+    if (r.uncertain) {
+      return `${asked} ${r.authorName} aprovou, mas o resultado é incerto: ${r.failure}. Não peça de novo; diga a quem escreveu para conferir.`;
     }
     if (r.failure) return `${asked} ${r.authorName} aprovou, mas a ação falhou: ${r.failure}.`;
     return `${asked} ${r.authorName} aprovou, e o Shearim fez: ${r.result}.`;
@@ -235,8 +239,9 @@ export function approvalRoutes(deps: {
           );
     await db
       .update(approvalRequests)
-      .set(outcome.ok ? { result: outcome.result } : { failure: outcome.reason })
-      .where(eq(approvalRequests.id, row.id));
+      .set(outcome.ok ? { result: outcome.result } : { failure: outcome.reason, uncertain: outcome.uncertain ?? false })
+      // Se o servidor reiniciou no meio, a subida já deu o resultado como incerto e continuou.
+      .where(and(eq(approvalRequests.id, row.id), isNull(approvalRequests.result), isNull(approvalRequests.failure)));
     const approval = await publishApproval(db, events, row.id, "approval.updated");
     await deps.continueAfter(row.executionId, row.id);
     return c.json(approval);

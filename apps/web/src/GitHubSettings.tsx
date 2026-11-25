@@ -1,12 +1,7 @@
 import type { GitHubDto } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
-import { ApiFailure, api } from "./api";
+import { api, messageOf } from "./api";
 import { dateTimeShort } from "./format";
-
-function messageOf(err: unknown, fallback: string) {
-  const body = err instanceof ApiFailure ? err.body : null;
-  return body && "message" in body ? body.message : fallback;
-}
 
 /** O desfecho do retorno do GitHub (`/github?github=…` ou `?erro=…`), lido uma vez e tirado do endereço. */
 function returnOfUrl(): { ok: string } | { error: string } | null {
@@ -74,7 +69,7 @@ export function GitHubSettings() {
       <h1 className="channel-name">GitHub</h1>
       <p className="hint">
         Um GitHub App só desta Instalação: os Agentes leem os repositórios que você liberar no GitHub. A chave privada
-        do App fica guardada cifrada aqui e não sai daqui.
+        do GitHub App fica guardada cifrada aqui e não sai daqui.
       </p>
       {back && "error" in back && (
         <p className="error" role="alert">
@@ -83,7 +78,7 @@ export function GitHubSettings() {
       )}
       {back && "ok" in back && (
         <p className="hint" role="status">
-          {back.ok === "installed" ? "App instalado." : "App criado. Falta instalar na conta do time."}
+          {back.ok === "installed" ? "GitHub App instalado." : "GitHub App criado. Falta instalar na conta do time."}
         </p>
       )}
       {status === null ? (
@@ -109,7 +104,7 @@ export function GitHubSettings() {
       ) : (
         <section className="settings-row" aria-label="GitHub App">
           <p className="hint" role="status">
-            App <a href={status.app?.htmlUrl}>{status.app?.name}</a>
+            GitHub App <a href={status.app?.htmlUrl}>{status.app?.name}</a>
             {status.app?.owner ? ` de ${status.app.owner}` : ""}.{" "}
             {status.installation
               ? `Instalado em ${status.installation.account} em ${dateTimeShort(status.installation.installedAt)}.`

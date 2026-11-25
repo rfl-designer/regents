@@ -1,14 +1,9 @@
 import type { MyConnectorDto } from "@shearim/contracts";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { ApiFailure, api } from "./api";
+import { api, messageOf } from "./api";
 import { goToLogin, loginReturn } from "./connector-login";
 import { dateTimeShort } from "./format";
 import { useServerEvents } from "./live";
-
-function messageOf(err: unknown, fallback: string) {
-  const body = err instanceof ApiFailure ? err.body : null;
-  return body && "message" in body && typeof body.message === "string" ? body.message : fallback;
-}
 
 /**
  * Perfil › Conectores: os Conectores que pedem a credencial de cada Membro. O Membro liga a dele
