@@ -13,7 +13,15 @@
  * - Uma instalação removida no GitHub vira falha da Ferramenta com motivo, e o Admin a vê.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, AgentGitHubDto, ChannelDto, ExecutionDto, GitHubDto, MessageDto } from "@shearim/contracts";
+import type {
+  AgentDto,
+  AgentGitHubDto,
+  ApprovalRequestDto,
+  ChannelDto,
+  ExecutionDto,
+  GitHubDto,
+  MessageDto,
+} from "@shearim/contracts";
 import { schema } from "../src/db/client";
 import type { FakeGitHub } from "./fakes/github-api";
 import { toolResults } from "./fakes/messages-api";
@@ -271,7 +279,7 @@ async function andamentos(aba: EventSocket, origem: MessageDto) {
 
 describe("as leituras do GitHub", () => {
   test(
-    "o Admin vê as Ferramentas do GitHub na tela do Agente, de origem GitHub e só leitura",
+    "o Admin vê as Ferramentas do GitHub na tela do Agente, de origem GitHub: as leituras e as escritas",
     async () => {
       const { t, faro } = await comGitHub();
       const lista = (await (await t.as(juliana).get(`/api/agents/${faro.id}/tools`)).json()) as {
@@ -281,8 +289,11 @@ describe("as leituras do GitHub", () => {
         granted: boolean;
       }[];
       const doGitHub = lista.filter((f) => f.origin === "github");
-      expect(doGitHub.map((f) => f.id)).toEqual(LEITURAS);
-      expect(doGitHub.every((f) => f.access === "read" && f.granted)).toBe(true);
+      expect(doGitHub.map((f) => [f.id, f.access, f.granted])).toEqual([
+        ...LEITURAS.map((id) => [id, "read", true]),
+        ["github_criar_issue", "write", false],
+        ["github_comentar", "write", false],
+      ]);
     },
     LONGO,
   );
@@ -611,6 +622,227 @@ describe("os repositórios do GitHub por Agente", () => {
       // Sem Ferramenta do GitHub, a descrição não fala do GitHub, mesmo com lista.
       for (const id of LEITURAS) await t.as(juliana).delete(`/api/agents/${faro.id}/tools/${id}`);
       expect((await agente(t, faro.id, bruno)).reach).toEqual([]);
+    },
+    LONGO,
+  );
+});
+
+const ESCRITAS = ["github_criar_issue", "github_comentar"];
+
+/** O GitHub ligado, com o Faro tendo também as escritas do GitHub. */
+async function comEscritas(opts: { repositories?: string[] } = {}) {
+  const ligado = await comGitHub(opts);
+  for (const id of ESCRITAS)
+    expect((await ligado.t.as(juliana).put(`/api/agents/${ligado.faro.id}/tools/${id}`)).status).toBe(200);
+  return ligado;
+}
+
+async function pedidos(t: TestApp, channelId: string): Promise<ApprovalRequestDto[]> {
+  const res = await t.as(juliana).get(`/api/conversations/${channelId}/approvals`);
+  expect(res.status).toBe(200);
+  return res.json();
+}
+
+/** Espera o Pedido de número `n` (1 é o primeiro) da conversa ficar pendente. */
+async function pedidoPendente(t: TestApp, channelId: string, n = 1) {
+  return eventually(
+    "o Pedido aparecer",
+    async () => {
+      const lista = await pedidos(t, channelId);
+      return lista.length >= n && lista[n - 1]!.state === "pending" && lista[n - 1];
+    },
+    10_000,
+  );
+}
+
+async function aprovar(t: TestApp, p: ApprovalRequestDto) {
+  const res = await t.as(juliana).post(`/api/conversations/${p.channelId}/approvals/${p.id}/approve`);
+  expect(res.status).toBe(200);
+  return (await res.json()) as ApprovalRequestDto;
+}
+
+/** O texto inteiro que um pedido de resposta mandou como mensagens (o que a continuação recebeu). */
+const textoDe = (req: { body: { messages: { content: unknown }[] } }) => JSON.stringify(req.body.messages);
+
+describe("as escritas do GitHub", () => {
+  test(
+    "criar issue vira Pedido com o repositório, o título e o corpo; aprovado, sai como o bot do App com um token de escrita só naquele repositório, e a continuação recebe o link",
+    async () => {
+      const { t, gh, geral } = await comEscritas({ repositories: ["time/site", "time/infra"] });
+      t.anthropic.reply(
+        {
+          toolUse: [
+            {
+              id: "t1",
+              name: "github_criar_issue",
+              input: { repositorio: "time/site", titulo: "Safari: botão de pagar", corpo: "Não responde no iOS 19." },
+            },
+          ],
+        },
+        { text: "Abri a issue." },
+      );
+
+      const origem = await enviar(t, geral.id, "@Faro abre uma issue do checkout no Safari");
+      const pedido = await pedidoPendente(t, geral.id);
+
+      expect(pedido).toMatchObject({
+        tool: "github_criar_issue",
+        toolTitle: "criar issue no GitHub",
+        summary:
+          "Criar uma issue em time/site, com o título “Safari: botão de pagar” e a descrição “Não responde no iOS 19.”",
+      });
+      // Nada foi escrito antes da aprovação, e nenhum token de escrita saiu.
+      expect(gh.issuesOf("time/site").map((i) => i.number)).toEqual([214, 215]);
+      expect(gh.tokens.some((k) => Object.values(k.permissions).includes("write"))).toBe(false);
+
+      const aprovado = await aprovar(t, pedido);
+
+      const link = "https://github.example/time/site/issues/216";
+      expect(aprovado).toMatchObject({
+        state: "approved",
+        result: `issue #216 criada em time/site: ${link}`,
+        failure: null,
+      });
+      expect(gh.issuesOf("time/site").at(-1)).toMatchObject({
+        number: 216,
+        title: "Safari: botão de pagar",
+        body: "Não responde no iOS 19.",
+        author: `${gh.app!.slug}[bot]`,
+      });
+      expect(gh.tokens.at(-1)).toMatchObject({ repositories: ["site"], permissions: { issues: "write" } });
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Abri a issue.");
+      expect(textoDe(t.anthropic.requests.at(-1)!)).toContain(link);
+    },
+    LONGO,
+  );
+
+  test(
+    "comentar numa issue e num pull request vira um Pedido para cada, com o comentário no resumo; aprovado, sai como o bot do App com a permissão de escrita daquele repositório, e a continuação recebe o link",
+    async () => {
+      const { t, gh, geral } = await comEscritas();
+      t.anthropic.reply(
+        {
+          toolUse: [
+            { name: "github_comentar", input: { repositorio: "time/site", numero: 214, texto: "Corrigido no #215." } },
+          ],
+        },
+        {
+          toolUse: [
+            { name: "github_comentar", input: { repositorio: "time/site", numero: 215, texto: "Fecha o #214." } },
+          ],
+        },
+        { text: "Comentei nos dois." },
+      );
+
+      const origem = await enviar(t, geral.id, "@Faro liga a issue 214 ao PR 215");
+      const naIssue = await pedidoPendente(t, geral.id);
+      expect(naIssue).toMatchObject({
+        tool: "github_comentar",
+        toolTitle: "comentar no GitHub",
+        summary: "Comentar na issue #214 de time/site (“Checkout quebra no Safari”): “Corrigido no #215.”",
+      });
+      expect(gh.tokens.some((k) => Object.values(k.permissions).includes("write"))).toBe(false);
+
+      const primeiro = await aprovar(t, naIssue);
+      const linkDaIssue = expect.stringMatching(
+        /^comentário publicado na issue #214 de time\/site: https:\/\/github\.example\/time\/site\/issues\/214#issuecomment-\d+$/,
+      );
+      expect(primeiro).toMatchObject({ state: "approved", result: linkDaIssue, failure: null });
+      expect(gh.tokens.at(-1)).toMatchObject({ repositories: ["site"], permissions: { issues: "write" } });
+
+      const noPull = await pedidoPendente(t, geral.id, 2);
+      expect(noPull.summary).toBe("Comentar no pull request #215 de time/site (“Corrige o checkout”): “Fecha o #214.”");
+      const segundo = await aprovar(t, noPull);
+      expect(segundo.result).toMatch(
+        /^comentário publicado no pull request #215 de time\/site: https:\/\/github\.example\/time\/site\/pull\/215#issuecomment-\d+$/,
+      );
+      expect(gh.tokens.at(-1)).toMatchObject({ repositories: ["site"], permissions: { pull_requests: "write" } });
+
+      const bot = `${gh.app!.slug}[bot]`;
+      const [issue, pull] = gh.issuesOf("time/site");
+      expect(issue!.comments!.at(-1)).toMatchObject({ author: bot, body: "Corrigido no #215." });
+      expect(pull!.comments!.at(-1)).toMatchObject({ author: bot, body: "Fecha o #214." });
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Comentei nos dois.");
+      expect(textoDe(t.anthropic.requests.at(-1)!)).toContain(segundo.result!.split(": ").at(-1)!);
+    },
+    LONGO,
+  );
+
+  test(
+    "a lista de repositórios do Agente vale para as escritas: fora dela é falha da Ferramenta sem Pedido e sem token",
+    async () => {
+      const { t, gh, faro, geral } = await comEscritas({ repositories: ["time/site", "time/infra"] });
+      await restringir(t, faro.id, ["time/site"]);
+      const antes = gh.tokens.length;
+      t.anthropic.reply(
+        {
+          toolUse: [
+            { id: "t1", name: "github_criar_issue", input: { repositorio: "time/infra", titulo: "Trocar a senha" } },
+            { id: "t2", name: "github_comentar", input: { repositorio: "Time/Infra", numero: 1, texto: "Oi" } },
+          ],
+        },
+        { text: "Não posso escrever na infra." },
+      );
+
+      const origem = await enviar(t, geral.id, "@Faro abre uma issue na infra");
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Não posso escrever na infra.");
+
+      const r = resultados(t);
+      for (const id of ["t1", "t2"]) {
+        expect(r.get(id)).toMatchObject({ is_error: true });
+        expect(r.get(id)!.content).toContain("não está entre os repositórios do GitHub que este Agente alcança");
+      }
+      expect(await pedidos(t, geral.id)).toEqual([]);
+      expect(gh.tokens.length).toBe(antes);
+    },
+    LONGO,
+  );
+
+  test(
+    "a lista é conferida de novo na aprovação: restringir o Agente depois do Pedido faz a ação falhar com motivo, sem token de escrita, e a continuação sabe",
+    async () => {
+      const { t, gh, faro, geral } = await comEscritas({ repositories: ["time/site", "time/infra"] });
+      t.anthropic.reply(
+        { toolUse: [{ name: "github_criar_issue", input: { repositorio: "time/infra", titulo: "Trocar a senha" } }] },
+        { text: "Não deu para abrir." },
+      );
+      const origem = await enviar(t, geral.id, "@Faro abre uma issue na infra");
+      const pedido = await pedidoPendente(t, geral.id);
+      expect(pedido.summary).toBe("Criar uma issue em time/infra, com o título “Trocar a senha” e sem descrição");
+
+      await restringir(t, faro.id, ["time/site"]);
+      const antes = gh.tokens.length;
+      const decidido = await aprovar(t, pedido);
+
+      const motivo = "o repositório time/infra não está entre os repositórios do GitHub que este Agente alcança";
+      expect(decidido).toMatchObject({ state: "approved", result: null, failure: motivo });
+      expect(gh.tokens.length).toBe(antes);
+      expect(gh.issuesOf("time/infra")).toEqual([]);
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Não deu para abrir.");
+      expect(textoDe(t.anthropic.requests.at(-1)!)).toContain(`a ação falhou: ${motivo}`);
+    },
+    LONGO,
+  );
+
+  test(
+    "comentar numa issue que não existe é falha da Ferramenta com motivo, sem Pedido",
+    async () => {
+      const { t, geral } = await comEscritas();
+      t.anthropic.reply(
+        {
+          toolUse: [
+            { id: "t1", name: "github_comentar", input: { repositorio: "time/site", numero: 999, texto: "Oi" } },
+          ],
+        },
+        { text: "Essa issue não existe." },
+      );
+
+      const origem = await enviar(t, geral.id, "@Faro comenta na 999");
+      await respostaA(t, geral.id, origem);
+
+      expect(resultados(t).get("t1")).toMatchObject({ is_error: true });
+      expect(resultados(t).get("t1")!.content).toContain("não achei a issue ou o pull request 999 em time/site");
+      expect(await pedidos(t, geral.id)).toEqual([]);
     },
     LONGO,
   );

@@ -251,32 +251,45 @@ export function createGitHub(deps: { db: Db; clock: Clock; secrets: SecretBox; c
 
     /**
      * As chamadas de uma Ferramenta: um token de instalação novo, limitado como ela pede, e o
-     * `get` da API com ele. `get` devolve o JSON, `null` no 404 (a Ferramenta diz o que não
-     * achou) ou falha com motivo.
+     * `get`/`post` da API com ele. Devolvem o JSON, `null` no 404 (a Ferramenta diz o que não
+     * achou) ou falham com motivo.
      */
     async session(scope: GitHubScope, signal: AbortSignal) {
       const token = await github.token(scope, signal);
+      async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T | null> {
+        let res: Response;
+        try {
+          res = await fetch(`${config.apiUrl}${path}`, {
+            method,
+            headers: {
+              ...API_HEADERS,
+              authorization: `Bearer ${token}`,
+              ...(body === undefined ? {} : { "content-type": "application/json" }),
+            },
+            body: body === undefined ? undefined : JSON.stringify(body),
+            signal,
+          });
+        } catch (err) {
+          if (signal.aborted) throw err;
+          throw new ToolFailure("o GitHub não respondeu");
+        }
+        if (res.status === 404) return null;
+        if (res.status === 401) {
+          await markGone();
+          throw new ToolFailure(INSTALLATION_GONE);
+        }
+        if (res.status === 403) throw new ToolFailure("o GitHub App não tem permissão para isso");
+        if (res.status === 410) throw new ToolFailure("as issues estão desligadas nesse repositório");
+        if (res.status === 422) {
+          const why = ((await res.json().catch(() => null)) as { message?: string } | null)?.message;
+          throw new ToolFailure(`o GitHub recusou o pedido${why ? ` (${why})` : ""}`);
+        }
+        if (!res.ok) throw new ToolFailure(`o GitHub respondeu ${res.status}`);
+        return (await res.json()) as T;
+      }
       return {
-        async get<T>(path: string): Promise<T | null> {
-          let res: Response;
-          try {
-            res = await fetch(`${config.apiUrl}${path}`, {
-              headers: { ...API_HEADERS, authorization: `Bearer ${token}` },
-              signal,
-            });
-          } catch (err) {
-            if (signal.aborted) throw err;
-            throw new ToolFailure("o GitHub não respondeu");
-          }
-          if (res.status === 404) return null;
-          if (res.status === 401) {
-            await markGone();
-            throw new ToolFailure(INSTALLATION_GONE);
-          }
-          if (res.status === 403) throw new ToolFailure("o GitHub App não tem permissão para isso");
-          if (!res.ok) throw new ToolFailure(`o GitHub respondeu ${res.status}`);
-          return (await res.json()) as T;
-        },
+        get: <T>(path: string) => call<T>("GET", path),
+        post: <T>(path: string, body: unknown) => call<T>("POST", path, body),
       };
     },
 

@@ -9,6 +9,8 @@
  * - O token de instalação guarda o repositório e as permissões pedidos (`tokens`), e cada rota
  *   confere os dois: fora do repositório dá 404, sem a permissão dá 403, como no GitHub.
  * - `uninstall()` remove a instalação no GitHub: o token passa a dar 404.
+ * - As escritas (criar issue, comentar) pedem a permissão em `write` e saem como o bot do App
+ *   (`<slug>[bot]`); ficam no repositório (`issuesOf`).
  */
 import { generateKeyPairSync, verify } from "node:crypto";
 
@@ -21,7 +23,7 @@ export interface FakeIssue {
   body?: string;
   state?: "open" | "closed";
   author?: string;
-  comments?: { author: string; body: string }[];
+  comments?: { author: string; body: string; id?: number }[];
   /** É pull request: a branch de origem e a de destino. */
   pull?: { head: string; base: string; merged?: boolean };
 }
@@ -114,7 +116,7 @@ export async function startFakeGitHub() {
   }
 
   /** As rotas que pedem token de instalação, conferindo repositório e permissão. */
-  function withToken(req: Request, path: string, url: URL): Response {
+  function withToken(req: Request, path: string, url: URL, body_?: unknown): Response {
     const raw = req.headers.get("authorization")?.replace(/^(token|Bearer) /, "") ?? "";
     const token = tokens.get(raw) ?? null;
     const record = (res: Response) => {
@@ -126,10 +128,11 @@ export async function startFakeGitHub() {
     const reach = installation.repositories.filter(
       (r) => token.repositories === null || token.repositories.includes(shortName(r)),
     );
-    const need = (perm: string) => {
+    const need = (perm: string, write = false) => {
       const level = token.permissions[perm];
-      return level === "read" || level === "write";
+      return write ? level === "write" : level === "read" || level === "write";
     };
+    const bot = `${app?.slug ?? "app"}[bot]`;
     const forbidden = () => json({ message: "Resource not accessible by integration" }, 403);
 
     if (path === "/installation/repositories") {
@@ -155,6 +158,52 @@ export async function startFakeGitHub() {
     if (!reach.includes(fullName)) return record(notFound());
     const repo = repoOf(installation, fullName);
     if (!repo) return record(notFound());
+
+    if (rest === "" && req.method === "GET")
+      return record(
+        json({
+          full_name: repo.fullName,
+          private: repo.private ?? true,
+          description: repo.description ?? null,
+          default_branch: repo.defaultBranch ?? "main",
+          has_issues: true,
+        }),
+      );
+
+    if (req.method === "POST" && rest === "/issues") {
+      if (!need("issues", true)) return record(forbidden());
+      const body = (body_ ?? {}) as { title?: string; body?: string };
+      if (!body.title) return record(json({ message: "Validation Failed" }, 422));
+      repo.issues ??= [];
+      const number = Math.max(0, ...repo.issues.map((i) => i.number)) + 1;
+      const created: FakeIssue = { number, title: body.title, body: body.body, author: bot };
+      repo.issues.push(created);
+      return record(json(issueJson(repo, created), 201));
+    }
+    const commentOn = rest.match(/^\/issues\/(\d+)\/comments$/);
+    if (req.method === "POST" && commentOn) {
+      const found = repo.issues?.find((i) => i.number === Number(commentOn[1]));
+      if (!(need("issues", true) || (found?.pull && need("pull_requests", true)))) return record(forbidden());
+      if (!found) return record(notFound());
+      const text = ((body_ ?? {}) as { body?: string }).body;
+      if (!text) return record(json({ message: "Validation Failed" }, 422));
+      const id = 9_000_000 + ++seq;
+      found.comments ??= [];
+      found.comments.push({ author: bot, body: text, id });
+      const kind = found.pull ? "pull" : "issues";
+      return record(
+        json(
+          {
+            id,
+            body: text,
+            user: { login: bot },
+            html_url: `https://github.example/${repo.fullName}/${kind}/${found.number}#issuecomment-${id}`,
+          },
+          201,
+        ),
+      );
+    }
+    if (req.method !== "GET") return record(notFound());
 
     const contents = rest.match(/^\/contents\/(.+)$/);
     if (contents) {
@@ -310,7 +359,8 @@ export async function startFakeGitHub() {
         return json({ token: issued.token, expires_at: "2099-01-01T00:00:00Z", permissions }, 201);
       }
 
-      return withToken(req, apiPath, url);
+      const sent = req.method === "POST" ? await req.json().catch(() => null) : undefined;
+      return withToken(req, apiPath, url, sent);
     },
   });
 
@@ -329,6 +379,10 @@ export async function startFakeGitHub() {
     /** O manifest com que o App foi criado. */
     get app() {
       return app;
+    },
+    /** As issues (e pull requests) de um repositório agora, com os comentários. */
+    issuesOf(fullName: string): FakeIssue[] {
+      return repos.get(fullName)?.issues ?? [];
     },
     /** Remove a instalação no GitHub (o Admin desinstalou o App lá). */
     uninstall() {
