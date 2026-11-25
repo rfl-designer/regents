@@ -36,7 +36,15 @@ import { buildExtraction, DEFAULT_MEMORY_MODEL, MEMORY_SCHEMA, parseOperations }
 import { insertExtracted, publishMemory } from "./memory/items";
 import { recordMentions } from "./mentions";
 import { findMessage } from "./messages";
-import type { ModelEvent, ModelPort, ModelRequest, ModelUsage, Payer, TerminalModelEvent } from "./model/port";
+import {
+  type ModelEvent,
+  type ModelPort,
+  type ModelRequest,
+  type ModelUsage,
+  NOT_STRUCTURED_REASON,
+  type Payer,
+  type TerminalModelEvent,
+} from "./model/port";
 import { outcomeOf, recordOutcome } from "./outcomes";
 import { audienceOf } from "./participation";
 import type { Push } from "./push";
@@ -117,6 +125,8 @@ const SHOWN_EXTRACTION: readonly ExecutionState[] = ["failed", "not_acting"];
 const hiddenExtraction = (e: Pick<ExecutionDto, "kind" | "state">) =>
   e.kind === "memory" && !SHOWN_EXTRACTION.includes(e.state);
 const RESTART_REASON = "o servidor reiniciou";
+/** A extração da Memória devolveu outra coisa que não as operações pedidas (pela Chave ou pela Conta). */
+const OUT_OF_FORMAT_REASON = "a extração não devolveu a Memória no formato pedido";
 /** Quando a expiração dos Pedidos falha, a nova tentativa sai depois disso. */
 const EXPIRY_RETRY_MS = 60_000;
 /** A causa do resultado incerto de uma ação aprovada que o servidor deixou no meio. */
@@ -467,6 +477,10 @@ export function createExecutions(deps: {
    * - No limite até HH:MM: a Chave utilizável; sem ela, a fila até HH:MM (`hold` com `until`);
    * - Precisa ligar de novo: a Chave utilizável; sem ela, a fila sem hora (`hold` sem `until`);
    * - Não ligada: a Chave utilizável; sem ela, "Agentes não agem" com o motivo.
+   *
+   * A extração da Memória não espera na fila: sem Chave utilizável e com a Conta no limite (ou
+   * precisando ligar de novo), ela não roda e termina em "não guardou" (`none`), e só o autor vê
+   * o porquê ligado à Conta dele.
    */
   async function choosePayer(job: Row, agent: Agent): Promise<Choice> {
     const [author] = await db
@@ -480,6 +494,11 @@ export function createExecutions(deps: {
     }
     const key = await keyUsableFor(agent);
     if ("apiKey" in key) return { kind: "key", apiKey: key.apiKey };
+    // A extração da Memória não espera quem pague: a resposta já chegou, e ela não guarda (ADR 0013).
+    if (job.kind === "memory" && (standing.state === "limited" || standing.state === "needs_relink")) {
+      const why = standing.state === "limited" ? "está no limite" : "precisa ser ligada de novo";
+      return { kind: "none", reason: key.reason, authorReason: `a sua Conta do Claude ${why} e ${key.reason}` };
+    }
     if (standing.state === "limited") return { kind: "hold", until: standing.until };
     if (standing.state === "needs_relink") return { kind: "hold", until: null };
     return { kind: "none", reason: key.reason };
@@ -526,7 +545,7 @@ export function createExecutions(deps: {
     build: (payer: Payer) => Promise<ModelRequest>,
   ) {
     if (payer.kind === "none") {
-      await settle(job, "not_acting", { reason: payer.reason });
+      await settle(job, "not_acting", { reason: payer.reason, authorReason: payer.authorReason });
       return undefined;
     }
     if (payer.kind === "hold") {
@@ -632,7 +651,8 @@ export function createExecutions(deps: {
       reason: twice(reason),
       ...(authorReason ? { authorReason: twice(authorReason) } : {}),
     });
-    if (failed) hooks?.executionFailed?.(failed);
+    // A extração da Memória não manda push: a resposta dela já chegou (ADR 0013).
+    if (failed && job.kind !== "memory") hooks?.executionFailed?.(failed);
   }
 
   async function run(job: Row, agent: Agent, payer: Choice, controller: AbortController) {
@@ -764,9 +784,14 @@ export function createExecutions(deps: {
     });
     if (!result) return;
     const { text, end } = result;
+    // Fora do formato (pela Conta, o `--json-schema` sem `structured_output`; pela Chave, o JSON
+    // que não se entende), outra tentativa do mesmo pedido não conserta: não guardou, na hora.
+    if (end?.type === "failed" && end.reason === NOT_STRUCTURED_REASON) {
+      return fail(job, OUT_OF_FORMAT_REASON, { retryable: false });
+    }
     if (end?.type !== "done") return fail(job, failureReason(end), failureOpts(end));
     const operations = parseOperations(text);
-    if (!operations) return fail(job, "a extração não devolveu a Memória no formato pedido");
+    if (!operations) return fail(job, OUT_OF_FORMAT_REASON, { retryable: false });
 
     const saved = await db.transaction(async (tx) => {
       const [row] = await tx
@@ -1439,7 +1464,11 @@ function leaving(state: ExecutionState, now: Date) {
 const FINAL_STATES: readonly ExecutionState[] = ["done", "failed", "not_acting", "cancelled"];
 
 /** Quem paga uma execução, pela tabela da Spec: um pagador, "Agentes não agem" ou a fila. */
-type Choice = Payer | { kind: "none"; reason: string } | { kind: "hold"; until: Date | null };
+type Choice =
+  | Payer
+  /** Ninguém paga: "Agentes não agem" (ou a extração que não guardou), com o motivo de todos e o do autor. */
+  | { kind: "none"; reason: string; authorReason?: string }
+  | { kind: "hold"; until: Date | null };
 /**
  * O que a API informou que a chamada gastou até agora (o gasto na Chave conta mesmo sem o fim) e
  * se ela chegou ao `done`.
