@@ -4,6 +4,7 @@ import { type Db, isUuid, schema } from "../db/client";
 import { isActive } from "../members";
 import { canSee } from "../participation";
 import { ToolFailure, type ToolRun, type WriteTool } from "./port";
+import { reachOf } from "./reach";
 
 const { channels, channelAgents, channelParticipants, members, messages } = schema;
 
@@ -16,11 +17,13 @@ type Conversation = typeof channels.$inferSelect;
 
 /**
  * O alcance da escrita (Spec #44): só conversas de que o Agente participa e em que o autor da
- * mensagem de origem pode escrever (é Membro e vê a conversa: num Canal público, todo Membro).
+ * mensagem de origem pode escrever (é Membro e vê a conversa: num Canal público, todo Membro),
+ * e nunca fora do alcance de leitura da resposta: o resumo do Pedido diz o nome da conversa a
+ * todos que a veem, e de um Canal público ele não pode nomear um Canal privado.
  * Conferido ao criar o Pedido e de novo ao executá-lo.
  */
 async function writableBy(db: Db, run: ToolRun, conversation: Conversation | undefined) {
-  if (!conversation) throw new ToolFailure(OUT_OF_REACH);
+  if (!conversation || !(await reachOf(db, run)).find(conversation.id)) throw new ToolFailure(OUT_OF_REACH);
   const [author] = await db
     .select({ id: members.id })
     .from(messages)

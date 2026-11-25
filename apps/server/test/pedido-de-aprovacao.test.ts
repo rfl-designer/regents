@@ -343,14 +343,61 @@ describe("o alcance da escrita", () => {
   );
 
   test(
-    "se o autor perdeu o acesso durante a espera, a ação aprovada falha com motivo e a continuação recebe a falha",
+    "de um Canal público, postar num Canal privado do autor é falha sem Pedido: a escrita não sai do alcance de leitura, e o nome não aparece",
     async () => {
       const t = await testApp();
       const { faro, geral } = await workspace(t);
+      // #diretoria: privado, com o Faro e o Bruno. O Bruno pode escrever lá, mas o #geral é público.
       const diretoria = await canal(t, "diretoria", "private");
       await t.as(juliana).post(`/api/channels/${diretoria.id}/agents`, { agentId: faro.id });
       const brunoMe = (await (await t.as(bruno).get("/api/me")).json()) as { id: string };
       await t.as(juliana).post(`/api/channels/${diretoria.id}/participants`, { memberId: brunoMe.id });
+      const aba = await t.socket(juliana);
+
+      t.anthropic.reply(
+        {
+          toolUse: [
+            {
+              id: "toolu_1",
+              name: "postar_mensagem",
+              input: { conversa: "#diretoria", texto: "Fechamos o contrato." },
+            },
+          ],
+        },
+        { text: "Não consegui postar lá." },
+      );
+      const origem = await enviar(t, geral.id, "@Faro avisa a diretoria que fechamos");
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Não consegui postar lá.");
+
+      expect(toolResults(respostas(t)[1]!.body)[0]).toMatchObject({
+        tool_use_id: "toolu_1",
+        is_error: true,
+        content: "A Ferramenta postar mensagem falhou: a conversa não existe ou quem escreveu não pode escrever nela.",
+      });
+      expect(await pedidos(t, geral.id)).toEqual([]);
+      expect((await mensagens(t, diretoria.id)).some((m) => m.author.kind === "agent")).toBe(false);
+      // Nem o Andamento nem um Pedido, que todos do #geral veem, dizem o nome do #diretoria.
+      const visiveis = aba.received().filter((e) => e.type === "execution.updated" || e.type.startsWith("approval."));
+      expect(visiveis.length).toBeGreaterThan(0);
+      expect(JSON.stringify(visiveis)).not.toContain("diretoria");
+    },
+    LONGO,
+  );
+
+  test(
+    "se o autor perdeu o acesso durante a espera, a ação aprovada falha com motivo e a continuação recebe a falha",
+    async () => {
+      const t = await testApp();
+      const { faro } = await workspace(t);
+      // A mensagem sai do #time, privado, com Juliana e Bruno: o #diretoria, de que os dois
+      // participam, está no alcance da resposta.
+      const brunoMe = (await (await t.as(bruno).get("/api/me")).json()) as { id: string };
+      const [time, diretoria] = [await canal(t, "time", "private"), await canal(t, "diretoria", "private")];
+      for (const c of [time, diretoria]) {
+        await t.as(juliana).post(`/api/channels/${c.id}/agents`, { agentId: faro.id });
+        await t.as(juliana).post(`/api/channels/${c.id}/participants`, { memberId: brunoMe.id });
+      }
+      const geral = time;
 
       t.anthropic.reply(
         { toolUse: [{ name: "postar_mensagem", input: { conversa: "#diretoria", texto: "Fechamos o contrato." } }] },
