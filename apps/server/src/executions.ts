@@ -33,8 +33,14 @@ import { type Db, schema, type Tx } from "./db/client";
 import { type EventHub, reaches, without } from "./events";
 import { type KeyLedger, monthOf } from "./key-budget";
 import { remembers } from "./memory/enabled";
-import { buildExtraction, DEFAULT_MEMORY_MODEL, MEMORY_SCHEMA, parseOperations } from "./memory/extraction";
-import { insertExtracted, publishMemory } from "./memory/items";
+import {
+  buildExtraction,
+  DEFAULT_MEMORY_MODEL,
+  MEMORY_SCHEMA,
+  parseOperations,
+  saveOperations,
+} from "./memory/extraction";
+import { publishMemory } from "./memory/items";
 import { recordMentions } from "./mentions";
 import { findMessage } from "./messages";
 import {
@@ -800,7 +806,8 @@ export function createExecutions(deps: {
   /**
    * A extração da Memória (ADR 0013): lê a troca da resposta entregue com o modelo pequeno da
    * Instalação, em saída estruturada, paga como qualquer execução, e guarda o que ela devolver na
-   * Memória da Conversa, com a mensagem de origem. Os itens e o fim juntos: um cancelamento que
+   * Memória da Conversa, com a mensagem de origem (criar, ou substituir um item que entrou na
+   * resposta: `saveOperations`). Os itens e o fim juntos: um cancelamento que
    * chegou antes ganha, e nada fica guardado.
    */
   async function extract(job: Row, payer: Choice, controller: AbortController) {
@@ -827,11 +834,12 @@ export function createExecutions(deps: {
         .where(eq(executions.id, job.id))
         .for("update");
       if (row?.state !== "running") return undefined;
-      const ids = await insertExtracted(tx, {
+      const ids = await saveOperations(tx, {
+        executionId: job.id,
+        sourceExecutionId: job.sourceExecutionId!,
         conversationId: job.channelId,
         originMessageId: job.originMessageId,
-        executionId: job.id,
-        texts: operations.map((o) => o.text),
+        operations,
         now: clock.now(),
       });
       return (await close(job, "done", {}, tx)) ? ids : undefined;

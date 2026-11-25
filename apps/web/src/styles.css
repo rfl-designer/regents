@@ -363,6 +363,30 @@ body {
   text-align: left;
   overflow-wrap: anywhere;
 }
+.memory-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.memory-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 2px;
+}
+.memory-correct textarea {
+  width: 100%;
+  font: inherit;
+}
+.memory-subhead {
+  margin: 8px 16px 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.memory-item.archived .memory-text {
+  color: var(--muted);
+  text-decoration: line-through;
+}
 /* A resposta ancorada: logo abaixo da mensagem de origem, recuada, com a borda à esquerda */
 .anchored {
   list-style: none;

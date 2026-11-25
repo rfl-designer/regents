@@ -166,6 +166,11 @@ export const api = {
     ),
   /** A Memória da Conversa (com as Threads): ativos e arquivados, do mais novo ao mais velho. */
   memory: (conversationId: string) => call<MemoryItemDto[]>(`/api/conversations/${conversationId}/memory`),
+  /** Desfaz um item da Memória (qualquer escopo): ele fica arquivado. Devolve o item. */
+  undoMemory: (itemId: string) => call<MemoryItemDto>(`/api/memory/${itemId}/undo`, { method: "POST" }),
+  /** Corrige um item da Memória: devolve a versão nova (a anterior fica arquivada e chega por evento). */
+  correctMemory: (itemId: string, text: string) =>
+    call<MemoryItemDto>(`/api/memory/${itemId}/correct`, json("POST", { text })),
   /** Os Desfechos da Articuladora numa conversa (uma DM não tem). */
   outcomes: (conversationId: string) => call<OutcomeDto[]>(`/api/conversations/${conversationId}/outcomes`),
   updateAgent: (agentId: string, input: UpdateAgentInput) =>

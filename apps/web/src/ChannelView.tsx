@@ -307,6 +307,7 @@ export function Conversation({
     if (i.createdBy !== "extraction" || !i.origin) continue;
     remembered.set(i.origin.messageId, [...(remembered.get(i.origin.messageId) ?? []), i]);
   }
+  const replaced = new Set(items.flatMap((i) => (i.replacedById ? [i.replacedById] : [])));
   // Os Pedidos de aprovação ficam sob a mensagem de origem, onde a resposta vai chegar.
   const asked = new Map<string, ApprovalRequestDto[]>();
   for (const a of Object.values(approvals)) asked.set(a.originMessageId, [...(asked.get(a.originMessageId) ?? []), a]);
@@ -321,6 +322,7 @@ export function Conversation({
     outcomes,
     approvals: asked,
     remembered,
+    replaced,
     now,
     showExecution: (e) => setExecutions((prev) => upsertExecution(prev, e)),
     showApproval: (a) => setApprovals((prev) => ({ ...prev, [a.id]: a })),
@@ -359,6 +361,7 @@ export function Conversation({
         <MemoryPanel
           label={label}
           items={items}
+          onChanged={(item) => setMemory((prev) => ({ ...prev, [item.id]: item }))}
           onOpen={(item) => {
             if (!item.origin) return;
             if (item.origin.threadRootId) setOpenThread(item.origin.threadRootId);
@@ -397,6 +400,8 @@ interface GroupContext {
   approvals: Map<string, ApprovalRequestDto[]>;
   /** O que a extração guardou na Memória, pela mensagem de origem, do mais antigo ao mais novo. */
   remembered: Map<string, MemoryItemDto[]>;
+  /** Os itens que substituíram outro (a extração mostra "atualizou na Memória: …"). */
+  replaced: ReadonlySet<string>;
   now: number;
   showExecution(e: ExecutionDto): void;
   showApproval(a: ApprovalRequestDto): void;
@@ -525,7 +530,7 @@ function MessageGroups({
               {saved.map((i) => (
                 <li key={i.id}>
                   <p className="memory-line" role="status">
-                    guardou na Memória: {i.text}
+                    {ctx.replaced.has(i.id) ? "atualizou" : "guardou"} na Memória: {i.text}
                   </p>
                 </li>
               ))}
@@ -1087,20 +1092,27 @@ function CancelButton({ onCancel }: { onCancel(): Promise<void> }) {
 
 /**
  * A lista "Memória" da conversa, ao lado (no celular, por cima): o que os Agentes sabem dali, cada
- * item com a mensagem de origem (que leva até ela, na Thread se nasceu numa).
+ * item com a mensagem de origem (que leva até ela, na Thread se nasceu numa), com Desfazer e
+ * Corrigir. Quem vê a lista vê a conversa, e quem vê a conversa desfaz e corrige. Os arquivados
+ * (desfeitos ou substituídos) ficam à parte, embaixo.
  */
 function MemoryPanel({
   label,
   items,
   onOpen,
+  onChanged,
   onClose,
 }: {
   label: string;
   items: MemoryItemDto[];
   onOpen(item: MemoryItemDto): void;
+  /** O item que a ação devolveu (o evento `memory.updated` também chega). */
+  onChanged(item: MemoryItemDto): void;
   onClose(): void;
 }) {
   const active = items.filter((i) => i.state === "active");
+  const archived = items.filter((i) => i.state === "archived");
+  const byId = new Map(items.map((i) => [i.id, i]));
   return (
     <aside className="thread-panel memory-panel" aria-label={`Memória de ${label}`}>
       <header className="thread-head">
@@ -1110,23 +1122,112 @@ function MemoryPanel({
           Fechar
         </button>
       </header>
-      {active.length === 0 ? (
-        <p className="notice">Nada guardado ainda. O que as pessoas decidirem com um Agente aparece aqui.</p>
-      ) : (
-        <ul className="memory-items" aria-label="Itens da Memória">
-          {active.map((i) => (
-            <li key={i.id} className="memory-item">
-              <p className="memory-text">{i.text}</p>
-              {i.origin && (
-                <button type="button" className="link-quiet micro memory-origin" onClick={() => onOpen(i)}>
-                  de {i.origin.author}: “{i.origin.excerpt}”{i.origin.threadRootId ? " · na Thread" : ""}
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+      <div className="memory-body">
+        {active.length === 0 ? (
+          <p className="notice">Nada guardado ainda. O que as pessoas decidirem com um Agente aparece aqui.</p>
+        ) : (
+          <ul className="memory-items" aria-label="Itens da Memória">
+            {active.map((i) => (
+              <MemoryItem key={i.id} item={i} onOpen={onOpen} onChanged={onChanged} />
+            ))}
+          </ul>
+        )}
+        {archived.length > 0 && (
+          <section className="memory-archived" aria-label="Arquivados">
+            <h2 className="memory-subhead">Arquivados</h2>
+            <ul className="memory-items">
+              {archived.map((i) => {
+                const next = i.replacedById ? byId.get(i.replacedById) : undefined;
+                return (
+                  <li key={i.id} className="memory-item archived">
+                    <p className="memory-text">{i.text}</p>
+                    <p className="micro muted">
+                      {i.replacedById ? `substituído por: ${next?.text ?? "uma versão nova"}` : "desfeito"}
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+      </div>
     </aside>
+  );
+}
+
+/** Um item ativo da lista "Memória": o texto, a origem, e Desfazer ou Corrigir (com "Voltar"). */
+function MemoryItem({
+  item: i,
+  onOpen,
+  onChanged,
+}: {
+  item: MemoryItemDto;
+  onOpen(item: MemoryItemDto): void;
+  onChanged(item: MemoryItemDto): void;
+}) {
+  const [correcting, setCorrecting] = useState(false);
+  const [text, setText] = useState(i.text);
+  const undo = useAction(() => api.undoMemory(i.id).then(onChanged));
+  const correct = useAction(() =>
+    api.correctMemory(i.id, text).then((next) => {
+      onChanged(next);
+      setCorrecting(false);
+    }),
+  );
+  return (
+    <li className="memory-item">
+      {correcting ? (
+        <form
+          className="memory-correct"
+          onSubmit={(ev) => {
+            ev.preventDefault();
+            void correct.act();
+          }}
+        >
+          <textarea
+            aria-label="Versão corrigida"
+            value={text}
+            maxLength={500}
+            rows={2}
+            onChange={(ev) => setText(ev.target.value)}
+          />
+          <div className="failcard-actions">
+            <button type="submit" className="primary" disabled={correct.busy || !text.trim()}>
+              Salvar
+            </button>
+            <button type="button" className="link" disabled={correct.busy} onClick={() => setCorrecting(false)}>
+              Voltar
+            </button>
+            {correct.failed && <span className="error">Não deu para corrigir. Tente de novo.</span>}
+          </div>
+        </form>
+      ) : (
+        <p className="memory-text">{i.text}</p>
+      )}
+      {i.origin && (
+        <button type="button" className="link-quiet micro memory-origin" onClick={() => onOpen(i)}>
+          de {i.origin.author}: “{i.origin.excerpt}”{i.origin.threadRootId ? " · na Thread" : ""}
+        </button>
+      )}
+      {!correcting && (
+        <div className="memory-actions">
+          <button type="button" className="link micro" disabled={undo.busy} onClick={undo.act}>
+            Desfazer
+          </button>
+          <button
+            type="button"
+            className="link micro"
+            onClick={() => {
+              setText(i.text);
+              setCorrecting(true);
+            }}
+          >
+            Corrigir
+          </button>
+          {undo.failed && <span className="error">Não deu para desfazer. Tente de novo.</span>}
+        </div>
+      )}
+    </li>
   );
 }
 

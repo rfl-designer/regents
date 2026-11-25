@@ -264,7 +264,7 @@ export function createApp(deps: AppDeps) {
   );
   app.route("/api", workspaceKeyRoutes({ db, clock, secrets, onChanged: () => reconsider() }));
   app.route("/api", workspaceContextRoutes({ db }));
-  app.route("/api", memoryRoutes({ db }));
+  app.route("/api", memoryRoutes({ db, clock, events }));
   app.route("/api", githubRoutes({ db, github }));
   app.route("/api", installation.routes);
 
