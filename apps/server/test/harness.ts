@@ -421,7 +421,7 @@ export async function testApp(
     github?: AppDeps["github"];
     /** O prazo do Pedido de aprovação (padrão: 24 h). */
     approvals?: AppDeps["approvals"];
-    /** A Memória: o modelo da extração (padrão: o da Instalação, `claude-haiku-5-5`). */
+    /** A Memória: o modelo da extração e o orçamento do resumo (padrão: os da Instalação). */
     memory?: AppDeps["memory"];
   } = {},
 ) {

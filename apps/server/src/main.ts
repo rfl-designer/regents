@@ -255,7 +255,7 @@ async function main(command: string | undefined) {
     tools: { timeoutMs: toolTimeoutMs, maxTurns: toolMaxTurns },
     // O prazo do Pedido de aprovação (24 h).
     approvals: { ttlMs: approvalTtlMs },
-    // O modelo pequeno da extração da Memória (claude-haiku-5-5).
+    // O modelo pequeno da extração da Memória (claude-haiku-5-5) e o orçamento do resumo (4000 caracteres).
     memory,
   });
   // O par VAPID nasce na primeira subida (e daí em diante é sempre o mesmo, guardado no banco).
