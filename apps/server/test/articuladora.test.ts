@@ -37,6 +37,7 @@ describe("a Articuladora existe em todo Workspace", () => {
         builtin: true,
         // Sem Ferramentas até o Admin conceder (Spec #44).
         tools: [],
+        reach: [],
         // O Admin lê as instruções dela (são do Shearim; ele só não as edita).
         instructions: expect.stringContaining("Articuladora"),
         // O orçamento dela, como o de todo Agente (#28): sem teto até o Admin definir.
