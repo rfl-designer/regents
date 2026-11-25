@@ -1,5 +1,5 @@
 import { AGENT_MODELS } from "@shearim/contracts";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { type ModelContext, recentMessages } from "../context";
 import { type Db, schema } from "../db/client";
 
@@ -9,7 +9,7 @@ const { messages, channels, agents, memoryItems } = schema;
  * A extração da Memória (ADR 0013): uma chamada curta, depois de entregue a resposta de um
  * Agente, que lê aquela troca e devolve o que vale guardar. Só guarda a partir do que uma pessoa
  * disse: a entrada leva as mensagens de pessoa da troca, a resposta do Agente como contexto e a
- * Memória da Conversa de agora, com os ids. Resultado de Ferramenta nunca entra (não fica em
+ * Memória que entrou na resposta, com os ids. Resultado de Ferramenta nunca entra (não fica em
  * `messages`), nem o texto de outros Agentes.
  */
 
@@ -23,15 +23,28 @@ export const MAX_ITEM_LENGTH = 500;
 
 /**
  * O que a Instalação ajusta na Memória pelo `.env`: o modelo da extração (`SHEARIM_MEMORY_MODEL`,
- * um dos modelos aceitos). Valor inválido é erro (o servidor não sobe).
+ * um dos modelos aceitos) e o orçamento do resumo que entra em cada resposta, em caracteres
+ * (`SHEARIM_MEMORY_SUMMARY_CHARS`; padrão `DEFAULT_SUMMARY_CHARS`). Valor inválido é erro (o
+ * servidor não sobe).
  */
-export function memoryFromEnv(env: Record<string, string | undefined>): { model?: string } {
-  const raw = env.SHEARIM_MEMORY_MODEL?.trim();
-  if (!raw) return {};
-  if (!(AGENT_MODELS as readonly string[]).includes(raw)) {
-    throw new Error(`SHEARIM_MEMORY_MODEL=${raw} não é um modelo aceito (${AGENT_MODELS.join(", ")}).`);
+export function memoryFromEnv(env: Record<string, string | undefined>): { model?: string; summaryChars?: number } {
+  const config: { model?: string; summaryChars?: number } = {};
+  const model = env.SHEARIM_MEMORY_MODEL?.trim();
+  if (model) {
+    if (!(AGENT_MODELS as readonly string[]).includes(model)) {
+      throw new Error(`SHEARIM_MEMORY_MODEL=${model} não é um modelo aceito (${AGENT_MODELS.join(", ")}).`);
+    }
+    config.model = model;
   }
-  return { model: raw };
+  const chars = env.SHEARIM_MEMORY_SUMMARY_CHARS?.trim();
+  if (chars) {
+    const n = Number(chars);
+    if (!Number.isInteger(n) || n < 1) {
+      throw new Error(`SHEARIM_MEMORY_SUMMARY_CHARS=${chars} não é um número inteiro maior que zero.`);
+    }
+    config.summaryChars = n;
+  }
+  return config;
 }
 
 /**
@@ -103,7 +116,7 @@ const INSTRUCTIONS = [
 /**
  * O pedido da extração da resposta `sourceExecutionId` (já entregue): as mensagens de pessoa da
  * troca (as mesmas recentes que a resposta leu, até a mensagem de origem), a resposta como
- * contexto e a Memória da Conversa ativa, com os ids. Sem resposta (não deveria acontecer), nada.
+ * contexto e a Memória que entrou na resposta (ainda ativa), com os ids. Sem resposta (não deveria acontecer), nada.
  */
 export async function buildExtraction(db: Db, sourceExecutionId: string): Promise<ModelContext | undefined> {
   const [source] = await db
@@ -118,17 +131,14 @@ export async function buildExtraction(db: Db, sourceExecutionId: string): Promis
   const recent = await recentMessages(db, origin!, conversation!.recentMessages);
   // O que outros Agentes disseram nunca é fonte: só as pessoas.
   const people = recent.filter((m) => m.agentId === null);
-  const remembered = await db
-    .select({ id: memoryItems.id, text: memoryItems.text })
-    .from(memoryItems)
-    .where(
-      and(
-        eq(memoryItems.conversationId, conversation!.id),
-        eq(memoryItems.scope, "conversation"),
-        eq(memoryItems.state, "active"),
-      ),
-    )
-    .orderBy(memoryItems.seq);
+  // A Memória que entrou na resposta (o resumo do contexto dela, #62), ainda ativa.
+  const remembered = source.e.memoryItemIds.length
+    ? await db
+        .select({ id: memoryItems.id, text: memoryItems.text })
+        .from(memoryItems)
+        .where(and(inArray(memoryItems.id, source.e.memoryItemIds), eq(memoryItems.state, "active")))
+        .orderBy(memoryItems.seq)
+    : [];
 
   return {
     system: INSTRUCTIONS,

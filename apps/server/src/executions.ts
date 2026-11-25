@@ -268,6 +268,8 @@ export function createExecutions(deps: {
   approvalTtlMs?: number;
   /** O modelo pequeno da extração da Memória (padrão: `DEFAULT_MEMORY_MODEL`; `SHEARIM_MEMORY_MODEL`). */
   memoryModel?: string;
+  /** O orçamento do resumo da Memória em cada resposta, em caracteres (`SHEARIM_MEMORY_SUMMARY_CHARS`). */
+  memorySummaryChars?: number;
 }): Executions {
   const { db, clock, events, model, secrets, hooks, reading, ledger, push } = deps;
   const limits: ExecutionLimits = { ...DEFAULT_LIMITS, ...deps.limits };
@@ -590,7 +592,7 @@ export function createExecutions(deps: {
   async function close(
     job: Row,
     state: Extract<ExecutionState, "done" | "failed" | "not_acting">,
-    extra: { reason?: string; authorReason?: string; replyMessageId?: string } = {},
+    extra: { reason?: string; authorReason?: string; replyMessageId?: string; memoryItemIds?: string[] } = {},
     tx: Db | Tx = db,
   ) {
     return transition(
@@ -600,6 +602,7 @@ export function createExecutions(deps: {
         reason: extra.reason ?? null,
         authorReason: extra.authorReason ?? null,
         replyMessageId: extra.replyMessageId ?? null,
+        ...(extra.memoryItemIds ? { memoryItemIds: extra.memoryItemIds } : {}),
       },
       { tx },
     );
@@ -638,10 +641,20 @@ export function createExecutions(deps: {
   async function run(job: Row, agent: Agent, payer: Choice, controller: AbortController) {
     if (job.kind === "route") return route(job, payer, controller, agent);
     if (job.kind === "memory") return extract(job, payer, controller);
+    // Os itens de Memória que entraram no contexto da tentativa que responde: a resposta os guarda.
+    let memoryItemIds: string[] = [];
     const result = await byPayer(job, payer, controller, async (payer) => {
       const tools = toolsOf(job);
       const offered = await tools.list();
-      const context = await buildContext(db, agent, job.originMessageId, await callOf(job), offered);
+      const { memoryItemIds: shown, ...context } = await buildContext(
+        db,
+        agent,
+        job.originMessageId,
+        await callOf(job),
+        offered,
+        deps.memorySummaryChars,
+      );
+      memoryItemIds = shown;
       // A continuação sabe o que a resposta já pediu e o que o autor decidiu (ADR 0011).
       if (job.approvalRequestId) {
         const note = await continuationNote(db, job.approvalRequestId);
@@ -700,7 +713,7 @@ export function createExecutions(deps: {
             createdAt: reply.createdAt,
           })
         : [];
-      if (!(await close(job, "done", { replyMessageId: reply.id }, tx))) return undefined;
+      if (!(await close(job, "done", { replyMessageId: reply.id, memoryItemIds }, tx))) return undefined;
       // A extração da Memória entra na fila junto com a entrega: as duas nunca se separam (ADR 0003).
       return { followed, extraction: await enqueueExtraction(tx, job) };
     });

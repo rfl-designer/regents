@@ -315,6 +315,12 @@ export const executions = pgTable(
      * entregue, `reply_message_id` dela). Nulo nas outras.
      */
     sourceExecutionId: uuid().references((): AnyPgColumn => executions.id),
+    /**
+     * Na resposta entregue: os itens de Memória que entraram no resumo do contexto dela (#62), que
+     * a extração recebe com os ids. Vazio nas outras. Sem FK: o item nunca é apagado (só o da
+     * Memória do Agente, com o Agente), e um id que sumiu só deixa de aparecer.
+     */
+    memoryItemIds: uuid().array().notNull().default(sql`'{}'::uuid[]`),
   },
   (t) => [index().on(t.state, t.arrivedAt, t.seq), index().on(t.channelId, t.state)],
 );

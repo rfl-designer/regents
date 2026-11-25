@@ -4,6 +4,7 @@ import type { Agent } from "./agents";
 import { withBuiltinText } from "./articuladora";
 import { type Db, schema } from "./db/client";
 import { isActive } from "./members";
+import { DEFAULT_SUMMARY_CHARS, memorySummary } from "./memory/summary";
 import type { ModelMessage } from "./model/port";
 import { workspaceMapFor } from "./routing";
 import type { ToolSpec } from "./tools/port";
@@ -15,6 +16,12 @@ const { messages, members, agents, channels, channelParticipants, channelAgents 
 export interface ModelContext {
   system: string;
   messages: ModelMessage[];
+}
+
+/** O contexto de uma resposta: o que vai ao modelo e os itens de Memória que entraram nele. */
+export interface ResponseContext extends ModelContext {
+  /** Os ids dos itens de Memória que entraram no resumo (a resposta os guarda; a extração os recebe). */
+  memoryItemIds: string[];
 }
 
 /**
@@ -38,11 +45,12 @@ export type Call =
  * 2. o Contexto do Workspace;
  * 3. as instruções do Agente;
  * 4. as Instruções do Canal;
- * 5. quem é quem (pessoas com nome e "sobre mim", Agentes com nome e descrição);
- * 6. as últimas N mensagens até a de origem, cada uma com o autor e a marca de pessoa ou Agente
+ * 5. o resumo da Memória (`memorySummary`, com a precedência e o orçamento da Instalação);
+ * 6. quem é quem (pessoas com nome e "sobre mim", Agentes com nome e descrição);
+ * 7. as últimas N mensagens até a de origem, cada uma com o autor e a marca de pessoa ou Agente
  *    (numa Thread, a raiz sempre e as últimas N da Thread: `recentMessages`).
  *
- * As camadas 1 a 5 vão no `system`; a 6 vai como uma mensagem só, em ordem, terminando na
+ * As camadas 1 a 6 vão no `system`; a 7 vai como uma mensagem só, em ordem, terminando na
  * mensagem que o Agente responde (com N = 0, só ela). Uma seção vazia não entra.
  */
 export async function buildContext(
@@ -52,7 +60,9 @@ export async function buildContext(
   call: Call = { kind: "mention" },
   /** As Ferramentas que o Agente tem nesta execução (o preâmbulo diz o que ele pode usar). */
   tools: readonly Pick<ToolSpec, "title">[] = [],
-): Promise<ModelContext> {
+  /** O orçamento do resumo da Memória, em caracteres (`SHEARIM_MEMORY_SUMMARY_CHARS`). */
+  memoryBudget: number = DEFAULT_SUMMARY_CHARS,
+): Promise<ResponseContext> {
   const agent = withBuiltinText(row);
   const [origin] = await db.select().from(messages).where(eq(messages.id, originMessageId));
   if (!origin) throw new Error(`buildContext: a mensagem ${originMessageId} não existe`);
@@ -126,11 +136,13 @@ export async function buildContext(
     ...team.map((a) => `- ${a.name}${a.id === agent.id ? " (você)" : ""}${a.description ? `: ${a.description}` : ""}`),
   ].join("\n");
 
+  const memory = await memorySummary(db, { conversationId: conversation!.id, budget: memoryBudget });
   const system = [
     preamble,
     section("Contexto do Workspace", await readWorkspaceContext(db)),
     section("Suas instruções", agent.instructions),
     section("Instruções do Canal", conversation!.instructions),
+    memory.text,
     section("Quem é quem", whoIsWho),
     ...(await articuladoraMap(db, agent, origin, conversation!)),
   ]
@@ -140,6 +152,7 @@ export async function buildContext(
   const transcript = recent.map((m) => `${m.author} (${m.agentId ? "Agente" : "pessoa"}): ${m.body}`).join("\n\n");
   return {
     system,
+    memoryItemIds: memory.shown.map((i) => i.id),
     messages: [
       {
         role: "user",
@@ -177,7 +190,7 @@ type Origin = typeof messages.$inferSelect;
 
 /**
  * As últimas N mensagens até a de origem, mais ela, em ordem de gravação, com o autor (Spec,
- * módulo 5, camada 6). O fluxo principal e cada Thread são conversas separadas:
+ * módulo 5, camada 7). O fluxo principal e cada Thread são conversas separadas:
  * - no fluxo principal, as N anteriores do fluxo principal (as mensagens de Thread não entram);
  * - numa Thread, a raiz entra sempre (fora do N), seguida das N anteriores da Thread.
  * O roteamento da Articuladora usa a mesma função, com o N dele.

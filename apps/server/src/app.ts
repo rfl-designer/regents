@@ -83,8 +83,11 @@ export interface AppDeps {
   github?: Partial<GitHubConfig>;
   /** O Pedido de aprovação: o prazo até expirar (`SHEARIM_APPROVAL_TTL_H`; padrão 24 h). */
   approvals?: { ttlMs?: number };
-  /** A Memória: o modelo pequeno da extração (`SHEARIM_MEMORY_MODEL`; padrão `claude-haiku-5-5`). */
-  memory?: { model?: string };
+  /**
+   * A Memória: o modelo pequeno da extração (`SHEARIM_MEMORY_MODEL`; padrão `claude-haiku-5-5`) e o
+   * orçamento do resumo em cada resposta, em caracteres (`SHEARIM_MEMORY_SUMMARY_CHARS`; padrão 4000).
+   */
+  memory?: { model?: string; summaryChars?: number };
 }
 
 export type AppHooks = JoinRequestHooks & ExecutionHooks & KeyHooks & AccountHooks;
@@ -177,6 +180,7 @@ export function createApp(deps: AppDeps) {
     maxToolTurns: deps.tools?.maxTurns,
     approvalTtlMs: deps.approvals?.ttlMs,
     memoryModel: deps.memory?.model,
+    memorySummaryChars: deps.memory?.summaryChars,
   });
   // A volta da Conta (ou a troca da Chave, ou do orçamento) solta quem espera por ela na fila.
   const reconsider = (memberId?: string) => void executions.reconsider(memberId).catch(() => {});
