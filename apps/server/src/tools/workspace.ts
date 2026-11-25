@@ -38,11 +38,17 @@ const listAgents: ToolDefinition = {
     const titles = new Map([...WORKSPACE_TOOLS, ...WEB_TOOLS].map((t) => [t.id, t.title]));
     // As dos Conectores, com o Conector: a linha de alcance da descrição pública sai delas.
     const fromConnectors = await db
-      .select({ tool: connectorTools.tool, title: connectorTools.title, connector: connectors.name })
+      .select({
+        tool: connectorTools.tool,
+        title: connectorTools.title,
+        connector: connectors.name,
+        mode: connectors.credentialMode,
+      })
       .from(connectorTools)
       .innerJoin(connectors, eq(connectors.id, connectorTools.connectorId));
     for (const c of fromConnectors) titles.set(c.tool, c.title);
-    const connectorOf = new Map(fromConnectors.map((c) => [c.tool, c.connector]));
+    // A linha de alcance é só dos Conectores com a credencial do Workspace.
+    const connectorOf = new Map(fromConnectors.filter((c) => c.mode === "workspace").map((c) => [c.tool, c.connector]));
     return rows
       .map((row) => {
         const a = withBuiltinText({ ...row, instructions: "" });
