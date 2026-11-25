@@ -375,7 +375,13 @@ async function toolStep(step: { name: string; input?: Record<string, unknown> })
 }
 
 /** Uma tool nativa (`{ native }`): o mesmo desenho do `tool_use`/`tool_result` das do MCP. */
-function nativeStep(step: { name: string; input?: Record<string, unknown>; error?: string; hang?: true }) {
+function nativeStep(step: {
+  name: string;
+  input?: Record<string, unknown>;
+  error?: string;
+  hang?: true;
+  result?: string;
+}) {
   const input = step.input ?? {};
   const id = `toolu_fake_${blockIndex}`;
   const index = blockIndex++;
@@ -398,7 +404,7 @@ function nativeStep(step: { name: string; input?: Record<string, unknown>; error
   const error = tools.includes(step.name)
     ? step.error
     : `<tool_use_error>Error: No such tool available: ${step.name}</tool_use_error>`;
-  lastToolResult = error ?? `Resultado de ${step.name}.`;
+  lastToolResult = error ?? step.result ?? `Resultado de ${step.name}.`;
   line({
     type: "user",
     message: {
