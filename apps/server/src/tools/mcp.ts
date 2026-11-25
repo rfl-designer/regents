@@ -148,7 +148,8 @@ export function createMcpEndpoint(): McpEndpoint {
   }
 
   function listening(): Server<unknown> {
-    server ??= Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: handle });
+    // Sem o prazo ocioso do Bun (10 s): uma Ferramenta tem o dela (60 s), e a porta o aplica.
+    server ??= Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 0, fetch: handle });
     return server;
   }
 

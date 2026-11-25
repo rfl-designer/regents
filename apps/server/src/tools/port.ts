@@ -229,6 +229,8 @@ export function createToolPort(deps: {
 
   /** Roda `work` com o prazo da definição; devolve o que ele devolveu ou o motivo da falha. */
   async function execute<T>(def: ToolDefinition, work: (signal: AbortSignal) => Promise<T>, signal: AbortSignal) {
+    // Pedida depois da interrupção (o `abort` já passou e não dispara de novo): nem começa.
+    if (signal.aborted) return { ok: false as const, reason: "a resposta foi interrompida" };
     const own = new AbortController();
     const abort = () => own.abort();
     signal.addEventListener("abort", abort, { once: true });

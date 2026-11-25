@@ -14,8 +14,9 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { AgentDto, AgentToolDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import { schema } from "../src/db/client";
 import { STALL_MS } from "../src/executions";
-import { type ToolDefinition, ToolFailure } from "../src/tools/port";
+import { createToolPort, type ToolDefinition, ToolFailure } from "../src/tools/port";
 import { WORKSPACE_TOOLS } from "../src/tools/workspace";
 import { type RecordedRequest, toolResults } from "./fakes/messages-api";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
@@ -449,6 +450,84 @@ describe("a Articuladora sabe as Ferramentas de cada Agente", () => {
       expect(linha("lince")).toContain("Ferramentas: nenhuma");
       expect(linha("prisma")).toContain("Ferramentas: listar Agentes");
       expect(system).toContain("delegue a quem a tem");
+    },
+    LONGO,
+  );
+});
+
+describe("os usos de uma tentativa refeita", () => {
+  test(
+    'no "Tentar de novo", o Andamento da execução refeita não traz os usos de Ferramenta da que falhou',
+    async () => {
+      const t = await testApp();
+      const { faro, geral } = await workspace(t);
+      await t.as(juliana).put(`/api/agents/${faro.id}/tools/listar_agentes`);
+      const aba = await t.socket(bruno);
+
+      // 1ª tentativa: usa "listar Agentes" e cai (sobrecarga); a 2ª cai também, e a falha é de vez.
+      t.anthropic.reply(
+        { toolUse: [{ id: "toolu_1", name: "listar_agentes", input: {} }] },
+        { status: 529, errorType: "overloaded_error" },
+        { status: 529, errorType: "overloaded_error" },
+      );
+      const origem = await enviar(t, geral.id, "@Faro quem cuida de contratos?");
+      await andamento(aba, origem, (e) => e.state === "retrying");
+      t.clock.advance(10_000);
+      const falha = await andamento(aba, origem, (e) => e.state === "failed");
+
+      t.anthropic.reply({ hang: true });
+      const res = await t.as(bruno).post(`/api/conversations/${geral.id}/executions/${falha.id}/retry`);
+      expect(res.status).toBe(200);
+      const refeita = await andamento(aba, origem, (e) => e.state === "running");
+      expect(refeita).toMatchObject({ id: falha.id, attempt: 1, tools: [] });
+    },
+    LONGO,
+  );
+});
+
+describe("a chamada que chega depois da interrupção", () => {
+  test(
+    "com o sinal da execução já abortado, a Ferramenta nem começa e volta como interrompida",
+    async () => {
+      const t = await testApp();
+      const { faro, geral } = await workspace(t);
+      t.anthropic.reply({ text: "Oi." });
+      const origem = await enviar(t, geral.id, "@Faro oi");
+      await respostaA(t, geral.id, origem);
+      const [execucao] = await t.db.select().from(schema.executions);
+
+      let rodou = 0;
+      const contar: ToolDefinition = {
+        id: "contar",
+        title: "contar",
+        label: "contando",
+        description: "Conta.",
+        origin: "workspace",
+        access: "read",
+        inputSchema: { type: "object", properties: {} },
+        run: async () => {
+          rodou++;
+          return "contado";
+        },
+      };
+      const porta = createToolPort({ db: t.db, clock: t.clock, definitions: [contar] });
+      await porta.grant(faro.id, "contar");
+      const ferramentas = porta.forExecution(
+        {
+          executionId: execucao!.id,
+          attempt: execucao!.attempt,
+          agentId: faro.id,
+          channelId: geral.id,
+          originMessageId: origem.id,
+        },
+        { started: async () => {}, finished: async () => {}, approvalRequested: async () => false },
+      );
+
+      expect(await ferramentas.call("contar", {}, AbortSignal.abort())).toEqual({
+        content: "A Ferramenta contar falhou: a resposta foi interrompida.",
+        isError: true,
+      });
+      expect(rodou).toBe(0);
     },
     LONGO,
   );

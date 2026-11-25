@@ -16,7 +16,7 @@ import { and, eq } from "drizzle-orm";
 import { approvalTtlFromEnv } from "../src/approvals";
 import { schema } from "../src/db/client";
 import { EXCERPT_MAX } from "../src/push";
-import type { WriteTool } from "../src/tools/port";
+import type { ToolDefinition, WriteTool } from "../src/tools/port";
 import { WORKSPACE_TOOLS } from "../src/tools/workspace";
 import { toolResults } from "./fakes/messages-api";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
@@ -898,6 +898,150 @@ describe("a escrita aprovada que não termina", () => {
       const continuacoes = respostas(t).slice(2).map(textoDe).join("\n");
       expect(continuacoes).toContain("Bruno recusou, sem dar motivo");
       expect(continuacoes).toContain("Bruno aprovou, e o Shearim fez: mensagem postada em #anuncios");
+    },
+    LONGO,
+  );
+});
+
+/**
+ * Uma Ferramenta de leitura no catálogo cujo `id`, depois de `armar`, lança uma vez: a próxima
+ * leitura do catálogo (a conferência do alcance na aprovação) cai, como num erro do banco.
+ */
+function catalogoQueCai() {
+  let armada = false;
+  const definition = {
+    title: "consultar o arquivo",
+    label: "consultando o arquivo",
+    description: "Consulta o arquivo morto.",
+    origin: "workspace",
+    access: "read",
+    inputSchema: { type: "object", properties: {} },
+    run: async () => "",
+  } as unknown as ToolDefinition;
+  Object.defineProperty(definition, "id", {
+    get() {
+      if (!armada) return "consultar_arquivo";
+      armada = false;
+      throw new Error("a conexão com o banco caiu");
+    },
+  });
+  return {
+    definition,
+    armar: () => {
+      armada = true;
+    },
+  };
+}
+
+describe("a decisão que não sai como o esperado", () => {
+  test(
+    "um erro inesperado depois de aprovar não prende o Pedido: ele fica com resultado incerto e a resposta continua",
+    async () => {
+      const queda = catalogoQueCai();
+      const t = await testApp({ tools: { definitions: [...WORKSPACE_TOOLS, queda.definition] } });
+      const { geral } = await workspace(t);
+      t.anthropic.reply(
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "A reunião mudou." } }] },
+        { text: "Pode ter saído; confira." },
+      );
+      const origem = await enviar(t, geral.id, "@Faro avisa no #anuncios");
+      const pedido = await pedidoPendente(t, geral.id);
+
+      queda.armar();
+      const aprovado = await aprovar(t, pedido);
+      expect(aprovado.status).toBe(200);
+      const incerto = "erro inesperado ao executar a ação; pode ter sido feita — confira na conversa";
+      expect(await aprovado.json()).toMatchObject({
+        state: "approved",
+        result: null,
+        failure: incerto,
+        uncertain: true,
+      });
+
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Pode ter saído; confira.");
+      expect(textoDe(respostas(t)[1]!)).toContain(`Bruno aprovou, mas o resultado é incerto: ${incerto}`);
+    },
+    LONGO,
+  );
+
+  test(
+    "na recusa, se o anúncio cai, a resposta continua mesmo assim",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t);
+      t.anthropic.reply(
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "A reunião mudou." } }] },
+        { text: "Tudo bem, não avisei." },
+      );
+      const origem = await enviar(t, geral.id, "@Faro avisa no #anuncios");
+      const pedido = await pedidoPendente(t, geral.id);
+
+      const publish = t.events.publish;
+      let falhou = false;
+      t.events.publish = (to, event) => {
+        if (!falhou && event.type === "approval.updated") {
+          falhou = true;
+          throw new Error("o anúncio caiu");
+        }
+        publish.call(t.events, to, event);
+      };
+      expect((await recusar(t, pedido)).status).toBe(500);
+      expect(falhou).toBe(true);
+
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Tudo bem, não avisei.");
+      expect(textoDe(respostas(t)[1]!)).toContain("Bruno recusou, sem dar motivo");
+    },
+    LONGO,
+  );
+
+  test(
+    "o Pedido vencido que a varredura ainda não expirou não se aprova nem se recusa",
+    async () => {
+      const t = await testApp();
+      const { geral, anuncios } = await workspace(t);
+      t.anthropic.reply({
+        toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "A reunião mudou." } }],
+      });
+      await enviar(t, geral.id, "@Faro avisa no #anuncios");
+      const pedido = await pedidoPendente(t, geral.id);
+
+      // O prazo passou sem a varredura (que falhou, atrasou ou estava com o servidor fora): o alarme
+      // continua armado para o prazo antigo, e o Pedido segue pendente no banco.
+      await t.db
+        .update(schema.approvalRequests)
+        .set({ expiresAt: new Date(t.clock.now().getTime() - 1) })
+        .where(eq(schema.approvalRequests.id, pedido.id));
+
+      const aprovado = await aprovar(t, pedido);
+      expect(aprovado.status).toBe(409);
+      expect(await aprovado.json()).toEqual({ error: "expired" });
+      const recusado = await recusar(t, pedido);
+      expect(recusado.status).toBe(409);
+      expect(await recusado.json()).toEqual({ error: "expired" });
+      expect((await mensagens(t, anuncios.id)).some((m) => m.author.kind === "agent")).toBe(false);
+      expect(respostas(t)).toHaveLength(1);
+    },
+    LONGO,
+  );
+
+  test(
+    "aprovado, todos já veem a decisão enquanto a ação roda, sem esperar o fim dela",
+    async () => {
+      const lenta = escritaLenta();
+      const t = await testApp({ tools: { definitions: [...WORKSPACE_TOOLS, lenta.definition] } });
+      const { faro, geral } = await workspace(t);
+      const { origem, pedido } = await pedidoDaEscritaLenta(t, faro.id, geral.id, "Registrei.");
+      const abaDaJuliana = await t.socket(juliana);
+
+      const aprovado = aprovar(t, pedido);
+      await lenta.comecou;
+      const { approval } = await andamentoDoPedido(abaDaJuliana, pedido.id);
+      expect(approval).toMatchObject({ state: "approved", result: null, failure: null });
+
+      lenta.soltar("pedido 1 registrado");
+      expect(await (await aprovado).json()).toMatchObject({ state: "approved", result: "pedido 1 registrado" });
+      expect((await andamentoDoPedido(abaDaJuliana, pedido.id)).approval.result).toBe("pedido 1 registrado");
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Registrei.");
     },
     LONGO,
   );

@@ -5,7 +5,23 @@ import {
   OPEN_STATES,
   type YourAccountDto,
 } from "@shearim/contracts";
-import { type AnyColumn, and, asc, desc, eq, gt, inArray, isNull, lte, min, ne, or, type SQL, sql } from "drizzle-orm";
+import {
+  type AnyColumn,
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNull,
+  lte,
+  min,
+  ne,
+  or,
+  type SQL,
+  sql,
+} from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { type AccountStanding, accountStanding } from "./accounts";
 import type { Agent } from "./agents";
@@ -29,7 +45,7 @@ import { recordFollows } from "./threads";
 import { type ToolPort, toolCallsOf, withoutConnect } from "./tools/port";
 import { readWorkspaceKey } from "./workspace-key";
 
-const { executions, agents, channels, messages, accounts, approvalRequests } = schema;
+const { executions, agents, channels, messages, accounts, approvalRequests, executionToolCalls } = schema;
 type Row = typeof executions.$inferSelect;
 /**
  * O tipo de uma execução: `mention` (Agente mencionado), `dm` (o Agente de uma DM com Agente),
@@ -303,9 +319,18 @@ export function createExecutions(deps: {
    */
   async function backToQueue(job: Row, change: Partial<typeof executions.$inferInsert> = {}) {
     if (await transition(job.id, "queued", { attempt: job.attempt - 1, payer: null, ...change })) {
+      // A tentativa volta a ser usada: os usos da execução descartada não são da refeita.
+      await forgetToolCalls(job.id, job.attempt);
       await publish(job.id);
     }
     wake();
+  }
+
+  /** Apaga os usos de Ferramenta das tentativas a partir de `fromAttempt`, cujo número vai ser reusado. */
+  async function forgetToolCalls(executionId: string, fromAttempt: number) {
+    await db
+      .delete(executionToolCalls)
+      .where(and(eq(executionToolCalls.executionId, executionId), gte(executionToolCalls.attempt, fromAttempt)));
   }
 
   /**
@@ -783,6 +808,8 @@ export function createExecutions(deps: {
    * progresso. A porta grava o uso; aqui ficam o passo e o anúncio do Andamento.
    */
   function toolsOf(job: Row) {
+    // Ferramentas podem rodar em paralelo: a vigia pausa com a primeira e volta só com a última.
+    let toolsRunning = 0;
     const step = async (next: ExecutionStep) => {
       await db
         .update(executions)
@@ -800,10 +827,11 @@ export function createExecutions(deps: {
       },
       {
         async started() {
-          watchdogs.get(job.id)?.pause();
+          if (toolsRunning++ === 0) watchdogs.get(job.id)?.pause();
           await step("tool");
         },
         async finished() {
+          if (--toolsRunning > 0) return;
           watchdogs.get(job.id)?.resume();
           await step("writing");
         },
@@ -1258,6 +1286,7 @@ export function createExecutions(deps: {
         { from: "failed" },
       );
       if (!queued) return undefined;
+      await forgetToolCalls(executionId, 1);
       const dto = await publish(executionId);
       wake();
       return dto;

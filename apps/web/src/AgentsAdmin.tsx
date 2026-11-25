@@ -283,7 +283,8 @@ const ORIGIN_LABEL: Record<Exclude<ToolOrigin, "connector">, string> = {
 const groupOf = (t: AgentToolDto) => (t.connector ? `connector:${t.connector.id}` : t.origin);
 function groupLabel(t: AgentToolDto) {
   if (!t.connector) return ORIGIN_LABEL[t.origin as Exclude<ToolOrigin, "connector">];
-  return `Do Conector ${t.connector.name} (credencial do Workspace)`;
+  const whose = t.connector.credential === "member" ? "credencial de cada Membro" : "credencial do Workspace";
+  return `Do Conector ${t.connector.name} (${whose})`;
 }
 
 /**

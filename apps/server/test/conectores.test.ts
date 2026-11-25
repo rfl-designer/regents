@@ -411,6 +411,31 @@ describe("credencial recusada", () => {
   );
 
   test(
+    "a Ferramenta que sai do catálogo leva a concessão junto: a que volta depois com o mesmo id não chega concedida",
+    async () => {
+      const t = await testApp();
+      const { faro } = await workspace(t);
+      const crm = remoteMcp({ token: TOKEN, tools: CRM_TOOLS });
+      const conector = await adicionarCrm(t, crm.url);
+      const buscar = conector.tools.find((f) => f.name === "buscar_cliente")!.id;
+      expect((await t.as(juliana).put(`/api/agents/${faro.id}/tools/${buscar}`)).status).toBe(200);
+
+      // O servidor tira "buscar_cliente"; depois lança outra, de escrita, que vira o mesmo id.
+      crm.setTools(CRM_TOOLS.filter((f) => f.name !== "buscar_cliente"));
+      await t.as(juliana).get(`/api/connectors/${conector.id}`);
+      crm.setTools([...CRM_TOOLS.filter((f) => f.name !== "buscar_cliente"), { name: "Buscar cliente!" }]);
+      const relido: ConnectorDto = await (await t.as(juliana).get(`/api/connectors/${conector.id}`)).json();
+      expect(relido.tools.find((f) => f.name === "Buscar cliente!")!.id).toBe(buscar);
+
+      expect((await ferramentasDo(t, faro.id)).find((f) => f.id === buscar)).toMatchObject({
+        access: "write",
+        granted: false,
+      });
+    },
+    LONGO,
+  );
+
+  test(
     "um nome novo que daria o mesmo id de um nome que já existia ganha outro id, e o antigo fica com o dele",
     async () => {
       const t = await testApp();

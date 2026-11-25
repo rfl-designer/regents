@@ -1,6 +1,6 @@
 import type { ApprovalRequestDto, RejectApprovalInput } from "@shearim/contracts";
 import type { Server } from "bun";
-import { and, asc, eq, isNull, type SQL } from "drizzle-orm";
+import { and, asc, eq, gt, isNull, type SQL } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import type { Clock } from "./clock";
 import { findVisibleConversation } from "./conversations";
@@ -204,15 +204,27 @@ export function approvalRoutes(deps: {
     if (!row) return c.json({ error: "not_found" }, 404);
     if (row.authorMemberId !== c.get("member").id) return c.json({ error: "not_author" }, 403);
     if (row.state !== "pending") return c.json({ error: "not_pending" }, 409);
+    // Vencido e a varredura ainda não passou (falhou, atrasou, o servidor estava fora): não vale mais.
+    if (row.expiresAt <= clock.now()) return c.json({ error: "expired" }, 409);
     return row;
   }
 
-  /** Passa de pendente para `state`, se ainda está pendente (duas decisões ao mesmo tempo: só uma ganha). */
+  /**
+   * Passa de pendente para `state`, se ainda está pendente e no prazo (duas decisões ao mesmo tempo:
+   * só uma ganha).
+   */
   async function decide(row: Row, change: Partial<typeof approvalRequests.$inferInsert>) {
+    const now = clock.now();
     const updated = await db
       .update(approvalRequests)
-      .set({ ...change, decidedAt: clock.now() })
-      .where(and(eq(approvalRequests.id, row.id), eq(approvalRequests.state, "pending")))
+      .set({ ...change, decidedAt: now })
+      .where(
+        and(
+          eq(approvalRequests.id, row.id),
+          eq(approvalRequests.state, "pending"),
+          gt(approvalRequests.expiresAt, now),
+        ),
+      )
       .returning({ id: approvalRequests.id });
     return updated.length > 0;
   }
@@ -223,31 +235,55 @@ export function approvalRoutes(deps: {
     if (!(await decide(row, { state: "approved" }))) return c.json({ error: "not_pending" }, 409);
     // A ação tem o prazo da Ferramenta (60 s), mais que os 10 s ociosos do Bun: sem isto, o autor veria falha.
     (c.env as Server<unknown> | undefined)?.timeout?.(c.req.raw, 0);
-    // A ação executada é exatamente a aprovada: o hash confere, e o alcance é conferido de novo.
-    const [execution] = await db.select().from(executions).where(eq(executions.id, row.executionId));
-    const outcome =
-      actionHash(row.action) !== row.actionHash
-        ? { ok: false as const, reason: "a ação guardada não confere com a que foi pedida" }
-        : await tools.perform(
-            row.tool,
-            {
-              executionId: row.executionId,
-              attempt: execution!.attempt,
-              agentId: row.agentId,
-              channelId: row.channelId,
-              originMessageId: row.originMessageId,
-            },
-            row.action,
-            post,
-          );
-    await db
-      .update(approvalRequests)
-      .set(outcome.ok ? { result: outcome.result } : { failure: outcome.reason, uncertain: outcome.uncertain ?? false })
-      // Se o servidor reiniciou no meio, a subida já deu o resultado como incerto e continuou.
-      .where(and(eq(approvalRequests.id, row.id), isNull(approvalRequests.result), isNull(approvalRequests.failure)));
-    const approval = await publishApproval(db, events, row.id, "approval.updated");
-    await deps.continueAfter(row.executionId, row.id);
-    return c.json(approval);
+    let outcome: Awaited<ReturnType<ToolPort["perform"]>>;
+    let performing = false;
+    try {
+      // Os outros já veem a decisão enquanto a ação roda (até o prazo dela): sem os botões, sem 409.
+      await publishApproval(db, events, row.id, "approval.updated");
+      // A ação executada é exatamente a aprovada: o hash confere, e o alcance é conferido de novo.
+      const [execution] = await db.select().from(executions).where(eq(executions.id, row.executionId));
+      if (actionHash(row.action) !== row.actionHash) {
+        outcome = { ok: false, reason: "a ação guardada não confere com a que foi pedida" };
+      } else {
+        performing = true;
+        outcome = await tools.perform(
+          row.tool,
+          {
+            executionId: row.executionId,
+            attempt: execution!.attempt,
+            agentId: row.agentId,
+            channelId: row.channelId,
+            originMessageId: row.originMessageId,
+          },
+          row.action,
+          post,
+        );
+      }
+    } catch (err) {
+      // Já aprovado: sem resultado nem falha gravados, o Pedido e a execução ficariam presos.
+      console.error("shearim: a ação aprovada falhou", err);
+      const cause = "erro inesperado ao executar a ação";
+      outcome = performing
+        ? {
+            ok: false,
+            reason: await tools.uncertainReason(row.tool, cause).catch(() => `${cause}; pode ter sido feita`),
+            uncertain: true,
+          }
+        : { ok: false, reason: cause };
+    }
+    try {
+      await db
+        .update(approvalRequests)
+        .set(
+          outcome.ok ? { result: outcome.result } : { failure: outcome.reason, uncertain: outcome.uncertain ?? false },
+        )
+        // Se o servidor reiniciou no meio, a subida já deu o resultado como incerto e continuou.
+        .where(and(eq(approvalRequests.id, row.id), isNull(approvalRequests.result), isNull(approvalRequests.failure)));
+      return c.json(await publishApproval(db, events, row.id, "approval.updated"));
+    } finally {
+      // A resposta continua mesmo se gravar ou anunciar falhou.
+      await deps.continueAfter(row.executionId, row.id);
+    }
   });
 
   routes.post("/conversations/:id/approvals/:approvalId/reject", async (c) => {
@@ -263,9 +299,11 @@ export function approvalRoutes(deps: {
       return c.json({ error: "invalid_input", message: `O motivo tem no máximo ${REASON_MAX} caracteres.` }, 400);
     }
     if (!(await decide(row, { state: "rejected", rejectReason: reason }))) return c.json({ error: "not_pending" }, 409);
-    const approval = await publishApproval(db, events, row.id, "approval.updated");
-    await deps.continueAfter(row.executionId, row.id);
-    return c.json(approval);
+    try {
+      return c.json(await publishApproval(db, events, row.id, "approval.updated"));
+    } finally {
+      await deps.continueAfter(row.executionId, row.id);
+    }
   });
 
   return routes;

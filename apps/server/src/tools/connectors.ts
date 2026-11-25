@@ -29,7 +29,7 @@ import {
   MY_CONNECTORS_PATH,
   type MyConnectorDto,
 } from "@shearim/contracts";
-import { and, asc, eq, isNotNull, lt, lte, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, lt, lte, notInArray, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
@@ -50,7 +50,8 @@ import {
 } from "./connector-login";
 import { type ToolContext, type ToolDefinition, ToolFailure } from "./port";
 
-const { connectors, connectorTools, connectorLogins, memberConnectorCredentials, members, messages } = schema;
+const { agentTools, connectors, connectorTools, connectorLogins, memberConnectorCredentials, members, messages } =
+  schema;
 
 type Connector = typeof connectors.$inferSelect;
 type CatalogRow = typeof connectorTools.$inferSelect;
@@ -590,6 +591,20 @@ export function createConnectors(deps: {
     }
     await tx.delete(connectorTools).where(eq(connectorTools.connectorId, connector.id));
     if (rows.length) await tx.insert(connectorTools).values(rows);
+    // A concessão de uma Ferramenta que saiu vai com ela: um nome novo que pegue o id não a herda.
+    await tx.delete(agentTools).where(
+      and(
+        eq(agentTools.connectorId, connector.id),
+        ...(rows.length
+          ? [
+              notInArray(
+                agentTools.tool,
+                rows.map((r) => r.tool),
+              ),
+            ]
+          : []),
+      ),
+    );
   }
 
   async function toDto(connector: Connector, catalogError: string | null = null): Promise<ConnectorDto> {

@@ -345,3 +345,76 @@ describe("a troca da Conta para a Chave no meio", () => {
     LONGO,
   );
 });
+
+/** Um `tools/call` direto no endpoint da execução, como o Claude Code faria. */
+function chamarNoEndpoint({ url, token }: { url: string; token: string }, name: string) {
+  return fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: {} } }),
+  }).then(async (res) => ({
+    status: res.status,
+    body: (await res.json()) as { result?: { content: { text: string }[]; isError?: boolean } },
+  }));
+}
+
+/** Uma leitura de teste em que cada chamada só termina quando o teste solta aquela chamada. */
+function ferramentaPorChamada() {
+  const soltas: ((texto: string) => void)[] = [];
+  const definition: ToolDefinition = {
+    id: "consultar_arquivo",
+    title: "consultar o arquivo",
+    label: "consultando o arquivo",
+    description: "Consulta o arquivo morto.",
+    origin: "workspace",
+    access: "read",
+    inputSchema: { type: "object", properties: {} },
+    timeoutMs: 10 * 60_000,
+    run: () => new Promise<string>((resolve) => soltas.push(resolve)),
+  };
+  return { definition, soltas };
+}
+
+/** O Andamento da única execução aberta do #geral, como se lê ao recarregar. */
+async function aberta(t: TestApp, channelId: string) {
+  const [execucao] = (await (
+    await t.as(juliana).get(`/api/channels/${channelId}/executions`)
+  ).json()) as ExecutionDto[];
+  return execucao!;
+}
+
+describe("Ferramentas em paralelo pelo endpoint MCP", () => {
+  test(
+    "duas Ferramentas ao mesmo tempo: a vigia e o passo só voltam a escrever quando a última termina",
+    async () => {
+      const ferramenta = ferramentaPorChamada();
+      const t = await testApp({ tools: { definitions: [...WORKSPACE_TOOLS, ferramenta.definition] } });
+      const { faro, geral } = await workspace(t);
+      await t.as(juliana).put(`/api/agents/${faro.id}/tools/consultar_arquivo`);
+      t.claude.script({ run: { kind: "hang" } });
+
+      await enviar(t, geral.id, "@Faro acha os contratos de 2019 e 2020?");
+      const [resposta] = await eventually("o claude -p subir", async () => execucoes(t)[0] && execucoes(t), 10_000);
+      const endpoint = endpointDe(resposta!);
+      const primeira = chamarNoEndpoint(endpoint, "consultar_arquivo");
+      const segunda = chamarNoEndpoint(endpoint, "consultar_arquivo");
+      await eventually("as duas começarem", async () => ferramenta.soltas.length === 2, 10_000);
+
+      ferramenta.soltas[0]!("contrato-2019.pdf");
+      expect((await primeira).status).toBe(200);
+      // A segunda ainda roda: o passo continua o da Ferramenta, e a vigia continua pausada.
+      expect(await aberta(t, geral.id)).toMatchObject({ state: "running", step: "tool" });
+      t.clock.advance(STALL_MS + 60_000);
+      expect(await aberta(t, geral.id)).toMatchObject({ state: "running", step: "tool", reason: null });
+
+      ferramenta.soltas[1]!("contrato-2020.pdf");
+      expect((await segunda).status).toBe(200);
+      expect(await aberta(t, geral.id)).toMatchObject({ state: "running", step: "writing" });
+    },
+    LONGO,
+  );
+});
