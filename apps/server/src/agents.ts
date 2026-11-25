@@ -6,22 +6,26 @@ import {
   type CreateAgentInput,
   type UpdateAgentInput,
 } from "@shearim/contracts";
-import { and, asc, desc, eq, getTableColumns, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, inArray, isNull, ne, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { withBuiltinText } from "./articuladora";
 import type { Clock } from "./clock";
+import { type Channel, toChannelDto } from "./conversations";
 import { type Db, isUuid, schema } from "./db/client";
+import type { EventHub } from "./events";
+import type { Executions } from "./executions";
 import type { GitHub } from "./github/connector";
 import { budgetOf, type KeyLedger, keySpend, monthOf, parseBudget } from "./key-budget";
 import type { Env } from "./members";
 import { claimHandle, handleBase } from "./mention-handles";
+import { audienceOf } from "./participation";
 import type { ToolPort } from "./tools/port";
 
 export type Agent = typeof schema.agents.$inferSelect;
 /** O Agente com o identificador de Menção dele (`mention_handles`). */
 export type AgentWithHandle = Agent & { handle: string };
 
-const { agents, mentionHandles } = schema;
+const { agents, mentionHandles, channels, channelAgents, agentTools, agentGithubRepositories, memoryItems } = schema;
 
 const NAME_MAX = 40;
 /** Uma foto pequena: `data:` URL de imagem com até ~300 KB. */
@@ -40,6 +44,9 @@ export function agentRoutes(deps: {
   github?: Pick<GitHub, "agentRepositories">;
   /** O Admin mudou o orçamento de um Agente: quem espera na fila por quem pague decide de novo. */
   onBudgetChanged?: () => void;
+  /** Para apagar um Agente (#65): o que ele tem aberto é cancelado, e todos ficam sabendo. */
+  executions: Pick<Executions, "cancelAgent">;
+  events: EventHub;
 }) {
   const { db, clock, ledger } = deps;
   const toolsOf = async (id: string) => (await deps.tools.grantsOf([id])).get(id) ?? [];
@@ -113,7 +120,7 @@ export function agentRoutes(deps: {
   routes.patch("/agents/:id", async (c) => {
     if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
     const id = c.req.param("id");
-    const [current] = isUuid(id) ? await db.select().from(agents).where(eq(agents.id, id)) : [];
+    const [current] = await findAgent(db, id);
     if (!current) return c.json({ error: "not_found" }, 404);
     const input = ((await c.req.json().catch(() => null)) ?? {}) as Partial<Record<keyof UpdateAgentInput, unknown>>;
     const invalid = (message: string) => c.json({ error: "invalid_input", message }, 400);
@@ -164,7 +171,13 @@ export function agentRoutes(deps: {
         const [taken] = await tx
           .select({ id: agents.id })
           .from(agents)
-          .where(and(sql`lower(${agents.name}) = lower(${change.name})`, ne(agents.id, current.id)));
+          .where(
+            and(
+              sql`lower(${agents.name}) = lower(${change.name})`,
+              ne(agents.id, current.id),
+              isNull(agents.deletedAt),
+            ),
+          );
         if (taken) return undefined;
       }
       const [row] = Object.keys(change).length
@@ -195,7 +208,80 @@ export function agentRoutes(deps: {
     );
   });
 
+  /**
+   * O Admin apaga um Agente (#65; a Articuladora não: `403 builtin_locked`). Nada do histórico das
+   * conversas some: a linha dele fica, marcada `deleted_at`, porque as mensagens, o Andamento, os
+   * Desfechos, os Pedidos de aprovação e os gastos apontam para ela. Ele sai das listas, do
+   * identificador de Menção (o nome e o `@` voltam a ficar livres) e dos Canais; as DMs com ele
+   * ficam, e o que chegar ali diz que ele foi apagado. As Ferramentas concedidas e a lista de
+   * repositórios saem. O que ele tinha aberto é cancelado. A Memória do Agente sai junto (é o
+   * único apagamento de Memória, spec #60); a Memória da Conversa que ele gerou fica.
+   */
+  routes.delete("/agents/:id", async (c) => {
+    if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
+    const [agent] = await findAgent(db, c.req.param("id"));
+    if (!agent) return c.json({ error: "not_found" }, 404);
+    if (agent.builtin) {
+      return c.json({ error: "builtin_locked", message: "A Articuladora é do Shearim e não se apaga." }, 403);
+    }
+    const left = await db.transaction(async (tx) => {
+      await tx.update(agents).set({ deletedAt: clock.now() }).where(eq(agents.id, agent.id));
+      await tx.delete(mentionHandles).where(eq(mentionHandles.agentId, agent.id));
+      await tx.delete(agentTools).where(eq(agentTools.agentId, agent.id));
+      await tx.delete(agentGithubRepositories).where(eq(agentGithubRepositories.agentId, agent.id));
+      // Sai dos Canais; numa DM, fica (é com quem a DM foi).
+      return tx
+        .delete(channelAgents)
+        .where(
+          and(
+            eq(channelAgents.agentId, agent.id),
+            inArray(
+              channelAgents.channelId,
+              tx
+                .select({ id: channels.id })
+                .from(channels)
+                .where(inArray(channels.kind, ["public", "private"])),
+            ),
+          ),
+        )
+        .returning({ channelId: channelAgents.channelId });
+    });
+    // Depois de cancelada a extração em andamento, nada mais guarda na Memória dele.
+    await deps.executions.cancelAgent(agent.id);
+    await db.delete(memoryItems).where(and(eq(memoryItems.scope, "agent"), eq(memoryItems.agentId, agent.id)));
+
+    deps.events.publish("everyone", { type: "agent.deleted", agentId: agent.id });
+    const changed = left.length
+      ? ((await db
+          .select()
+          .from(channels)
+          .where(
+            inArray(
+              channels.id,
+              left.map((l) => l.channelId),
+            ),
+          )) as Channel[])
+      : [];
+    for (const channel of changed) {
+      deps.events.publish(await audienceOf(db, channel), {
+        type: "channel.updated",
+        channel: await toChannelDto(db, channel),
+      });
+    }
+    return c.body(null, 204);
+  });
+
   return routes;
+}
+
+/** O Agente `id`, se existe e não foi apagado. */
+export function findAgent(db: Db, id: string) {
+  return isUuid(id)
+    ? db
+        .select()
+        .from(agents)
+        .where(and(eq(agents.id, id), isNull(agents.deletedAt)))
+    : Promise.resolve([]);
 }
 
 /**

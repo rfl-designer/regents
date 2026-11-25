@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { type Db, isUuid, schema } from "../db/client";
 import { adminOnly, type Env } from "../members";
@@ -14,7 +14,10 @@ export function agentToolRoutes(deps: { db: Db; tools: ToolPort }) {
 
   async function agentExists(id: string) {
     if (!isUuid(id)) return false;
-    const [row] = await db.select({ id: schema.agents.id }).from(schema.agents).where(eq(schema.agents.id, id));
+    const [row] = await db
+      .select({ id: schema.agents.id })
+      .from(schema.agents)
+      .where(and(eq(schema.agents.id, id), isNull(schema.agents.deletedAt)));
     return Boolean(row);
   }
 

@@ -98,6 +98,7 @@ describe("a extração depois da resposta", () => {
       scope: "conversation",
       conversationId: produto.id,
       origin: { messageId: origem.id, threadRootId: null, author: "Juliana", excerpt: origem.body },
+      agent: null,
       text: "O preço sobe em janeiro.",
       createdBy: "extraction",
       state: "active",

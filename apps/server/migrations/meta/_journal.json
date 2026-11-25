@@ -239,6 +239,13 @@
       "when": 1795616401580,
       "tag": "0033_memoria-ligada-por-agente",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1795629569231,
+      "tag": "0034_agente-apagado",
+      "breakpoints": true
     }
   ]
 }

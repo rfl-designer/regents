@@ -30,7 +30,8 @@
  * A extração da Memória (reconhecida pelo schema, `operacoes`) não guarda nada, a não ser que a
  * mensagem de pessoa que o Agente respondeu traga `[lembrar: <texto>]`: aí ela guarda o texto na
  * Memória da Conversa. Com `[substituir: <trecho> => <texto>]`, ela substitui o item da Memória que
- * entrou na resposta e contém o trecho.
+ * entrou na resposta e contém o trecho. Com `[lição: <texto>]`, guarda o texto na Memória do Agente
+ * que respondeu (#65).
  *
  * O GitHub é o falso dos testes do servidor (`test/fakes/github-api.ts`), com `time/site` e
  * `time/infra` na conta do time: criar o App e instalá-lo passam por ele (o "navegador do Admin"
@@ -122,6 +123,9 @@ function lembrar(req: RecordedRequest): FakeReply {
   const pessoas = lastUserText(req.body).split("## A resposta de")[0] ?? "";
   const ultima = pessoas.trim().split("\n\n").at(-1) ?? "";
   const texto = ultima.match(/\[lembrar: ([^\]]+)\]/)?.[1];
+  // `[lição: …]`: uma correção ao Agente que respondeu, na Memória do Agente (#65).
+  const licao = ultima.match(/\[lição: ([^\]]+)\]/)?.[1];
+  if (licao) return { json: { operacoes: [{ acao: "criar", escopo: "agente", texto: licao }] }, delayMs: 0 };
   const troca = ultima.match(/\[substituir: ([^\]]+?) => ([^\]]+)\]/);
   if (troca) {
     // A Memória que entrou na resposta vem como "- [id] texto", antes das mensagens.

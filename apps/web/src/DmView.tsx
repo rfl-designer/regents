@@ -17,6 +17,8 @@ function dmHint(dm: DmDto) {
 export function DmView({ dm, me, focus }: { dm: DmDto; me: MeDto; focus?: string }) {
   const title = dmTitle(dm, me);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState<string | null>(null);
+  const agent = dm.participants.find((p) => p.kind === "agent");
   return (
     <main className="channel">
       <header className="channel-header">
@@ -26,6 +28,11 @@ export function DmView({ dm, me, focus }: { dm: DmDto; me: MeDto; focus?: string
           <button type="button" className="link" onClick={() => setMemoryOpen((v) => !v)}>
             Memória
           </button>
+          {agent && (
+            <button type="button" className="link" onClick={() => setAgentOpen((v) => (v ? null : agent.id))}>
+              Ver Agente
+            </button>
+          )}
         </div>
       </header>
       <Conversation
@@ -35,6 +42,8 @@ export function DmView({ dm, me, focus }: { dm: DmDto; me: MeDto; focus?: string
         focus={focus}
         memoryOpen={memoryOpen}
         onCloseMemory={() => setMemoryOpen(false)}
+        agentOpen={agentOpen}
+        onCloseAgent={() => setAgentOpen(null)}
       />
     </main>
   );

@@ -157,7 +157,13 @@ export function conversationRoutes(deps: {
     if (!channel) return c.json({ error: "not_found" }, 404);
     const input = (await c.req.json().catch(() => null)) as Partial<AddAgentInput> | null;
     const agentId = typeof input?.agentId === "string" && isUuid(input.agentId) ? input.agentId : undefined;
-    const [agent] = agentId ? await db.select({ id: agents.id }).from(agents).where(eq(agents.id, agentId)) : [];
+    // O Agente apagado (#65) não entra mais em Canal.
+    const [agent] = agentId
+      ? await db
+          .select({ id: agents.id })
+          .from(agents)
+          .where(and(eq(agents.id, agentId), isNull(agents.deletedAt)))
+      : [];
     if (!agent) return c.json({ error: "invalid_input", message: "Esse Agente não existe no Workspace." }, 400);
 
     if (await addAgent(db, channel.id, agent.id, clock.now())) await publishChannel(channel);

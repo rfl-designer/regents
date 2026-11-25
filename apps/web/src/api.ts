@@ -182,6 +182,10 @@ export const api = {
   updateAgent: (agentId: string, input: UpdateAgentInput) =>
     call<AgentDto>(`/api/agents/${agentId}`, json("PATCH", input)),
   agents: () => call<AgentDto[]>("/api/agents"),
+  /** A Memória do Agente: só os itens cuja conversa de origem quem olha vê (#65). */
+  agentMemory: (agentId: string) => call<MemoryItemDto[]>(`/api/agents/${agentId}/memory`),
+  /** Só o Admin: a Memória do Agente sai junto; as mensagens e a Memória da Conversa ficam. */
+  deleteAgent: (agentId: string) => call<void>(`/api/agents/${agentId}`, { method: "DELETE" }),
   agentTools: (agentId: string) => call<AgentToolDto[]>(`/api/agents/${agentId}/tools`),
   setAgentTool: (agentId: string, toolId: string, granted: boolean) =>
     call<AgentToolDto[]>(`/api/agents/${agentId}/tools/${toolId}`, { method: granted ? "PUT" : "DELETE" }),

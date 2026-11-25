@@ -73,6 +73,8 @@ export type ExecutionKind = Row["kind"];
 
 /** Vigia (ADR 0003): quanto um passo pode ficar sem progresso antes de virar falha. */
 export const STALL_MS = 2 * 60_000;
+/** O motivo do que o Agente apagado tinha aberto, e do que chega para ele depois (#65). */
+export const AGENT_DELETED_REASON = "o Agente foi apagado";
 /** A nova tentativa automática sai 10 s depois da falha. */
 export const RETRY_DELAY_MS = 10_000;
 /** No `SIGTERM`, quanto o dreno espera o que está rodando terminar. */
@@ -238,6 +240,11 @@ export interface Executions {
    * removeu), com o motivo à vista de quem vê a conversa. Devolve as canceladas.
    */
   cancelAuthoredBy(memberId: string, reason: string): Promise<ExecutionDto[]>;
+  /**
+   * Cancela, pelo Shearim, tudo o que o Agente ainda tem aberto (o Admin o apagou, #65), a
+   * extração da Memória inclusive, com `AGENT_DELETED_REASON`. Devolve as canceladas.
+   */
+  cancelAgent(agentId: string): Promise<ExecutionDto[]>;
   /**
    * "Tentar de novo" de uma falha: refaz só esta execução (o passo que falhou), do começo, com
    * o contexto relido e o pagador decidido de novo pela mesma tabela de quem paga. Devolve
@@ -492,6 +499,8 @@ export function createExecutions(deps: {
    * o porquê ligado à Conta dele.
    */
   async function choosePayer(job: Row, agent: Agent): Promise<Choice> {
+    // O Agente apagado não age (#65): o que chegar para ele (numa DM com ele) diz por quê.
+    if (agent.deletedAt) return { kind: "none", reason: AGENT_DELETED_REASON };
     const [author] = await db
       .select({ memberId: messages.authorMemberId, account: accounts })
       .from(messages)
@@ -837,6 +846,7 @@ export function createExecutions(deps: {
       const ids = await saveOperations(tx, {
         executionId: job.id,
         sourceExecutionId: job.sourceExecutionId!,
+        agentId: job.agentId,
         conversationId: job.channelId,
         originMessageId: job.originMessageId,
         operations,
@@ -1439,6 +1449,8 @@ export function createExecutions(deps: {
         ),
         reason,
       ),
+
+    cancelAgent: (agentId) => cancelWhere(eq(executions.agentId, agentId), AGENT_DELETED_REASON),
 
     async retry(executionId) {
       const queued = await transition(

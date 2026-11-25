@@ -1,4 +1,4 @@
-import { and, desc, eq, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, type SQL } from "drizzle-orm";
 import { type Db, schema } from "../db/client";
 import { SEARCH_MEMORY_TITLE } from "./search";
 
@@ -9,9 +9,10 @@ const { memoryItems } = schema;
  * `system` depois das Instruções do Canal e antes de "quem é quem", com a precedência dita ao
  * modelo e um orçamento fixo da Instalação (`SHEARIM_MEMORY_SUMMARY_CHARS`).
  *
- * Entram a Memória do Workspace (#66) e a da Conversa atual (com as Threads, o mesmo
- * `channelId`). A ordem é Workspace → Conversa → Agente, cada escopo um grupo de `memorySummary`;
- * a Memória da Conversa de outras conversas nunca entra aqui (só pela busca).
+ * Entram, nesta ordem, cada uma num grupo: a Memória do Workspace (#66), a da Conversa atual
+ * (com as Threads, o mesmo `channelId`) e a Memória do Agente que responde, das conversas de
+ * origem que ele alcança (`agentOrigins`, #65). A Memória da Conversa de outras conversas nunca
+ * entra aqui (só pela busca).
  */
 
 /** O orçamento do resumo, em caracteres das linhas dos itens, se a Instalação não ajusta. */
@@ -39,12 +40,26 @@ const PRECEDENCE =
   "O que os Agentes guardaram de conversas anteriores. O Contexto do Workspace, as Instruções do Canal e as suas instruções valem acima da Memória: quando se contradizem, siga-os.";
 
 /**
- * O resumo da Memória para uma resposta na conversa `conversationId`, dentro de `budget`
- * caracteres: a Memória do Workspace, depois a da Conversa (com as Threads), cada uma um grupo.
- * Os grupos dividem o mesmo orçamento, na ordem: o primeiro item que não cabe fecha o resumo, e
- * ele e o resto (deste e dos grupos de depois) ficam em `left`.
+/**
+ * As conversas de origem cuja Memória do Agente entra numa resposta na conversa `conversationId`.
+ * Por ora, só ela mesma (#65). O #68 troca isto pelo alcance da resposta (ADR 0012), o mesmo das
+ * Ferramentas do Workspace: `reachOf(db, { channelId, originMessageId }).conversations` (de
+ * `tools/reach.ts`), calculado na hora.
  */
-export async function memorySummary(db: Db, input: { conversationId: string; budget: number }): Promise<MemorySummary> {
+function agentOrigins(input: { conversationId: string }): string[] {
+  return [input.conversationId];
+}
+
+/**
+ * O resumo da Memória para uma resposta do Agente `agentId` na conversa `conversationId`, dentro
+ * de `budget` caracteres: a Memória do Workspace, depois a da Conversa (com as Threads), depois a
+ * do Agente, cada uma um grupo. Os grupos dividem o mesmo orçamento, na ordem: o primeiro item que
+ * não cabe fecha o resumo, e ele e o resto (deste e dos grupos de depois) ficam em `left`.
+ */
+export async function memorySummary(
+  db: Db,
+  input: { conversationId: string; agentId: string; budget: number },
+): Promise<MemorySummary> {
   const groups = [
     {
       title: "Memória do Workspace (vale em todo o Workspace), da mais antiga para a mais nova:",
@@ -57,6 +72,19 @@ export async function memorySummary(db: Db, input: { conversationId: string; bud
       newestFirst: await activeNewestFirst(
         db,
         and(eq(memoryItems.scope, "conversation"), eq(memoryItems.conversationId, input.conversationId)),
+      ),
+    },
+    {
+      title:
+        "Memória do Agente (o seu jeito de trabalhar: lições e correções que as pessoas deram a você), da mais antiga para a mais nova:",
+      extractable: true,
+      newestFirst: await activeNewestFirst(
+        db,
+        and(
+          eq(memoryItems.scope, "agent"),
+          eq(memoryItems.agentId, input.agentId),
+          inArray(memoryItems.conversationId, agentOrigins(input)),
+        ),
       ),
     },
   ];

@@ -4,7 +4,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { type Db, isUuid, schema, type Tx } from "../db/client";
 import type { EventHub } from "../events";
 import type { Member } from "../members";
-import { audienceOf, canSee } from "../participation";
+import { audienceOf, canSee, seenBy } from "../participation";
 
 const { memoryItems, messages, members, agents, channels } = schema;
 
@@ -19,18 +19,27 @@ export const EXCERPT_LENGTH = 200;
 
 /**
  * Grava, na transação `tx`, os itens que a extração `executionId` tirou da troca da mensagem de
- * origem `originMessageId`, na Memória da Conversa `conversationId`. Devolve os ids, na ordem.
+ * origem `originMessageId`, na conversa `conversationId`: na Memória da Conversa ou na Memória do
+ * Agente `agentId` (que respondeu), como cada um pede. Devolve os ids, na ordem.
  */
 export async function insertExtracted(
   tx: Db | Tx,
-  input: { conversationId: string; originMessageId: string; executionId: string; texts: readonly string[]; now: Date },
+  input: {
+    conversationId: string;
+    originMessageId: string;
+    agentId: string;
+    executionId: string;
+    items: readonly { scope: "conversation" | "agent"; text: string }[];
+    now: Date;
+  },
 ): Promise<string[]> {
-  if (input.texts.length === 0) return [];
-  const rows = input.texts.map((text) => ({
+  if (input.items.length === 0) return [];
+  const rows = input.items.map(({ scope, text }) => ({
     id: crypto.randomUUID(),
-    scope: "conversation" as const,
+    scope,
     conversationId: input.conversationId,
     originMessageId: input.originMessageId,
+    agentId: scope === "agent" ? input.agentId : null,
     text,
     createdBy: "extraction" as const,
     executionId: input.executionId,
@@ -170,6 +179,7 @@ export function promoteItem(db: Db, input: { id: string; by: Pick<Member, "id">;
 }
 
 const originAgent = alias(agents, "origin_agent");
+const ownerAgent = alias(agents, "owner_agent");
 
 /** Os itens que atendem a `where`, do mais novo para o mais velho, como quem vê a origem os vê. */
 export async function selectMemory(db: Db | Tx, where: SQL | undefined): Promise<MemoryItemDto[]> {
@@ -179,14 +189,16 @@ export async function selectMemory(db: Db | Tx, where: SQL | undefined): Promise
       origin: { id: messages.id, threadRootId: messages.threadRootId, body: messages.body },
       memberName: members.displayName,
       agentName: originAgent.name,
+      owner: { id: ownerAgent.id, name: ownerAgent.name },
     })
     .from(memoryItems)
     .leftJoin(messages, eq(messages.id, memoryItems.originMessageId))
     .leftJoin(members, eq(members.id, messages.authorMemberId))
     .leftJoin(originAgent, eq(originAgent.id, messages.authorAgentId))
+    .leftJoin(ownerAgent, eq(ownerAgent.id, memoryItems.agentId))
     .where(where)
     .orderBy(desc(memoryItems.seq));
-  return rows.map(({ item, origin, memberName, agentName }) => ({
+  return rows.map(({ item, origin, memberName, agentName, owner }) => ({
     id: item.id,
     scope: item.scope,
     conversationId: item.conversationId,
@@ -198,6 +210,7 @@ export async function selectMemory(db: Db | Tx, where: SQL | undefined): Promise
           excerpt: clip(origin.body),
         }
       : null,
+    agent: owner?.id ? { id: owner.id, name: owner.name } : null,
     text: item.text,
     createdBy: item.createdBy,
     state: item.state,
@@ -208,14 +221,28 @@ export async function selectMemory(db: Db | Tx, where: SQL | undefined): Promise
 }
 
 /**
- * A Memória da Conversa `conversationId` (com as Threads), ativos e arquivados, do mais novo para
- * o mais velho, com os itens dela promovidos à Memória do Workspace. Quem chama já conferiu que
- * quem olha vê a conversa.
+ * A Memória nascida na conversa `conversationId` (com as Threads), ativos e arquivados, do mais
+ * novo para o mais velho: a Memória da Conversa, os itens dela promovidos à Memória do Workspace e
+ * a Memória do Agente cuja origem é ela (o Andamento da mensagem de origem mostra toda escrita da
+ * extração). Quem chama já conferiu que quem olha vê a conversa, e então vê a origem de todos.
  */
 export function conversationMemory(db: Db, conversationId: string) {
+  return selectMemory(db, eq(memoryItems.conversationId, conversationId));
+}
+
+/**
+ * A Memória do Agente `agentId` como `viewerId` a vê (a tela do Agente): só os itens cuja
+ * conversa de origem ele vê (ADR 0012), Admin inclusive. Ativos e arquivados, do mais novo para o
+ * mais velho.
+ */
+export function agentMemory(db: Db, agentId: string, viewerId: string) {
   return selectMemory(
     db,
-    and(inArray(memoryItems.scope, ["conversation", "workspace"]), eq(memoryItems.conversationId, conversationId)),
+    and(
+      eq(memoryItems.scope, "agent"),
+      eq(memoryItems.agentId, agentId),
+      seenBy(db, viewerId, memoryItems.conversationId),
+    ),
   );
 }
 
