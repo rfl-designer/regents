@@ -60,8 +60,6 @@ describe("Memória do Workspace", () => {
 
     await screen.getByRole("button", "Memória do Workspace").tap();
     const doWorkspace = screen.getByRole("list", "Itens da Memória do Workspace");
-    await expect(doWorkspace.getByRole("listitem").filter({ hasText: fato })).toContainText(
-      `de Pessoa Dev: “@Memo`,
-    );
+    await expect(doWorkspace.getByRole("listitem").filter({ hasText: fato })).toContainText(`de Pessoa Dev: “@Memo`);
   });
 });
