@@ -20,8 +20,8 @@
  * Pedido de aprovação; a continuação responde o padrão.
  *
  * Sobe também um CRM falso (servidor MCP remoto, `startRemoteMcp`) que aceita o token `crm-e2e`, com
- * a leitura `buscar_cliente`; o endereço e o token ficam em `.e2e/crm-<PORT>.json`, para o teste adicionar o
- * Conector. Com `[crm]`, o Agente que tem a Ferramenta dele a pede, e a resposta seguinte sai bem
+ * a leitura `buscar_cliente`, e oferece login (OAuth: o `/authorize` dele aprova na hora); o
+ * endereço e o token ficam em `.e2e/crm-<PORT>.json`, para o teste adicionar o Conector. Com `[crm]`, o Agente que tem a Ferramenta dele a pede, e a resposta seguinte sai bem
  * devagar (2 s por pedaço), para o Andamento com o uso dela ficar à vista.
  *
  * O roteamento da Articuladora (o pedido com `output_config`) nunca falha: uma mensagem com
@@ -52,6 +52,8 @@ import { startRemoteMcp } from "../apps/server/test/fakes/remote-mcp";
 
 const crm = startRemoteMcp({
   token: "crm-e2e",
+  // Ele também oferece login (OAuth): "Ligar pelo login" vai ao `/authorize` dele e volta ao app.
+  oauth: {},
   tools: [
     {
       name: "buscar_cliente",

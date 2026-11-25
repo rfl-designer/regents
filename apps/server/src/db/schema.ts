@@ -667,6 +667,15 @@ export const connectors = pgTable(
     /** `ok` ou `refused`. */
     credentialState: text().notNull(),
     refusedAt: timestamp({ withTimezone: true }),
+    /**
+     * Credencial do Workspace ligada pelo login do servidor (OAuth, #56): o token de renovação, o
+     * cliente registrado e os metadados do servidor de autorização, em JSON cifrado. Sem login
+     * (token colado), nulos.
+     */
+    oauthCiphertext: text(),
+    oauthIv: text(),
+    /** Quando o token de acesso do login vence; a renovação vem antes. Nulo: não vence (ou colado). */
+    expiresAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull(),
   },
   (t) => [uniqueIndex("connectors_name_lower").on(sql`lower(${t.name})`)],
@@ -691,10 +700,37 @@ export const memberConnectorCredentials = pgTable(
     /** `ok` ou `refused`. */
     state: text().notNull(),
     refusedAt: timestamp({ withTimezone: true }),
+    /** Ligada pelo login do servidor (OAuth, #56): como em `connectors`. Colada: nulos. */
+    oauthCiphertext: text(),
+    oauthIv: text(),
+    expiresAt: timestamp({ withTimezone: true }),
     connectedAt: timestamp({ withTimezone: true }).notNull(),
   },
   (t) => [primaryKey({ columns: [t.connectorId, t.memberId] })],
 );
+
+/**
+ * Os logins de Conector em andamento (#56): o `state` que o servidor de autorização devolve no
+ * retorno, quem começou (só ele termina), para quê (`create`: adicionar o Conector; `workspace`:
+ * religar a credencial do Workspace; `member`: a credencial do Membro) e, cifrado, o verificador
+ * PKCE, o cliente registrado e os metadados. O retorno consome a linha; vale por pouco tempo.
+ */
+export const connectorLogins = pgTable("connector_logins", {
+  state: text().primaryKey(),
+  memberId: uuid()
+    .notNull()
+    .references(() => members.id, { onDelete: "cascade" }),
+  purpose: text().notNull(),
+  connectorId: uuid().references(() => connectors.id, { onDelete: "cascade" }),
+  /** Só no `create`: o Conector que o retorno adiciona. */
+  name: text(),
+  url: text().notNull(),
+  credentialMode: text(),
+  redirectUri: text().notNull(),
+  secretCiphertext: text().notNull(),
+  secretIv: text().notNull(),
+  createdAt: timestamp({ withTimezone: true }).notNull(),
+});
 
 /**
  * O catálogo de cada Conector, como o `tools/list` dele o devolveu da última vez (relido quando o

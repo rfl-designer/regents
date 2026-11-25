@@ -51,7 +51,7 @@ describe("Conector com a credencial de cada Membro", () => {
     await app.open("/");
     await screen.getByRole("button", "Meus Conectores").tap();
     const item = screen.getByRole("listitem", `Conector ${nome}`);
-    await expect(item).toContainText("Ligado com o seu token.");
+    await expect(item).toContainText("Ligado com a sua credencial.");
     await item.getByRole("button", "Desligar").tap();
     await expect(item).toContainText("Desligado");
 
@@ -73,7 +73,7 @@ describe("Conector com a credencial de cada Membro", () => {
     await app.open("/perfil/conectores");
     const deNovo = screen.getByRole("listitem", `Conector ${nome}`);
     await deNovo.getByLabel(`Seu token do ${nome}`).fill(token);
-    await deNovo.getByRole("button", "Ligar").tap();
-    await expect(deNovo).toContainText("Ligado com o seu token.");
+    await deNovo.getByRole("button", "Ligar com o token").tap();
+    await expect(deNovo).toContainText("Ligado com a sua credencial.");
   });
 });

@@ -1,6 +1,7 @@
 import type { MyConnectorDto } from "@shearim/contracts";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { ApiFailure, api } from "./api";
+import { goToLogin, loginReturn } from "./connector-login";
 import { dateTimeShort } from "./format";
 import { useServerEvents } from "./live";
 
@@ -11,12 +12,13 @@ function messageOf(err: unknown, fallback: string) {
 
 /**
  * Perfil › Conectores: os Conectores que pedem a credencial de cada Membro. O Membro liga a dele
- * colando um token (fica cifrado e não volta) e desliga quando quiser. Sem ela, as Ferramentas do
+ * pelo login do servidor, quando ele oferece, ou colando um token (fica cifrado e não volta) e desliga quando quiser. Sem ela, as Ferramentas do
  * Conector ficam indisponíveis nas mensagens dele; a recusa do sistema de fora aparece aqui.
  */
 export function MyConnectors() {
   const [list, setList] = useState<MyConnectorDto[] | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const [back] = useState(loginReturn);
   const load = useCallback(() => {
     api.myConnectors().then(setList, () => setLoadError(true));
   }, []);
@@ -34,6 +36,16 @@ export function MyConnectors() {
         Estes Conectores usam a credencial de cada Membro: quando você fala com um Agente que tem as Ferramentas deles,
         ele alcança o que o seu token alcança, e o Andamento mostra a todos que usou o seu.
       </p>
+      {back && "ok" in back && (
+        <p className="hint" role="status">
+          Login concluído: a sua credencial ficou ligada.
+        </p>
+      )}
+      {back && "error" in back && (
+        <p className="error" role="alert">
+          {back.error}
+        </p>
+      )}
       {loadError && (
         <p className="error" role="alert">
           Não foi possível carregar os Conectores.
@@ -76,6 +88,11 @@ function MyConnectorItem(props: { connector: MyConnectorDto; onChanged(c: MyConn
       setToken("");
     }, "O token não foi gravado.");
   };
+  const login = () =>
+    act(
+      async () => goToLogin((await api.connectMineLogin(c.id, location.origin)).authorizationUrl),
+      "O login não começou.",
+    );
   const disconnect = () =>
     act(async () => {
       await api.disconnectMine(c.id);
@@ -93,14 +110,14 @@ function MyConnectorItem(props: { connector: MyConnectorDto; onChanged(c: MyConn
           </button>
         )}
       </div>
-      {c.credentialState === "ok" && <p className="hint">Ligado com o seu token.</p>}
+      {c.credentialState === "ok" && <p className="hint">Ligado com a sua credencial.</p>}
       {c.credentialState === "off" && (
         <p className="hint">Desligado: as Ferramentas dele ficam indisponíveis para você.</p>
       )}
       {c.credentialState === "refused" && (
         <p className="error" role="alert">
           O {c.name} recusou a sua credencial{c.refusedAt ? ` em ${dateTimeShort(c.refusedAt)}` : ""}. Cole um token
-          novo para ligar de novo.
+          novo ou entre pelo login para ligar de novo.
         </p>
       )}
       {c.credentialState !== "ok" && (
@@ -114,7 +131,10 @@ function MyConnectorItem(props: { connector: MyConnectorDto; onChanged(c: MyConn
             onChange={(e) => setToken(e.target.value)}
           />
           <button type="submit" disabled={busy || !token.trim()}>
-            Ligar
+            Ligar com o token
+          </button>
+          <button type="button" disabled={busy} onClick={login}>
+            Ligar pelo login
           </button>
         </form>
       )}

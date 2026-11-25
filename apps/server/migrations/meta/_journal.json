@@ -204,6 +204,13 @@
       "when": 1795571839924,
       "tag": "0028_credencial-do-membro",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1795572747151,
+      "tag": "0029_login-dos-conectores",
+      "breakpoints": true
     }
   ]
 }
