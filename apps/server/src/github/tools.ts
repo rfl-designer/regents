@@ -1,8 +1,11 @@
-import { type ReadTool, type ToolDefinition, ToolFailure } from "../tools/port";
+import { type ReadTool, type ToolDefinition, ToolFailure, type WriteTool } from "../tools/port";
 import type { GitHub, GitHubPermissions } from "./connector";
 
 /** O tamanho máximo de um arquivo que volta ao modelo (o resto é cortado, com aviso). */
 const MAX_FILE_CHARS = 60_000;
+/** Os limites do GitHub para o título de uma issue e para um corpo (de issue ou de comentário). */
+const TITLE_MAX = 256;
+const BODY_MAX = 65_536;
 /** Quantas issues ou pull requests uma listagem traz. */
 const PAGE = 30;
 
@@ -72,11 +75,33 @@ const comments = (list: Comment[]) =>
     ? ["", "Comentários:", ...list.map((c) => `- ${c.user?.login ?? "?"}: ${c.body}`)]
     : ["", "Sem comentários."];
 
+function text(input: unknown, key: string, label: string, max: number, optional = false): string {
+  const v = (input as Record<string, unknown> | null)?.[key];
+  if ((v === undefined || v === null || v === "") && optional) return "";
+  if (typeof v !== "string" || !v.trim()) throw new ToolFailure(`informe ${label}`);
+  if (v.trim().length > max) throw new ToolFailure(`${label} passa de ${max} caracteres`);
+  return v.trim();
+}
+
 /**
- * As Ferramentas do GitHub (ADR 0010; Spec #44): só leitura por enquanto. Cada chamada pede um
- * token de instalação novo, limitado ao repositório da chamada e às permissões desta Ferramenta.
+ * As Ferramentas do GitHub (ADR 0010; Spec #44). Cada chamada pede um token de instalação novo,
+ * limitado ao repositório da chamada e às permissões desta Ferramenta. As escritas (criar issue,
+ * comentar) viram Pedido de aprovação (ADR 0011) e só saem, como o bot do App, quando o autor aprova.
  */
 export function githubTools(github: GitHub): ToolDefinition[] {
+  /**
+   * A lista do Agente (#58): um repositório fora dela falha antes de chegar ao GitHub. Vale para
+   * as leituras, e para as escritas ao criar o Pedido e de novo ao executá-lo.
+   */
+  async function withinAgent(agentId: string, repository: string) {
+    const allowed = await github.repositoriesOf(agentId);
+    if (allowed && !allowed.some((r) => r.toLowerCase() === repository.toLowerCase()))
+      throw new ToolFailure(
+        `o repositório ${repository} não está entre os repositórios do GitHub que este Agente alcança`,
+      );
+    return allowed;
+  }
+
   /** Uma leitura do GitHub com as permissões dela, num repositório (ou em todos, `repository: false`). */
   const read = (
     def: Omit<ReadTool, "origin" | "access" | "run">,
@@ -96,11 +121,9 @@ export function githubTools(github: GitHub): ToolDefinition[] {
       if (repository) repoPath(repository);
       // A lista do Agente (#58): o token nem pede os outros repositórios, então eles não aparecem
       // numa listagem e uma leitura deles falha antes de chegar ao GitHub.
-      const allowed = await github.repositoriesOf(ctx.run.agentId);
-      if (repository && allowed && !allowed.some((r) => r.toLowerCase() === repository.toLowerCase()))
-        throw new ToolFailure(
-          `o repositório ${repository} não está entre os repositórios do GitHub que este Agente alcança`,
-        );
+      const allowed = repository
+        ? await withinAgent(ctx.run.agentId, repository)
+        : await github.repositoriesOf(ctx.run.agentId);
       const scope = repository ? { repository } : { repositories: allowed ?? undefined };
       return run(await github.session({ ...scope, permissions }, signal), input, repository);
     },
@@ -296,5 +319,108 @@ export function githubTools(github: GitHub): ToolDefinition[] {
         ].join("\n");
       },
     ),
+
+    {
+      id: "github_criar_issue",
+      title: "criar issue no GitHub",
+      label: "preparando a issue do GitHub",
+      description:
+        "Cria uma issue num repositório do GitHub, como o bot do GitHub App. Antes de sair, quem escreveu a mensagem que você responde aprova ou recusa: a resposta termina aqui e continua depois da decisão.",
+      origin: "github",
+      access: "write",
+      inputSchema: {
+        type: "object",
+        properties: {
+          repositorio: REPO,
+          titulo: { type: "string", description: "O título exato da issue." },
+          corpo: { type: "string", description: "A descrição exata da issue, em Markdown (opcional)." },
+        },
+        required: ["repositorio", "titulo"],
+        additionalProperties: false,
+      },
+      async prepare(ctx, input, signal) {
+        const asked = str(input, "repositorio", "o repositório");
+        repoPath(asked);
+        const title = text(input, "titulo", "o título", TITLE_MAX);
+        const body = text(input, "corpo", "a descrição", BODY_MAX, true);
+        await withinAgent(ctx.run.agentId, asked);
+        // Confere já que o GitHub alcança o repositório: a falha aparece antes do Pedido, não depois.
+        const api = await github.session({ repository: asked, permissions: { metadata: "read" } }, signal);
+        const repo = await api.get<{ full_name: string }>(repoPath(asked));
+        if (!repo) throw new ToolFailure(`não achei o repositório ${asked}`);
+        const repository = repo.full_name;
+        return {
+          action: { repository, title, body },
+          summary: `Criar uma issue em ${repository}, com o título “${title}” e ${body ? `a descrição “${body}”` : "sem descrição"}`,
+        };
+      },
+      async perform(ctx, action, signal) {
+        const repository = String(action.repository);
+        await withinAgent(ctx.run.agentId, repository);
+        const api = await github.session({ repository, permissions: { issues: "write" } }, signal);
+        const created = await api.post<Issue>(`${repoPath(repository)}/issues`, {
+          title: String(action.title),
+          ...(action.body ? { body: String(action.body) } : {}),
+        });
+        if (!created) throw new ToolFailure(`não achei o repositório ${repository}`);
+        return `issue #${created.number} criada em ${repository}: ${created.html_url}`;
+      },
+    } satisfies WriteTool,
+
+    {
+      id: "github_comentar",
+      title: "comentar no GitHub",
+      label: "preparando o comentário no GitHub",
+      description:
+        "Comenta numa issue ou num pull request de um repositório do GitHub, como o bot do GitHub App. Antes de sair, quem escreveu a mensagem que você responde aprova ou recusa: a resposta termina aqui e continua depois da decisão.",
+      origin: "github",
+      access: "write",
+      inputSchema: {
+        type: "object",
+        properties: {
+          repositorio: REPO,
+          numero: NUMBER,
+          texto: { type: "string", description: "O texto exato do comentário, em Markdown." },
+        },
+        required: ["repositorio", "numero", "texto"],
+        additionalProperties: false,
+      },
+      async prepare(ctx, input, signal) {
+        const asked = str(input, "repositorio", "o repositório");
+        repoPath(asked);
+        const number = num(input, "numero");
+        const body = text(input, "texto", "o texto do comentário", BODY_MAX);
+        await withinAgent(ctx.run.agentId, asked);
+        // Lê o alvo: confirma que existe e diz no resumo se é issue ou pull request, e qual.
+        const api = await github.session(
+          { repository: asked, permissions: { issues: "read", pull_requests: "read" } },
+          signal,
+        );
+        const target = await api.get<Issue>(`${repoPath(asked)}/issues/${number}`);
+        if (!target) throw new ToolFailure(`não achei a issue ou o pull request ${number} em ${asked}`);
+        const pull = Boolean(target.pull_request);
+        const where = `${pull ? "no pull request" : "na issue"} #${number} de ${asked}`;
+        return {
+          action: { repository: asked, number, pull, body },
+          summary: `Comentar ${where} (“${target.title}”): “${body}”`,
+        };
+      },
+      async perform(ctx, action, signal) {
+        const repository = String(action.repository);
+        const number = Number(action.number);
+        const pull = action.pull === true;
+        await withinAgent(ctx.run.agentId, repository);
+        // Num pull request, a permissão de escrita é a de pull requests; numa issue, a de issues.
+        const permissions: GitHubPermissions = pull ? { pull_requests: "write" } : { issues: "write" };
+        const api = await github.session({ repository, permissions }, signal);
+        const where = `${pull ? "no pull request" : "na issue"} #${number} de ${repository}`;
+        const created = await api.post<{ html_url: string }>(`${repoPath(repository)}/issues/${number}/comments`, {
+          body: String(action.body),
+        });
+        if (!created)
+          throw new ToolFailure(`não achei ${pull ? "o pull request" : "a issue"} ${number} em ${repository}`);
+        return `comentário publicado ${where}: ${created.html_url}`;
+      },
+    } satisfies WriteTool,
   ];
 }
