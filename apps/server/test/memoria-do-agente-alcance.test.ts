@@ -9,8 +9,6 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { AgentDto, ChannelDto, DmDto, MeDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
-import { and, eq } from "drizzle-orm";
-import { schema } from "../src/db/client";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
@@ -137,6 +135,21 @@ describe("a Memória do Agente acompanha o alcance", () => {
     expect(pedido).not.toContain("Acme");
   });
 
+  test("quando a Memória não cabe no resumo, a lição de #financeiro também não entra em #geral pelo título (a de #geral entra)", async () => {
+    const t = await testApp({ memory: { summaryChars: 1 } });
+    const { faro, geral, financeiro } = await workspace(t);
+    await ensinar(t, ana, faro, financeiro.id, DO_FINANCEIRO);
+    await ensinar(t, bruno, faro, geral.id, DO_GERAL);
+
+    const pedido = await pedidoAoFaro(t, ana, geral.id);
+
+    expect(pedido).toContain("Também na Memória, só pelo começo do texto");
+    expect(pedido).toContain("Responder sempre com um resumo");
+    expect(pedido).not.toContain("Nunca citar");
+    expect(pedido).not.toContain("Acme");
+    expect(pedido).not.toContain("e mais 1 item");
+  });
+
   test("numa DM só entre a Ana e o Agente, entram as lições de todos os Canais que a Ana vê, e não as dos que ela não vê", async () => {
     const t = await testApp();
     const { faro, geral, financeiro, diretoria } = await workspace(t);
@@ -169,23 +182,19 @@ describe("a Memória do Agente acompanha o alcance", () => {
     expect(pedido).not.toContain(DA_DIRETORIA);
   });
 
-  test("o alcance é calculado na hora da resposta: depois que a Ana sai de #financeiro, as lições de lá deixam de entrar na DM dela com o Agente", async () => {
+  test("o alcance é calculado na hora da resposta: depois que a Ana sai de #financeiro (removida do Workspace e de volta), as lições de lá deixam de entrar na DM dela com o Agente", async () => {
     const t = await testApp();
     const { me, faro, financeiro } = await workspace(t);
     await ensinar(t, bruno, faro, financeiro.id, DO_FINANCEIRO);
     const daAna = await dm(t, ana, { memberIds: [], agentId: faro.id });
     expect(await pedidoAoFaro(t, ana, daAna.id, "o que você lembra?")).toContain(`- ${DO_FINANCEIRO}`);
 
-    // Não há rota para sair de um Canal privado (sair do Workspace tira de todos): a saída da Ana
-    // de #financeiro é feita no banco, como no teste do Pedido de aprovação.
-    await t.db
-      .delete(schema.channelParticipants)
-      .where(
-        and(
-          eq(schema.channelParticipants.channelId, financeiro.id),
-          eq(schema.channelParticipants.memberId, me.Ana!.id),
-        ),
-      );
+    // Não há rota para sair de um Canal privado sozinho: o caminho que existe é o Admin remover a
+    // Ana do Workspace e ela voltar pelo Pedido de entrada. Ela volta fora de #financeiro e com a
+    // DM a dois com o Faro (member-admin.test.ts).
+    expect((await t.as(juliana).delete(`/api/members/${me.Ana!.id}`)).status).toBe(204);
+    await t.addMember(ana, { by: juliana });
+    expect((await t.as(ana).get(`/api/channels/${financeiro.id}`)).status).toBe(404);
 
     const depois = await pedidoAoFaro(t, ana, daAna.id, "e agora, o que você lembra?");
     expect(depois).not.toContain(DO_FINANCEIRO);
