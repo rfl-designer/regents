@@ -139,7 +139,12 @@ export async function buildContext(
 
   // Com a Memória do Agente desligada (#67), a resposta não lê Memória nenhuma.
   const memory = remembers(row)
-    ? await memorySummary(db, { conversationId: conversation!.id, agentId: row.id, budget: memoryBudget })
+    ? await memorySummary(db, {
+        conversationId: conversation!.id,
+        originMessageId,
+        agentId: row.id,
+        budget: memoryBudget,
+      })
     : { text: "", shown: [] };
   const system = [
     preamble,

@@ -2,9 +2,9 @@
  * A Memória do Agente na própria conversa (spec #60, ticket #65; ADR 0012 e 0013): a extração
  * separa o jeito de trabalhar (a correção que uma pessoa deu ao Agente, Memória do Agente) dos
  * fatos e das decisões (Memória da Conversa). A Memória do Agente entra no resumo das respostas
- * dele, depois da Memória da Conversa, e por ora só na conversa de origem (o alcance para outras
- * conversas é o #68). A tela do Agente a lista a quem vê a origem, Admin inclusive, e apagar o
- * Agente a leva junto, deixando a Memória da Conversa que ele gerou.
+ * dele, depois da Memória da Conversa (o alcance para outras conversas, o #68, está em
+ * memoria-do-agente-alcance.test.ts). A tela do Agente a lista a quem vê a origem, Admin
+ * inclusive, e apagar o Agente a leva junto, deixando a Memória da Conversa que ele gerou.
  */
 import { describe, expect, test } from "bun:test";
 import type { AgentDto, ChannelDto, DmDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
@@ -179,19 +179,6 @@ describe("a Memória do Agente no resumo", () => {
     expect(system).toContain(`- ${FATO}`);
     expect(system).not.toContain(LICAO);
     expect(system).not.toContain("Memória do Agente");
-  });
-
-  test("por ora, não entra nas respostas dele em outra conversa (o alcance é o #68)", async () => {
-    const t = await testApp();
-    const { faro, produto } = await produtoComFaro(t);
-    const vendas = await novoCanal(t, "vendas");
-    await t.as(juliana).post(`/api/channels/${vendas.id}/agents`, { agentId: faro.id });
-    await corrigirOFaro(t, bruno, faro, produto.id);
-
-    await enviar(t, ana, vendas.id, "@faro abre uma issue para o bug do login");
-
-    const system = await systemDaChamada(t, 2);
-    expect(system).not.toContain(LICAO);
   });
 
   test("só a lição, sem Memória da Conversa: o resumo traz só o grupo do Agente", async () => {

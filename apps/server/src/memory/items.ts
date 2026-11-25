@@ -108,9 +108,11 @@ export function correctItem(
 
 /**
  * Substitui o item ativo `old` (já travado em `tx`) por uma versão nova com o mesmo escopo (ou o
- * do Workspace, na promoção), a mesma conversa e o mesmo Agente, e arquiva o anterior, que aponta para ela (nada é apagado).
- * A origem é a de `next`: a correção de gente mantém a do item; a extração põe a mensagem em que
- * a pessoa mudou o fato. Devolve o id da nova.
+ * do Workspace, na promoção) e o mesmo Agente, e arquiva o anterior, que aponta para ela (nada é
+ * apagado). A origem é a de `next`: a correção de gente mantém a mensagem e a conversa do item; a
+ * extração põe a mensagem em que a pessoa mudou o fato e a conversa dela, que pode ser outra
+ * quando a lição veio de outra conversa do alcance (#68): a versão nova nunca alcança mais do que
+ * a conversa em que foi dita (ADR 0012). Devolve o id da nova.
  */
 export async function replaceItem(
   tx: Tx,
@@ -118,6 +120,8 @@ export async function replaceItem(
   next: {
     text: string;
     originMessageId: string | null;
+    /** A conversa da origem nova, se não é a do item (a extração, #68). */
+    conversationId?: string;
     createdBy: Item["createdBy"];
     createdByMemberId?: string;
     executionId?: string;
@@ -130,7 +134,7 @@ export async function replaceItem(
   await tx.insert(memoryItems).values({
     id,
     scope: next.scope ?? old.scope,
-    conversationId: old.conversationId,
+    conversationId: next.conversationId ?? old.conversationId,
     originMessageId: next.originMessageId,
     agentId: old.agentId,
     text: next.text,

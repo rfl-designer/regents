@@ -171,6 +171,7 @@ export async function saveOperations(
     const id = await replaceItem(tx, old, {
       text: op.text,
       originMessageId: input.originMessageId,
+      conversationId: input.conversationId,
       createdBy: "extraction",
       executionId: input.executionId,
       now: input.now,
