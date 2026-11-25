@@ -218,4 +218,68 @@ describe("cada operação cita a mensagem de pessoa em que aquilo foi dito", () 
     expect(andamento.reason).toContain('"Citando outra conversa.": não cita uma mensagem de pessoa da troca');
     expect((await memoria(t, bruno, produto.id)).map((i) => i.text)).toEqual(["A reunião é às terças."]);
   });
+
+  test("o id citado entre colchetes, como a entrada mostra, também vale (na mensagem e no item a substituir)", async () => {
+    const t = await testApp();
+    const { produto } = await produtoComFaro(t);
+    const primeira = await enviar(t, bruno, produto.id, "O preço sobe em janeiro.");
+    t.anthropic.remember({
+      json: { operacoes: [{ acao: "criar", texto: "O preço sobe em janeiro.", mensagem: `[${primeira.id}]` }] },
+    });
+    await enviar(t, juliana, produto.id, "@faro anota");
+    const [antigo] = await eventually("o item na Memória", async () => {
+      const lista = await memoria(t, bruno, produto.id);
+      return lista.length ? lista : undefined;
+    });
+
+    const segunda = await enviar(t, bruno, produto.id, "Na verdade sobe em março.");
+    t.anthropic.remember({
+      json: {
+        operacoes: [
+          { acao: "substituir", id: ` [${antigo!.id}] `, texto: "O preço sobe em março.", mensagem: `[${segunda.id}]` },
+        ],
+      },
+    });
+    await enviar(t, juliana, produto.id, "@faro corrige");
+
+    const ativos = await eventually("a versão nova", async () => {
+      const lista = (await memoria(t, bruno, produto.id)).filter((i) => i.state === "active");
+      return lista[0]?.text === "O preço sobe em março." ? lista : undefined;
+    });
+    expect(ativos).toHaveLength(1);
+    expect(ativos[0]!.origin).toMatchObject({ messageId: segunda.id });
+  });
+});
+
+describe("substituir o mesmo item duas vezes numa extração", () => {
+  test("só a primeira versão nova fica ativa; a outra é descartada, à vista", async () => {
+    const t = await testApp();
+    const { produto } = await produtoComFaro(t);
+    const doBruno = await t.socket(bruno);
+    t.anthropic.remember({ json: { operacoes: [{ acao: "criar", texto: "O preço sobe em janeiro." }] } });
+    await enviar(t, juliana, produto.id, "@faro o preço sobe em janeiro");
+    const [antigo] = await eventually("o item na Memória", async () => {
+      const lista = await memoria(t, bruno, produto.id);
+      return lista.length ? lista : undefined;
+    });
+
+    t.anthropic.remember({
+      json: {
+        operacoes: [
+          { acao: "substituir", id: antigo!.id, texto: "O preço sobe em março." },
+          { acao: "substituir", id: antigo!.id, texto: "O preço sobe em abril." },
+        ],
+      },
+    });
+    await enviar(t, juliana, produto.id, "@faro março, ou talvez abril");
+
+    const andamento = await daExtracao(doBruno);
+    expect(andamento.reason).toContain(
+      '"O preço sobe em abril.": o item a substituir já foi substituído nesta extração',
+    );
+    const ativos = (await memoria(t, bruno, produto.id)).filter((i) => i.state === "active");
+    expect(ativos.map((i) => i.text)).toEqual(["O preço sobe em março."]);
+    const [arquivado] = (await memoria(t, bruno, produto.id)).filter((i) => i.id === antigo!.id);
+    expect(arquivado!.replacedById).toBe(ativos[0]!.id);
+  });
 });

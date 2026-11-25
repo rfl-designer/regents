@@ -1186,6 +1186,7 @@ function ChannelHeader({
   const [adding, setAdding] = useState<"person" | "agent" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const names = channel.participants.map((p) => p.displayName).join(", ");
+  const channelAgents = channel.participants.filter((p) => p.kind === "agent");
   const toggle = (what: "person" | "agent") => setAdding((v) => (v === what ? null : what));
 
   async function act(run: () => Promise<ChannelDto>) {
@@ -1233,11 +1234,10 @@ function ChannelHeader({
           )
         )}
       </div>
-      <p className="hint agent-link">
-        Agentes:{" "}
-        {channel.participants
-          .filter((p) => p.kind === "agent")
-          .map((p, n) => (
+      {channelAgents.length > 0 && (
+        <p className="hint agent-link">
+          Agentes:{" "}
+          {channelAgents.map((p, n) => (
             <span key={p.id}>
               {n > 0 && ", "}
               <button type="button" className="link-quiet" onClick={() => onAgent(p.id)}>
@@ -1245,7 +1245,8 @@ function ChannelHeader({
               </button>
             </span>
           ))}
-      </p>
+        </p>
+      )}
       {channel.instructions && (
         <p className="instructions">
           <strong>Instruções do Canal:</strong> {channel.instructions}

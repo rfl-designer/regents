@@ -387,4 +387,32 @@ describe("a ordem da extração na fila", () => {
     expect(contexto(depois)).toContain("@faro terceira");
     expect(cerebro.extractions).toHaveLength(0);
   });
+
+  test("a extração vê o que outra extração guardou depois que a resposta dela começou: não duplica", async () => {
+    const cerebro = scriptedBrain({ scriptExtractions: true });
+    const t = await testApp({ keyBrain: cerebro.brain });
+    const produto = await comFaroELia(t);
+
+    await enviar(t, juliana, produto.id, "@faro @lia decidimos usar Postgres");
+    // As duas respostas começam (e montam o contexto) antes de qualquer extração guardar.
+    const primeira = await cerebro.nextRun();
+    const segunda = await cerebro.nextRun();
+    t.clock.advance(1_000);
+    await responder(primeira, "Anotado.");
+    const extracao = await cerebro.nextExtraction();
+    await extracao.emit({
+      type: "text",
+      text: JSON.stringify({ operacoes: [{ acao: "criar", texto: "Decidimos usar Postgres." }] }),
+    });
+    await extracao.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
+    const [item] = await eventually("o item na Memória", async () => {
+      const lista = await memoria(t, juliana, produto.id);
+      return lista.length ? lista : undefined;
+    });
+
+    await responder(segunda, "Anotado também.");
+
+    const outra = await cerebro.nextExtraction();
+    expect(contexto(outra)).toContain(`[${item!.id}] Decidimos usar Postgres.`);
+  });
 });

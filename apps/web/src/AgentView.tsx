@@ -35,16 +35,18 @@ export function AgentPanel({
   const [failed, setFailed] = useState(false);
 
   const load = useCallback(() => {
-    Promise.all([api.agents(), api.agentMemory(agentId)]).then(
-      ([agents, memory]) => {
-        setFailed(false);
+    api
+      .agents()
+      .then(async (agents) => {
         const found = agents.find((a) => a.id === agentId);
+        // O Agente apagado não tem mais Memória (o servidor dá 404): só o aviso.
+        const memory = found ? await api.agentMemory(agentId) : [];
+        setFailed(false);
         setAgent(found ?? "gone");
         if (found) setName(found.name);
         setItems(Object.fromEntries(memory.map((i) => [i.id, i])));
-      },
-      () => setFailed(true),
-    );
+      })
+      .catch(() => setFailed(true));
   }, [agentId]);
   useEffect(load, [load]);
 

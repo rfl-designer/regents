@@ -1,8 +1,8 @@
 import { AGENT_MODELS } from "@shearim/contracts";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gt, inArray, or } from "drizzle-orm";
 import { type ModelContext, recentMessages } from "../context";
 import { type Db, schema, type Tx } from "../db/client";
-import { insertExtracted, lockActiveItem, replaceItem } from "./items";
+import { inReach, insertExtracted, lockActiveItem, replaceItem } from "./items";
 import { agentOrigins, titleOf } from "./summary";
 
 const { messages, channels, agents, memoryItems } = schema;
@@ -82,12 +82,13 @@ export const MEMORY_SCHEMA = {
           },
           id: {
             type: "string",
-            description: "Só em substituir: o id, entre colchetes, do item da Memória que a versão nova substitui.",
+            description:
+              "Só em substituir: o id (o que vem entre colchetes) do item da Memória que a versão nova substitui.",
           },
           mensagem: {
             type: "string",
             description:
-              "O id, entre colchetes, da mensagem de pessoa da troca em que isso foi dito ou confirmado. Sem uma mensagem de pessoa para citar, não guarde.",
+              "O id (o que vem entre colchetes) da mensagem de pessoa da troca em que isso foi dito ou confirmado. Sem uma mensagem de pessoa para citar, não guarde.",
           },
           texto: {
             type: "string",
@@ -120,6 +121,9 @@ export interface ParsedOperations {
 /** Como o Andamento nomeia o item descartado: o começo do texto, entre aspas. */
 const named = (text: string) => `"${titleOf(text)}"`;
 
+/** Um id como a extração o devolve: a entrada mostra os ids entre colchetes, e ela pode copiá-los assim. */
+const idOf = (value: string) => value.trim().replace(/^\[\s*(.*?)\s*\]$/, "$1");
+
 /**
  * Confere o JSON da extração. Operação que não se entende (sem texto, ação desconhecida,
  * substituir sem id: nada é arquivado sem uma versão nova), texto acima de `MAX_ITEM_LENGTH` e o
@@ -143,13 +147,13 @@ export function parseOperations(text: string): ParsedOperations | undefined {
   type Raw = { acao?: unknown; id?: unknown; escopo?: unknown; texto?: unknown; mensagem?: unknown };
   for (const item of list as (Raw | null)[]) {
     const text = typeof item?.texto === "string" ? item.texto.trim() : "";
-    const cites = typeof item?.mensagem === "string" ? item.mensagem.trim() : "";
+    const cites = typeof item?.mensagem === "string" ? idOf(item.mensagem) : "";
     // Escopo que não se entende (ou ausente) fica na Memória da Conversa: nunca vai ao Workspace.
     const scope = item?.escopo === "agente" ? "agent" : "conversation";
     let op: MemoryOperation;
     if (text && item?.acao === "criar") op = { action: "create", scope, text, cites };
     else if (text && item?.acao === "substituir" && typeof item.id === "string") {
-      op = { action: "replace", id: item.id, text, cites };
+      op = { action: "replace", id: idOf(item.id), text, cites };
     } else {
       unclear++;
       continue;
@@ -168,8 +172,11 @@ export function parseOperations(text: string): ParsedOperations | undefined {
  * A troca que a extração da resposta `sourceExecutionId` lê, calculada agora: as mensagens de
  * pessoa (as mesmas recentes que a resposta leu, até a mensagem de origem), a resposta e a Memória
  * que entrou nela e que ainda vale para ela: ativa e com a origem no alcance da resposta, que é
- * recalculado (quem participa pode ter mudado desde a entrega, ADR 0012). A entrada da extração e
- * o que ela pode substituir saem daqui.
+ * recalculado (quem participa pode ter mudado desde a entrega, ADR 0012). Entra também o que foi
+ * guardado na Memória da Conversa e na Memória do Agente (no alcance) desde que a resposta chegou
+ * à fila: a resposta não viu, mas outra extração (de outro Agente, ou da resposta anterior) pode
+ * ter acabado de guardar o mesmo, e a extração não guarda de novo o que já está na Memória. A
+ * entrada da extração e o que ela pode substituir saem daqui.
  */
 async function exchangeOf(db: Db, sourceExecutionId: string) {
   const [source] = await db
@@ -183,20 +190,29 @@ async function exchangeOf(db: Db, sourceExecutionId: string) {
   const [conversation] = await db.select().from(channels).where(eq(channels.id, source.e.channelId));
   const recent = await recentMessages(db, origin!, conversation!.recentMessages);
   const reach = await agentOrigins(db, { conversationId: source.e.channelId, originMessageId: origin!.id });
-  const remembered = source.e.memoryItemIds.length
-    ? await db
-        .select({ id: memoryItems.id, scope: memoryItems.scope, text: memoryItems.text })
-        .from(memoryItems)
-        .where(
+  // A própria conversa sempre vale; a Memória do Agente de outra, só no alcance de agora.
+  const origins = [source.e.channelId, ...reach];
+  const remembered = await db
+    .select({ id: memoryItems.id, scope: memoryItems.scope, text: memoryItems.text })
+    .from(memoryItems)
+    .where(
+      and(
+        eq(memoryItems.state, "active"),
+        or(
+          source.e.memoryItemIds.length
+            ? and(inArray(memoryItems.id, source.e.memoryItemIds), inArray(memoryItems.conversationId, origins))
+            : undefined,
           and(
-            inArray(memoryItems.id, source.e.memoryItemIds),
-            eq(memoryItems.state, "active"),
-            // A própria conversa sempre vale; a Memória do Agente de outra, só no alcance de agora.
-            inArray(memoryItems.conversationId, [source.e.channelId, ...reach]),
+            gt(memoryItems.createdAt, source.e.arrivedAt),
+            or(
+              and(eq(memoryItems.scope, "conversation"), eq(memoryItems.conversationId, source.e.channelId)),
+              inReach(origins, { scope: "agent", agentId: source.e.agentId }),
+            ),
           ),
-        )
-        .orderBy(memoryItems.seq)
-    : [];
+        ),
+      ),
+    )
+    .orderBy(memoryItems.seq);
   return {
     agentName: source.agentName,
     reply: source.reply,
@@ -234,6 +250,8 @@ export async function saveOperations(
   const discarded: string[] = [];
   const creates: { scope: ExtractedScope; text: string; originMessageId: string }[] = [];
   const replaces: { old: NonNullable<Awaited<ReturnType<typeof lockActiveItem>>>; text: string; cites: string }[] = [];
+  // Cada item é substituído uma vez só: a segunda versão nova deixaria duas ativas.
+  const replaced = new Set<string>();
   for (const op of input.operations) {
     if (!people.has(op.cites)) {
       discarded.push(`${named(op.text)}: não cita uma mensagem de pessoa da troca`);
@@ -243,7 +261,12 @@ export async function saveOperations(
       creates.push({ scope: op.scope, text: op.text, originMessageId: op.cites });
       continue;
     }
+    if (replaced.has(op.id)) {
+      discarded.push(`${named(op.text)}: o item a substituir já foi substituído nesta extração`);
+      continue;
+    }
     const old = remembered.has(op.id) ? await lockActiveItem(tx, op.id) : undefined;
+    if (old) replaced.add(op.id);
     if (!old) discarded.push(`${named(op.text)}: o item a substituir não está na Memória desta troca`);
     else if (old.conversationId !== input.conversationId) {
       creates.push({ scope: "agent", text: op.text, originMessageId: op.cites });

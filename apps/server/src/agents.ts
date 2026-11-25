@@ -168,6 +168,14 @@ export function agentRoutes(deps: {
     }
 
     const updated = await db.transaction(async (tx) => {
+      // Trava o Agente: um DELETE ao mesmo tempo espera, ou já o apagou, e então nada muda (nem o
+      // identificador de Menção volta para ele).
+      const [live] = await tx
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(eq(agents.id, current.id), isNull(agents.deletedAt)))
+        .for("update");
+      if (!live) return "gone" as const;
       if (change.name !== undefined && change.name !== current.name) {
         const [taken] = await tx
           .select({ id: agents.id })
@@ -195,6 +203,7 @@ export function agentRoutes(deps: {
         .where(eq(mentionHandles.agentId, current.id))) as [{ handle: string }];
       return { ...row!, handle };
     });
+    if (updated === "gone") return c.json({ error: "not_found" }, 404);
     if (!updated) return c.json({ error: "name_taken", message: `Já existe um Agente chamado ${change.name}.` }, 409);
     const budgetChanged = change.monthlyBudgetUsd !== undefined && change.monthlyBudgetUsd !== current.monthlyBudgetUsd;
     const budget = budgetChanged ? await ledger.budgetChanged(updated.id) : await ledger.budgetNow(updated.id);
@@ -216,37 +225,43 @@ export function agentRoutes(deps: {
    * identificador de Menção (o nome e o `@` voltam a ficar livres) e dos Canais; as DMs com ele
    * ficam, e o que chegar ali diz que ele foi apagado. As Ferramentas concedidas e a lista de
    * repositórios saem. O que ele tinha aberto é cancelado. A Memória do Agente sai junto (é o
-   * único apagamento de Memória, spec #60); a Memória da Conversa que ele gerou fica.
+   * único apagamento de Memória, spec #60); a Memória da Conversa que ele gerou fica. Apagar de
+   * novo um Agente já apagado refaz a limpeza (cancelar e apagar a Memória dele), para o caso de
+   * ela ter caído no meio da primeira vez.
    */
   routes.delete("/agents/:id", async (c) => {
     if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
-    const [agent] = await findAgent(db, c.req.param("id"));
+    const id = c.req.param("id");
+    // Com os apagados: a limpeza de um que caiu no meio se refaz.
+    const [agent] = isUuid(id) ? await db.select().from(agents).where(eq(agents.id, id)) : [];
     if (!agent) return c.json({ error: "not_found" }, 404);
     if (agent.builtin) {
       return c.json({ error: "builtin_locked", message: "A Articuladora é do Shearim e não se apaga." }, 403);
     }
-    const left = await db.transaction(async (tx) => {
-      await tx.update(agents).set({ deletedAt: clock.now() }).where(eq(agents.id, agent.id));
-      await releaseHandle(tx, { kind: "agent", id: agent.id });
-      await tx.delete(agentTools).where(eq(agentTools.agentId, agent.id));
-      await tx.delete(agentGithubRepositories).where(eq(agentGithubRepositories.agentId, agent.id));
-      // Sai dos Canais; numa DM, fica (é com quem a DM foi).
-      return tx
-        .delete(channelAgents)
-        .where(
-          and(
-            eq(channelAgents.agentId, agent.id),
-            inArray(
-              channelAgents.channelId,
-              tx
-                .select({ id: channels.id })
-                .from(channels)
-                .where(inArray(channels.kind, ["public", "private"])),
-            ),
-          ),
-        )
-        .returning({ channelId: channelAgents.channelId });
-    });
+    const left = agent.deletedAt
+      ? []
+      : await db.transaction(async (tx) => {
+          await tx.update(agents).set({ deletedAt: clock.now() }).where(eq(agents.id, agent.id));
+          await releaseHandle(tx, { kind: "agent", id: agent.id });
+          await tx.delete(agentTools).where(eq(agentTools.agentId, agent.id));
+          await tx.delete(agentGithubRepositories).where(eq(agentGithubRepositories.agentId, agent.id));
+          // Sai dos Canais; numa DM, fica (é com quem a DM foi).
+          return tx
+            .delete(channelAgents)
+            .where(
+              and(
+                eq(channelAgents.agentId, agent.id),
+                inArray(
+                  channelAgents.channelId,
+                  tx
+                    .select({ id: channels.id })
+                    .from(channels)
+                    .where(inArray(channels.kind, ["public", "private"])),
+                ),
+              ),
+            )
+            .returning({ channelId: channelAgents.channelId });
+        });
     // Depois de cancelada a extração em andamento, nada mais guarda na Memória dele.
     await deps.executions.cancelAgent(agent.id);
     await forgetAgent(db, agent.id);

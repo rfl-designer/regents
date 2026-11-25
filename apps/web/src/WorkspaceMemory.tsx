@@ -1,5 +1,5 @@
 import type { MeDto, MemoryItemDto } from "@shearim/contracts";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { useServerEvents } from "./live";
 import { MemoryArchived, MemoryItem, sortMemory } from "./Memory";
@@ -18,14 +18,20 @@ export function WorkspaceMemory({ me }: { me: MeDto }) {
   const [loadError, setLoadError] = useState(false);
   const show = (item: MemoryItemDto) => setItems((prev) => ({ ...prev, [item.id]: item }));
 
-  useEffect(() => {
+  const load = useCallback(() => {
     api.workspaceMemory().then(
-      (list) => setItems(Object.fromEntries(list.map((i) => [i.id, i]))),
+      (list) => {
+        setLoadError(false);
+        setItems(Object.fromEntries(list.map((i) => [i.id, i])));
+      },
       () => setLoadError(true),
     );
   }, []);
+  useEffect(load, [load]);
 
   useServerEvents((event) => {
+    // Depois de uma queda da conexão, o que mudou nesse meio tempo não chegou: recarrega.
+    if (event.type === "ready") load();
     if (event.type === "memory.updated" && event.item.scope === "workspace") show(event.item);
   });
 

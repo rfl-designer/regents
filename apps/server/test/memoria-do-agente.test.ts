@@ -8,6 +8,8 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { AgentDto, ChannelDto, DmDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
+import { eq } from "drizzle-orm";
+import { schema } from "../src/db/client";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
@@ -321,6 +323,19 @@ describe("apagar o Agente", () => {
     expect(daConversa.map((i) => [i.scope, i.text])).toEqual([["conversation", FATO]]);
     const mensagens: MessageDto[] = await (await t.as(bruno).get(`/api/conversations/${produto.id}/messages`)).json();
     expect(mensagens.map((m) => m.author.displayName)).toEqual(["Bruno", "Faro"]);
+  });
+
+  test("se a limpeza falhou depois de marcado apagado, apagar de novo leva a Memória do Agente que ficou", async () => {
+    const t = await testApp();
+    const { faro, produto } = await produtoComFaro(t);
+    await corrigirOFaro(t, bruno, faro, produto.id);
+    // O primeiro DELETE marcou o Agente e caiu antes de apagar a Memória dele.
+    await t.db.update(schema.agents).set({ deletedAt: t.clock.now() }).where(eq(schema.agents.id, faro.id));
+
+    expect((await t.as(juliana).delete(`/api/agents/${faro.id}`)).status).toBe(204);
+
+    const daConversa = await memoriaDaConversa(t, bruno, produto.id);
+    expect(daConversa.map((i) => [i.scope, i.text])).toEqual([["conversation", FATO]]);
   });
 
   test("ele sai da lista de Agentes e dos Canais, a Menção não o chama mais e o nome volta a ficar livre", async () => {
