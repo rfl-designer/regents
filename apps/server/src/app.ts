@@ -239,7 +239,7 @@ export function createApp(deps: AppDeps) {
   app.route("/api", reading.routes);
   app.route("/api", threadRoutes({ db }));
   app.route("/api", accounts.routes);
-  app.route("/api", agentRoutes({ db, clock, ledger, tools, onBudgetChanged: () => reconsider() }));
+  app.route("/api", agentRoutes({ db, clock, ledger, tools, github, onBudgetChanged: () => reconsider() }));
   app.route("/api", agentToolRoutes({ db, tools }));
   app.route("/api", connectors.routes);
   app.route(
@@ -256,7 +256,7 @@ export function createApp(deps: AppDeps) {
   );
   app.route("/api", workspaceKeyRoutes({ db, clock, secrets, onChanged: () => reconsider() }));
   app.route("/api", workspaceContextRoutes({ db }));
-  app.route("/api", githubRoutes({ github }));
+  app.route("/api", githubRoutes({ db, github }));
   app.route("/api", installation.routes);
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));

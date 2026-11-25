@@ -41,6 +41,7 @@ deploy/release.sh 1.2.3 dist   # empacota a release (o workflow de release roda;
 | `SHEARIM_ACCOUNTS_DIR` | `.data/accounts` | Pasta-raiz das Contas: uma pasta de `CLAUDE_CONFIG_DIR` por login, fora do backup (no compose, o volume `contas`). O Shearim nunca lê o que há dentro. |
 | `SHEARIM_MASTER_KEY_FILE` | `.data/secrets/master_key` | A chave mestra (32 bytes em hex, como o `deploy/setup.sh` grava, ou em base64), que cifra a Chave do Workspace. No compose, `/run/secrets/master_key`. Sem a variável, o arquivo padrão é gerado se faltar (só desenvolvimento); com ela, o arquivo tem que existir. Com outra chave mestra, o Admin grava a Chave de novo. |
 | `SHEARIM_ANTHROPIC_BASE_URL` | (a da Anthropic) | Onde fica a Messages API. O e2e aponta para a falsa. |
+| `SHEARIM_GITHUB_URL`, `SHEARIM_GITHUB_API_URL` | `https://github.com`, `https://api.github.com` | Onde fica o GitHub (a web e a API). O e2e aponta para o falso. |
 | `SHEARIM_BACKUPS_DIR` | `.data/backups` | `./backups`: dumps de antes de migrar e de restaurar, e os backups noturnos. No compose, `/backups`. |
 | `SHEARIM_BACKUP_AT` | `03:00` | Hora do backup noturno (comando `backup`), na hora local do container (`TZ`). |
 | `SHEARIM_PG_BIN_DIR` | (o `PATH`) | Pasta do `pg_dump`/`pg_restore`. |

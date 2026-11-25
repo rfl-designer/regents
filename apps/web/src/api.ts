@@ -1,6 +1,7 @@
 import type {
   AccountDto,
   AgentDto,
+  AgentGitHubDto,
   AgentToolDto,
   ApiError,
   ApprovalRequestDto,
@@ -180,4 +181,7 @@ export const api = {
   githubManifest: (origin: string, organization: string) =>
     call<GitHubManifestDto>("/api/github/manifest", json("POST", { origin, organization: organization || undefined })),
   githubInstall: () => call<GitHubInstallDto>("/api/github/installation", { method: "POST" }),
+  agentGitHub: (agentId: string) => call<AgentGitHubDto>(`/api/agents/${agentId}/github`),
+  setAgentGitHub: (agentId: string, repositories: string[] | null) =>
+    call<AgentGitHubDto>(`/api/agents/${agentId}/github`, json("PUT", { repositories })),
 };

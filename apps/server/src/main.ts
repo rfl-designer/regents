@@ -16,6 +16,8 @@
  *   Workspace. No compose, `/run/secrets/master_key`. Sem a variável, `.data/secrets/master_key`,
  *   gerada se faltar (só desenvolvimento).
  * - `SHEARIM_ANTHROPIC_BASE_URL`: a Messages API (padrão: a da Anthropic; o e2e usa a falsa).
+ * - `SHEARIM_GITHUB_URL` e `SHEARIM_GITHUB_API_URL`: o GitHub (padrão: github.com e api.github.com;
+ *   o e2e usa o falso).
  * - `SHEARIM_BACKUPS_DIR`: `./backups` (padrão `.data/backups`; no compose, `/backups`): os dumps de
  *   antes de migrar e de restaurar, e os backups noturnos do comando `backup`.
  * - `SHEARIM_BACKUP_AT`: a hora do backup noturno, `HH:MM` na hora local do container (padrão 03:00).
@@ -235,6 +237,10 @@ async function main(command: string | undefined) {
     },
     secrets,
     anthropicBaseUrl: process.env.SHEARIM_ANTHROPIC_BASE_URL || undefined,
+    github: {
+      ...(process.env.SHEARIM_GITHUB_URL ? { webUrl: process.env.SHEARIM_GITHUB_URL } : {}),
+      ...(process.env.SHEARIM_GITHUB_API_URL ? { apiUrl: process.env.SHEARIM_GITHUB_API_URL } : {}),
+    },
     devRoutes: who.routes,
     push: { contact: vapidContact },
     // A seção Instalação: a versão (a tag da imagem), o backup e a chave do nó, com os avisos.
