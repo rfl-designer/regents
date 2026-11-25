@@ -136,10 +136,14 @@ export async function startFakeGitHub() {
     const forbidden = () => json({ message: "Resource not accessible by integration" }, 403);
 
     if (path === "/installation/repositories") {
-      const list = reach.map((r) => repos.get(r)!).filter(Boolean);
+      const all = reach.map((r) => repos.get(r)!).filter(Boolean);
+      // Paginado como o de verdade: `per_page` (padrão 30, no máximo 100) e `page`.
+      const perPage = Math.min(Number(url.searchParams.get("per_page") ?? 30), 100);
+      const page = Number(url.searchParams.get("page") ?? 1);
+      const list = all.slice((page - 1) * perPage, page * perPage);
       return record(
         json({
-          total_count: list.length,
+          total_count: all.length,
           repositories: list.map((r) => ({
             full_name: r.fullName,
             name: shortName(r.fullName),

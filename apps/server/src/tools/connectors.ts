@@ -404,7 +404,12 @@ export function createConnectors(deps: {
    */
   async function credentialFor(connector: Connector, ctx: ToolContext) {
     if (modeOf(connector) === "workspace") {
-      return { token: await tokenOf(connector), whose: "do Workspace", refused: () => markRefused(connector.id) };
+      return {
+        token: await tokenOf(connector),
+        whose: "do Workspace",
+        refused: () => markRefused(connector.id),
+        renew: connector.oauthCiphertext ? () => renew(connector.id, null) : undefined,
+      };
     }
     const connect = { connectorId: connector.id, name: connector.name };
     const author = await authorOf(ctx);
@@ -422,6 +427,7 @@ export function createConnectors(deps: {
       }),
       whose: `de ${author.name}`,
       refused: () => refuseMember(connector, author.id),
+      renew: credential.oauthCiphertext ? () => renew(connector.id, author.id) : undefined,
       connect,
     };
   }
@@ -433,7 +439,8 @@ export function createConnectors(deps: {
     args: Record<string, unknown>,
     signal: AbortSignal,
     ctx: ToolContext,
-  ) {
+    renewed = false,
+  ): Promise<string> {
     const [connector] = await db.select().from(connectors).where(eq(connectors.id, connectorId));
     if (!connector) throw new ToolFailure("o Conector foi removido");
     const credential = await credentialFor(connector, ctx);
@@ -446,7 +453,12 @@ export function createConnectors(deps: {
       );
     } catch (err) {
       if (err instanceof Refused) {
-        await credential.refused();
+        // O token do login pode ter vencido sem aviso (sem `expires_in`) ou sido revogado: renova uma vez.
+        // Um 401 não executou nada, então repetir também vale para a escrita.
+        const outcome = !renewed && credential.renew ? await credential.renew() : undefined;
+        if (outcome === "renewed") return callRemote(connectorId, name, args, signal, ctx, true);
+        // Recusada na renovação, `renew` já seguiu o caminho da credencial recusada.
+        if (outcome !== "refused") await credential.refused();
         throw new ToolFailure(`o ${connector.name} recusou a credencial ${credential.whose}`, credential.connect);
       }
       if (signal.aborted) throw err;

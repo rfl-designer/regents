@@ -1,4 +1,5 @@
 import type { ApprovalRequestDto, RejectApprovalInput } from "@shearim/contracts";
+import type { Server } from "bun";
 import { and, asc, eq, isNull, type SQL } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import type { Clock } from "./clock";
@@ -220,6 +221,8 @@ export function approvalRoutes(deps: {
     const row = await decidable(c);
     if (row instanceof Response) return row;
     if (!(await decide(row, { state: "approved" }))) return c.json({ error: "not_pending" }, 409);
+    // A ação tem o prazo da Ferramenta (60 s), mais que os 10 s ociosos do Bun: sem isto, o autor veria falha.
+    (c.env as Server<unknown> | undefined)?.timeout?.(c.req.raw, 0);
     // A ação executada é exatamente a aprovada: o hash confere, e o alcance é conferido de novo.
     const [execution] = await db.select().from(executions).where(eq(executions.id, row.executionId));
     const outcome =

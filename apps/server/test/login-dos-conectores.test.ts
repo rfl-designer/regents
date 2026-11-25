@@ -160,6 +160,27 @@ describe("ligar pelo login do servidor", () => {
     },
     LONGO,
   );
+
+  test(
+    "o token de acesso deixa de valer antes do prazo: um 401 renova uma vez e repete, sem marcar a credencial como recusada",
+    async () => {
+      const t = await testApp();
+      const { faro, geral } = await workspace(t);
+      const crm = remoteMcp({ tools: CRM_TOOLS, oauth: {} });
+      crm.oauth.loginAs("time-no-crm");
+      const { conector, id } = await adicionarPeloLogin(t, crm);
+      await t.as(juliana).put(`/api/agents/${faro.id}/tools/${id("buscar cliente")}`);
+
+      crm.revoke(crm.oauth.tokenOf("time-no-crm")!);
+      const { resposta } = await perguntar(t, geral, id("buscar cliente"));
+      expect(resposta.body).toBe("A Acme é Ouro.");
+      expect(crm.oauth.renewals()).toBe(1);
+      expect(crm.calls.at(-1)).toMatchObject({ token: crm.oauth.tokenOf("time-no-crm")! });
+      const relido = (await (await t.as(juliana).get(`/api/connectors/${conector.id}`)).json()) as ConnectorDto;
+      expect(relido.credentialState).toBe("ok");
+    },
+    LONGO,
+  );
 });
 
 describe("a credencial de cada Membro pelo login", () => {
@@ -258,7 +279,9 @@ describe("o retorno do login", () => {
       crm.oauth.loginAs("time-no-crm");
       const { conector, id } = await adicionarPeloLogin(t, crm);
       await t.as(juliana).put(`/api/agents/${faro.id}/tools/${id("buscar cliente")}`);
+      // O token e a renovação deixam de valer: o 401 tenta renovar, e a renovação é recusada.
       crm.revoke(crm.oauth.tokenOf("time-no-crm")!);
+      crm.oauth.refuseRenewal();
       await perguntar(t, geral, id("buscar cliente"));
       expect((await conectores(t))[0]).toMatchObject({ credentialState: "refused" });
 
@@ -396,6 +419,20 @@ describe("renovação", () => {
 });
 
 describe("sem login no servidor", () => {
+  test("o servidor anuncia o recurso de outro sistema: não há login (o token iria para ele)", async () => {
+    const t = await testApp();
+    await workspace(t);
+    const crm = remoteMcp({ tools: CRM_TOOLS, oauth: { resource: "https://graph.exemplo.com/" } });
+
+    const res = await t.as(juliana).post("/api/connectors/login", { name: "CRM", url: crm.url, origin: INSTALACAO });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({
+      error: "oauth_unavailable",
+      message: expect.stringContaining("outro endereço"),
+    });
+    expect(await conectores(t)).toEqual([]);
+  });
+
   test(
     'o servidor não oferece login: "Ligar" diz para colar um token, e o token colado continua valendo',
     async () => {

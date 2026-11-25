@@ -549,6 +549,32 @@ describe("os repositórios do GitHub por Agente", () => {
   );
 
   test(
+    "com outra chave mestra, a tela do Agente diz que os segredos do App não abrem (não que o GitHub não respondeu)",
+    async () => {
+      const { t, gh, faro } = await comGitHub();
+      await t.shutdown();
+      // O mesmo banco, numa Instalação que subiu com outra chave mestra (a padrão é aleatória).
+      const outra = await testApp({ db: t.db, github: gh.config });
+
+      expect((await repositoriosDo(outra, faro.id)).failure).toContain("não abrem com esta chave mestra");
+    },
+    LONGO,
+  );
+
+  test(
+    "com mais de 100 repositórios (uma página do GitHub), todos aparecem e o último pode ser escolhido",
+    async () => {
+      const nomes = Array.from({ length: 120 }, (_, i) => `time/r${String(i).padStart(3, "0")}`);
+      const { t, gh, faro } = await comGitHub({ repositories: nomes });
+      for (const fullName of nomes) gh.repo({ fullName });
+
+      expect((await repositoriosDo(t, faro.id)).available).toHaveLength(120);
+      expect((await restringir(t, faro.id, ["time/r119"])).status).toBe(200);
+    },
+    LONGO,
+  );
+
+  test(
     "tirar a lista devolve ao Agente tudo o que a instalação alcança",
     async () => {
       const { t, faro } = await comGitHub({ repositories: ["time/site", "time/infra"] });

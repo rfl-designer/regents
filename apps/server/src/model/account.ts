@@ -72,8 +72,14 @@ export function accountBrain(opts: {
 
       const offered = request.tools ? await request.tools.list() : [];
       // As da web são as tools nativas do Claude Code; as outras vão pelo endpoint MCP do Shearim.
-      const native = offered.flatMap((t) => (t.origin === "web" && NATIVE_WEB[t.name] ? [NATIVE_WEB[t.name]!] : []));
       const viaMcp = request.tools && offered.some((t) => t.origin !== "web") ? request.tools : undefined;
+      // O WebFetch abre qualquer URL que o modelo monte (o `web_fetch` da Chave só as do contexto): junto
+      // com dado da porta, uma injeção levaria o dado para fora na URL. Nessa resposta, ele não liga.
+      // shortcut: o WebSearch segue ligado e poderia levar um pedaço do dado no texto da busca (só ao buscador).
+      const fetchOff = Boolean(viaMcp) && offered.some((t) => t.name === WEB_FETCH);
+      const native = offered.flatMap((t) =>
+        t.origin === "web" && NATIVE_WEB[t.name] && !(fetchOff && t.name === WEB_FETCH) ? [NATIVE_WEB[t.name]!] : [],
+      );
       if (viaMcp && !opts.mcp) throw new Error("accountBrain sem endpoint MCP recebeu Ferramentas");
       if (signal.aborted) return;
       // O teto de turnos de Ferramenta (#53) se conta no `stream-json` (as do MCP e as nativas da
@@ -84,7 +90,11 @@ export function accountBrain(opts: {
       const tools = viaMcp && refusingAfter(viaMcp, reading.capped);
       // O token da execução vale enquanto o `claude -p` dela roda.
       const session: McpSession | undefined = tools ? opts.mcp!.open(tools, signal) : undefined;
-      const args = argsFor(request, session?.config, native);
+      const args = argsFor(
+        fetchOff ? { ...request, system: `${request.system}\n\n${FETCH_OFF_NOTE}` } : request,
+        session?.config,
+        native,
+      );
       if (!(yield* claude(request, args, reading, signal, () => session?.close()))) return;
       if (signal.aborted) return;
       if (!reading.capped()) {
@@ -221,6 +231,10 @@ function transcript(used: ToolUse[]) {
 
 /** A tool nativa do Claude Code de cada Ferramenta da web: as únicas nativas que se ligam. */
 const NATIVE_WEB: Record<string, string> = { [WEB_SEARCH]: "WebSearch", [WEB_FETCH]: "WebFetch" };
+
+/** O que o modelo lê quando "abrir URL" não liga nesta resposta (o preâmbulo a listou entre as Ferramentas). */
+const FETCH_OFF_NOTE =
+  "Nesta resposta, abrir URL não está disponível (ela também lê dados do Workspace ou de sistemas de fora). Se precisar de uma página, diga isso a quem pediu.";
 
 function argsFor(request: ModelRequest, mcp: McpConfig | undefined, native: string[]): string[] {
   const args = [

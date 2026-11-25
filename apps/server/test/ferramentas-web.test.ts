@@ -5,7 +5,8 @@
  * - Pela Chave, o pedido leva as server tools da Messages API só quando concedidas, e os blocos
  *   `server_tool_use` viram passos no Andamento ("buscando na web", "abrindo <domínio>").
  * - Pela Conta, o argv liga só o WebSearch e o WebFetch concedidos e nenhuma tool nativa quando
- *   não; os blocos de tool no `stream-json` viram passos no Andamento.
+ *   não; com uma Ferramenta da porta na mesma resposta, o WebFetch não liga (ele abriria uma URL
+ *   montada com o dado lido); os blocos de tool no `stream-json` viram passos no Andamento.
  * - O custo das buscas pela Chave entra no orçamento do Agente.
  */
 import { describe, expect, test } from "bun:test";
@@ -237,7 +238,7 @@ const flag = (c: FakeClaudeCall, name: string) =>
 
 describe("pela Conta, a linha de comando", () => {
   test(
-    "o argv liga só o WebSearch e o WebFetch concedidos, e nenhuma tool nativa quando não; o endpoint MCP só vai com Ferramentas da porta e nunca lista as da web",
+    "o argv liga só o WebSearch e o WebFetch concedidos, e nenhuma tool nativa quando não; com Ferramenta da porta, o WebFetch não liga; o endpoint MCP só vai com Ferramentas da porta e nunca lista as da web",
     async () => {
       const t = await testApp();
       const { faro, geral } = await workspace(t);
@@ -256,12 +257,21 @@ describe("pela Conta, a linha de comando", () => {
       expect(busca.argv).not.toContain("--mcp-config");
       expect(busca.argv).toContain("--strict-mcp-config");
 
-      await conceder(t, faro.id, "abrir_url", "listar_agentes");
+      await conceder(t, faro.id, "abrir_url");
+      await respostaA(t, geral.id, await enviar(t, geral.id, "@Faro só a web"));
+      const web = execucoes(t)[2]!;
+      expect(flag(web, "--tools")).toBe("WebSearch,WebFetch");
+      expect(flag(web, "--allowedTools")).toBe("WebSearch,WebFetch");
+      expect(flag(web, "--system-prompt")).not.toContain("abrir URL não está disponível");
+
+      // Com uma Ferramenta da porta, o WebFetch não liga: ele abriria uma URL montada com o dado lido.
+      await conceder(t, faro.id, "listar_agentes");
       t.claude.script({ run: { kind: "steps", steps: [{ tool: { name: "listar_agentes" } }, { text: "Pronto." }] } });
       await respostaA(t, geral.id, await enviar(t, geral.id, "@Faro tudo"));
-      const tudo = execucoes(t)[2]!;
-      expect(flag(tudo, "--tools")).toBe("WebSearch,WebFetch");
-      expect(flag(tudo, "--allowedTools")).toBe("mcp__shearim,WebSearch,WebFetch");
+      const tudo = execucoes(t)[3]!;
+      expect(flag(tudo, "--tools")).toBe("WebSearch");
+      expect(flag(tudo, "--allowedTools")).toBe("mcp__shearim,WebSearch");
+      expect(flag(tudo, "--system-prompt")).toContain("abrir URL não está disponível");
       expect(t.claude.mcp()).toContainEqual({ pid: tudo.pid, listed: ["listar_agentes"] });
     },
     LONGO,

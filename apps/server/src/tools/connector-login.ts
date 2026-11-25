@@ -24,7 +24,7 @@ import type {
   OAuthClientInformationMixed,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
-import { resourceUrlFromServerUrl } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
+import { checkResourceAllowed, resourceUrlFromServerUrl } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
 
 /** O que a credencial ligada pelo login guarda (cifrado) para se renovar. */
 export interface LoginGrant {
@@ -88,7 +88,12 @@ export async function beginLogin(
   if (!metadata.registration_endpoint) {
     throw new NoLogin("o servidor tem login, mas não aceita o registro de um cliente novo");
   }
-  const resource = info.resourceMetadata?.resource ?? resourceUrlFromServerUrl(serverUrl).href;
+  const own = resourceUrlFromServerUrl(serverUrl);
+  const resource = info.resourceMetadata?.resource ?? own.href;
+  // RFC 9728 §3.3: um recurso de outro endereço pediria um token de outro sistema, que iria para este servidor.
+  if (!checkResourceAllowed({ requestedResource: own, configuredResource: resource })) {
+    throw new NoLogin("o servidor pede login para outro endereço que não o dele");
+  }
   const scope = info.resourceMetadata?.scopes_supported?.join(" ") || undefined;
   let client: OAuthClientInformationMixed;
   try {

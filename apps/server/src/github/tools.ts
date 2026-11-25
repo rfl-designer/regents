@@ -1,5 +1,5 @@
 import { type ReadTool, type ToolDefinition, ToolFailure, WRITE_NOTE, type WriteTool } from "../tools/port";
-import type { GitHub, GitHubPermissions } from "./connector";
+import { type GitHub, type GitHubPermissions, installationRepositoriesOf } from "./connector";
 
 /** O tamanho máximo de um arquivo que volta ao modelo (o resto é cortado, com aviso). */
 const MAX_FILE_CHARS = 60_000;
@@ -163,15 +163,12 @@ export function githubTools(github: GitHub): ToolDefinition[] {
       },
       { metadata: "read" },
       async (api) => {
-        const res = await api.get<{
-          repositories: {
-            full_name: string;
-            private: boolean;
-            description: string | null;
-            default_branch: string;
-          }[];
-        }>("/installation/repositories?per_page=100");
-        const list = res?.repositories ?? [];
+        const list = await installationRepositoriesOf<{
+          full_name: string;
+          private: boolean;
+          description: string | null;
+          default_branch: string;
+        }>(api);
         if (!list.length) return "Nenhum repositório: o GitHub App não alcança nenhum.";
         return list
           .map(

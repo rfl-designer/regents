@@ -81,8 +81,11 @@ type Json = Record<string, unknown>;
 export function startRemoteMcp(opts: {
   token?: string | string[];
   tools: FakeRemoteTool[];
-  /** O servidor oferece login (OAuth); `expiresIn` é a validade do token de acesso, em segundos. */
-  oauth?: { expiresIn?: number };
+  /**
+   * O servidor oferece login (OAuth); `expiresIn` é a validade do token de acesso, em segundos.
+   * `resource` troca o recurso anunciado no RFC 9728 (padrão: o próprio `/mcp`).
+   */
+  oauth?: { expiresIn?: number; resource?: string };
 }): FakeRemoteMcp {
   let accepted = new Set(typeof opts.token === "string" ? [opts.token] : (opts.token ?? []));
   let tools = opts.tools;
@@ -179,7 +182,7 @@ export function startRemoteMcp(opts: {
 
   async function authServer(req: Request, url: URL): Promise<Response | null> {
     const origin = url.origin;
-    const resource = `${origin}/mcp`;
+    const resource = opts.oauth?.resource ?? `${origin}/mcp`;
     const path = url.pathname;
     if (path.startsWith("/.well-known/")) {
       if (!oauthOn) return json({ error: "not_found" }, 404);

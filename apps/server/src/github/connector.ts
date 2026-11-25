@@ -103,7 +103,8 @@ export function createGitHub(deps: { db: Db; clock: Clock; secrets: SecretBox; c
   async function asApp(path: string, init: RequestInit = {}) {
     const r = await row();
     const s = r && (await appSecrets(r));
-    if (!r?.appId || !s) throw new Error("o GitHub App não existe ou os segredos dele não abrem com esta chave mestra");
+    if (!r?.appId || !s)
+      throw new ToolFailure("o GitHub App não existe ou os segredos dele não abrem com esta chave mestra");
     return fetch(`${config.apiUrl}${path}`, {
       ...init,
       headers: { ...API_HEADERS, authorization: `Bearer ${appJwt(r.appId, s.pem)}`, ...init.headers },
@@ -232,7 +233,7 @@ export function createGitHub(deps: { db: Db; clock: Clock; secrets: SecretBox; c
           signal,
         });
       } catch (err) {
-        if (signal?.aborted) throw err;
+        if (signal?.aborted || err instanceof ToolFailure) throw err;
         throw new ToolFailure("o GitHub não respondeu");
       }
       if (res.status === 404 || res.status === 403) {
@@ -296,8 +297,8 @@ export function createGitHub(deps: { db: Db; clock: Clock; secrets: SecretBox; c
     /** Os repositórios que a instalação alcança agora (`dono/nome`, em ordem), perguntados ao GitHub. */
     async installationRepositories(signal?: AbortSignal): Promise<string[]> {
       const api = await github.session({ permissions: { metadata: "read" } }, signal ?? new AbortController().signal);
-      const res = await api.get<{ repositories: { full_name: string }[] }>("/installation/repositories?per_page=100");
-      return (res?.repositories ?? []).map((repo) => repo.full_name).sort((a, b) => a.localeCompare(b));
+      const all = await installationRepositoriesOf<{ full_name: string }>(api);
+      return all.map((repo) => repo.full_name).sort((a, b) => a.localeCompare(b));
     },
 
     /**
@@ -334,3 +335,15 @@ export function createGitHub(deps: { db: Db; clock: Clock; secrets: SecretBox; c
 }
 
 export type GitHub = ReturnType<typeof createGitHub>;
+
+/** Todas as páginas de `/installation/repositories` (o GitHub dá no máximo 100 por página). */
+export async function installationRepositoriesOf<T>(api: { get<U>(path: string): Promise<U | null> }): Promise<T[]> {
+  const all: T[] = [];
+  for (let page = 1; ; page++) {
+    const list =
+      (await api.get<{ repositories: T[] }>(`/installation/repositories?per_page=100&page=${page}`))?.repositories ??
+      [];
+    all.push(...list);
+    if (list.length < 100) return all;
+  }
+}
