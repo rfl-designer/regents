@@ -38,6 +38,12 @@ export interface FakeReply {
    * houver), com `stop_reason: "tool_use"`. A próxima chamada traz os `tool_result` (`toolResults`).
    */
   toolUse?: { name: string; input?: Record<string, unknown>; id?: string }[];
+  /**
+   * As server tools da web que o lado da Anthropic roda antes do texto: um bloco `server_tool_use`
+   * e o resultado (`web_search_tool_result`/`web_fetch_tool_result`) por item, ou o erro dele
+   * (`error`: o `error_code`). Cada busca sem erro conta em `usage.server_tool_use.web_search_requests`.
+   */
+  serverToolUse?: { name: "web_search" | "web_fetch"; input?: Record<string, unknown>; id?: string; error?: string }[];
 }
 
 /** Uma chamada que chegou ao falso. */
@@ -148,11 +154,15 @@ export async function startFakeMessagesApi(
           controller.enqueue(sse(event, data));
           if (delay) await sleep(delay);
         };
+        const searches = (reply.serverToolUse ?? []).filter((s) => s.name === "web_search" && !s.error).length;
         const finish = async (stopReason: string) => {
           await send("message_delta", {
             type: "message_delta",
             delta: { stop_reason: stopReason, stop_sequence: null },
-            usage: { output_tokens: usage.output_tokens },
+            usage: {
+              output_tokens: usage.output_tokens,
+              ...(reply.serverToolUse && { server_tool_use: { web_search_requests: searches, web_fetch_requests: 0 } }),
+            },
           });
           await send("message_stop", { type: "message_stop" });
           controller.close();
@@ -217,6 +227,43 @@ export async function startFakeMessagesApi(
               type: "content_block_delta",
               index,
               delta: { type: "signature_delta", signature: "assinatura-falsa" },
+            });
+            await send("content_block_stop", { type: "content_block_stop", index });
+            index++;
+          }
+          for (const server of reply.serverToolUse ?? []) {
+            const id = server.id ?? `srvtoolu_falso_${crypto.randomUUID()}`;
+            const input = server.input ?? {};
+            await send("content_block_start", {
+              type: "content_block_start",
+              index,
+              content_block: { type: "server_tool_use", id, name: server.name, input: {} },
+            });
+            await send("content_block_delta", {
+              type: "content_block_delta",
+              index,
+              delta: { type: "input_json_delta", partial_json: JSON.stringify(input) },
+            });
+            await send("content_block_stop", { type: "content_block_stop", index });
+            index++;
+            const url = String(input.url ?? "https://exemplo.com/");
+            const content = server.error
+              ? { type: `${server.name}_tool_result_error`, error_code: server.error }
+              : server.name === "web_search"
+                ? [{ type: "web_search_result", url, title: "Resultado", encrypted_content: "xyz", page_age: null }]
+                : {
+                    type: "web_fetch_result",
+                    url,
+                    retrieved_at: "2026-11-24T12:00:00Z",
+                    content: {
+                      type: "document",
+                      source: { type: "text", media_type: "text/plain", data: "A página." },
+                    },
+                  };
+            await send("content_block_start", {
+              type: "content_block_start",
+              index,
+              content_block: { type: `${server.name}_tool_result`, tool_use_id: id, content },
             });
             await send("content_block_stop", { type: "content_block_stop", index });
             index++;

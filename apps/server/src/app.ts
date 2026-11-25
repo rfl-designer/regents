@@ -35,6 +35,7 @@ import { threadRoutes } from "./threads";
 import { createMcpEndpoint } from "./tools/mcp";
 import { createToolPort, type ToolDefinition } from "./tools/port";
 import { agentToolRoutes } from "./tools/routes";
+import { WEB_TOOLS } from "./tools/web";
 import { WORKSPACE_TOOLS } from "./tools/workspace";
 import { workspaceContextRoutes } from "./workspace-context";
 import { workspaceKeyRoutes } from "./workspace-key";
@@ -140,7 +141,7 @@ export function createApp(deps: AppDeps) {
   const tools = createToolPort({
     db,
     clock,
-    definitions: deps.tools?.definitions ?? WORKSPACE_TOOLS,
+    definitions: deps.tools?.definitions ?? [...WORKSPACE_TOOLS, ...WEB_TOOLS],
     timeoutMs: deps.tools?.timeoutMs,
   });
   // As mensagens novas (de pessoa e as respostas de Agente) vão ao push pelo mesmo `messageCreated`.

@@ -2,6 +2,7 @@ import { asc, desc, eq } from "drizzle-orm";
 import { withBuiltinText } from "../articuladora";
 import { schema } from "../db/client";
 import type { ToolDefinition } from "./port";
+import { WEB_TOOLS } from "./web";
 import { WORKSPACE_READ_TOOLS } from "./workspace-read";
 import { WORKSPACE_WRITES } from "./workspace-writes";
 
@@ -34,7 +35,7 @@ const listAgents: ToolDefinition = {
       .innerJoin(mentionHandles, eq(mentionHandles.agentId, agents.id))
       .orderBy(desc(agents.builtin), asc(agents.createdAt), asc(agents.name));
     const grants = await db.select().from(agentTools);
-    const titles = new Map(WORKSPACE_TOOLS.map((t) => [t.id, t.title]));
+    const titles = new Map([...WORKSPACE_TOOLS, ...WEB_TOOLS].map((t) => [t.id, t.title]));
     return rows
       .map((row) => {
         const a = withBuiltinText({ ...row, instructions: "" });

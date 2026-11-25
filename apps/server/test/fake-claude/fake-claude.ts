@@ -350,6 +350,46 @@ async function toolStep(step: { name: string; input?: Record<string, unknown> })
   ev({ type: "message_start", message: { id: "msg_fake_2", role: "assistant", model: modelArg(), content: [] } });
 }
 
+/** Uma tool nativa (`{ native }`): o mesmo desenho do `tool_use`/`tool_result` das do MCP. */
+function nativeStep(step: { name: string; input?: Record<string, unknown>; error?: string; hang?: true }) {
+  const input = step.input ?? {};
+  const id = `toolu_fake_${blockIndex}`;
+  const index = blockIndex++;
+  const caller = { type: "direct" };
+  const tools = argv.includes("--tools") ? argv[argv.indexOf("--tools") + 1]!.split(",") : [];
+  ev({
+    type: "content_block_start",
+    index,
+    content_block: { type: "tool_use", id, name: step.name, input: {}, caller },
+  });
+  ev({ type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: JSON.stringify(input) } });
+  ev({ type: "content_block_stop", index });
+  ev({ type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 1 } });
+  ev({ type: "message_stop" });
+  line({
+    type: "assistant",
+    message: { role: "assistant", content: [{ type: "tool_use", id, name: step.name, input, caller }] },
+  });
+  if (step.hang) return true;
+  const error = tools.includes(step.name)
+    ? step.error
+    : `<tool_use_error>Error: No such tool available: ${step.name}</tool_use_error>`;
+  lastToolResult = error ?? `Resultado de ${step.name}.`;
+  line({
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        error
+          ? { type: "tool_result", content: error, is_error: true, tool_use_id: id }
+          : { tool_use_id: id, type: "tool_result", content: [{ type: "text", text: lastToolResult }] },
+      ],
+    },
+  });
+  ev({ type: "message_start", message: { id: "msg_fake_2", role: "assistant", model: modelArg(), content: [] } });
+  return false;
+}
+
 async function steps(run: Extract<FakeRun, { kind: "steps" }>): Promise<number> {
   ev({ type: "message_start", message: { id: "msg_fake", role: "assistant", model: modelArg(), content: [] } });
   let text = "";
@@ -365,6 +405,8 @@ async function steps(run: Extract<FakeRun, { kind: "steps" }>): Promise<number> 
       text += body;
     } else if ("tool" in step) {
       await toolStep(step.tool);
+    } else if ("native" in step) {
+      if (nativeStep(step.native)) return hangForever();
     } else if ("thinking" in step) {
       const index = blockIndex++;
       ev({ type: "content_block_start", index, content_block: { type: "thinking", thinking: "" } });

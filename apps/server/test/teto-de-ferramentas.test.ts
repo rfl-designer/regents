@@ -136,6 +136,35 @@ describe("pela Chave", () => {
     },
     LONGO,
   );
+
+  test(
+    "a retomada de um turno pausado pelas Ferramentas da web (pause_turn) conta como turno de Ferramenta: nenhuma volta fica sem teto",
+    async () => {
+      const t = await testApp({ tools: { maxTurns: 2 } });
+      const { faro, geral } = await workspace(t);
+      await t.as(juliana).put(`/api/agents/${faro.id}/tools/buscar_na_web`);
+      const aba = await t.socket(juliana);
+
+      // A Anthropic pausaria o turno para sempre; o roteiro só tem texto na 3ª chamada.
+      const pausado = {
+        serverToolUse: [{ name: "web_search" as const, input: { query: "preços" } }],
+        stopReason: "pause_turn",
+      };
+      t.anthropic.reply(listar("toolu_1"), pausado, { text: "Com o que achei." });
+      const origem = await enviar(t, geral.id, "@Faro quanto custa o concorrente?");
+
+      await andamento(aba, origem, (e) => e.toolLimit);
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Com o que achei.");
+      const [primeiro, segundo, terceiro, ...resto] = respostas(t);
+      expect(resto).toEqual([]);
+      expect(semFerramentas(primeiro!)).toBe(false);
+      expect(semFerramentas(segundo!)).toBe(false);
+      // O 1º turno pediu "listar Agentes"; o 2º pausou na busca; a retomada vai sem Ferramentas.
+      expect(semFerramentas(terceiro!)).toBe(true);
+      expect(terceiro!.body.messages.at(-1)?.role).toBe("assistant");
+    },
+    LONGO,
+  );
 });
 
 describe("a continuação de um Pedido de aprovação", () => {
@@ -223,6 +252,42 @@ describe("pela Conta", () => {
       const terminou = await andamento(aba, origem, (e) => e.state === "done");
       expect(terminou.toolLimit).toBe(true);
       expect(terminou.tools).toHaveLength(3);
+    },
+    LONGO,
+  );
+
+  test(
+    "os turnos das tools nativas da web (WebSearch) também contam, e o último claude -p vai sem elas",
+    async () => {
+      const t = await testApp({ tools: { maxTurns: 2 } });
+      const { faro, geral } = await workspace(t);
+      await t.as(juliana).put(`/api/agents/${faro.id}/tools/buscar_na_web`);
+      await t.linkAccount(bruno);
+      const aba = await t.socket(juliana);
+
+      const busca = { native: { name: "WebSearch" as const, input: { query: "preços" } } };
+      t.claude.script({
+        runs: [
+          {
+            kind: "steps",
+            steps: [busca, { tool: { name: "listar_agentes" } }, busca, { text: "não devia sair" }],
+          },
+          { kind: "steps", steps: [{ text: "Com o que achei." }] },
+        ],
+      });
+      const origem = await enviar(t, geral.id, "@Faro quanto custa o concorrente?");
+
+      await andamento(aba, origem, (e) => e.toolLimit);
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Com o que achei.");
+      const [comFerramentas, ultimo, ...resto] = execucoes(t);
+      expect(resto).toEqual([]);
+      expect(comFerramentas!.argv[comFerramentas!.argv.indexOf("--tools") + 1]).toBe("WebSearch");
+      // O último não tem nem as nativas nem o MCP, e recebe o que a busca e o MCP trouxeram.
+      expect(ultimo!.argv[ultimo!.argv.indexOf("--tools") + 1]).toBe("");
+      expect(ultimo!.argv).not.toContain("--mcp-config");
+      expect(ultimo!.stdin).toContain("Resultado de WebSearch.");
+      expect(ultimo!.stdin).toContain("Faro (@faro): Comercial: preços e propostas.");
+      expect(ultimo!.stdin).toContain("limite de Ferramentas");
     },
     LONGO,
   );

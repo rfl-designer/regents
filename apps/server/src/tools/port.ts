@@ -109,8 +109,20 @@ export interface WriteTool extends ToolBase {
   perform(ctx: WriteContext, action: Record<string, unknown>, signal: AbortSignal): Promise<string>;
 }
 
+/**
+ * Uma Ferramenta que roda no próprio cérebro, não na porta (as da web): pela Chave, uma server tool
+ * da Messages API; pela Conta, uma tool nativa do Claude Code. A porta só a concede, a lista e grava
+ * os passos que o cérebro avisa (`ExecutionTools.track`).
+ */
+export interface BrainTool extends ToolBase {
+  access: "read";
+  runsIn: "brain";
+}
+
 /** Uma Ferramenta do catálogo: o que o Admin concede e o que a porta executa. */
-export type ToolDefinition = ReadTool | WriteTool;
+export type ToolDefinition = ReadTool | WriteTool | BrainTool;
+
+const runsInBrain = (def: ToolDefinition): def is BrainTool => "runsIn" in def;
 
 /** Uma Ferramenta como o cérebro a oferece ao modelo. */
 export interface ToolSpec {
@@ -137,6 +149,12 @@ export interface ExecutionTools {
    * voltam como `isError` com o motivo, e a resposta segue. `signal` é o da execução.
    */
   call(name: string, input: unknown, signal: AbortSignal): Promise<ToolResult>;
+  /**
+   * Um uso de Ferramenta que roda no cérebro (as da web): grava o começo com o rótulo ("abrindo
+   * exemplo.com"), avisa o Andamento e devolve como terminar (`failure`: o motivo). Vale o prazo da
+   * Ferramenta: se o cérebro não avisar o fim a tempo, o uso termina em falha com o motivo.
+   */
+  track(name: string, label: string): Promise<(failure?: string) => Promise<void>>;
 }
 
 /** Quem acompanha os usos de Ferramenta de uma execução (o Andamento e a vigia, em `executions.ts`). */
@@ -284,7 +302,49 @@ export function createToolPort(deps: {
 
     /** As Ferramentas de uma execução, com cada uso gravado e avisado a `observer`. */
     forExecution(run: ToolRun, observer: ToolObserver): ExecutionTools {
+      /** Grava o começo de um uso e avisa o Andamento. */
+      async function begin(def: ToolDefinition, label: string) {
+        const id = crypto.randomUUID();
+        await db.insert(executionToolCalls).values({
+          id,
+          executionId: run.executionId,
+          attempt: run.attempt,
+          tool: def.id,
+          title: def.title,
+          label,
+          state: "running",
+          startedAt: clock.now(),
+        });
+        await observer.started();
+        return id;
+      }
+      /** Grava o fim (com o motivo, se falhou) e avisa o Andamento. */
+      async function end(id: string, failure?: string) {
+        await db
+          .update(executionToolCalls)
+          .set({ state: failure ? "failed" : "done", reason: failure ?? null, finishedAt: clock.now() })
+          .where(eq(executionToolCalls.id, id));
+        await observer.finished();
+      }
+
       return {
+        async track(name, label) {
+          const def = byId.get(name);
+          if (!def) return async () => {};
+          const id = await begin(def, label);
+          let ended: Promise<void> | undefined;
+          const finish = (failure?: string) => {
+            cancelTimer();
+            ended ??= end(id, failure);
+            return ended;
+          };
+          const timeout = def.timeoutMs ?? defaultTimeout;
+          const cancelTimer = clock.after(timeout, () => {
+            void finish(`não terminou em ${Math.round(timeout / 1000)} s`);
+          });
+          return finish;
+        },
+
         async list() {
           return (await grantedTo(run.agentId)).map((d) => ({
             name: d.id,
@@ -299,33 +359,17 @@ export function createToolPort(deps: {
         async call(name, input, signal) {
           // A concessão é conferida na hora: o Admin pode tê-la retirado no meio da resposta.
           const def = (await grantedTo(run.agentId)).find((d) => d.id === name);
-          if (!def) return { content: `A Ferramenta ${name} não está disponível para você.`, isError: true };
-          const id = crypto.randomUUID();
-          await db.insert(executionToolCalls).values({
-            id,
-            executionId: run.executionId,
-            attempt: run.attempt,
-            tool: def.id,
-            title: def.title,
-            label: def.label,
-            state: "running",
-            startedAt: clock.now(),
-          });
-          await observer.started();
+          // As da web rodam no cérebro: nunca por aqui (nem pelo endpoint MCP).
+          if (!def || runsInBrain(def)) {
+            return { content: `A Ferramenta ${name} não está disponível para você.`, isError: true };
+          }
+          const id = await begin(def, def.label);
           // A escrita não roda aqui: só a conferência e a ação exata, que vira o Pedido de aprovação.
           const outcome =
             def.access === "read"
               ? await execute(def, (s) => def.run({ db, run }, input, s), signal)
               : await execute(def, (s) => def.prepare({ db, run }, input, s), signal);
-          await db
-            .update(executionToolCalls)
-            .set({
-              state: outcome.ok ? "done" : "failed",
-              reason: outcome.ok ? null : outcome.reason,
-              finishedAt: clock.now(),
-            })
-            .where(eq(executionToolCalls.id, id));
-          await observer.finished();
+          await end(id, outcome.ok ? undefined : outcome.reason);
           if (!outcome.ok) return { content: `A Ferramenta ${def.title} falhou: ${outcome.reason}.`, isError: true };
           if (def.access === "read") return { content: outcome.value as string, isError: false };
           const prepared = outcome.value as { action: Record<string, unknown>; summary: string };
