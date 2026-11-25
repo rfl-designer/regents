@@ -76,8 +76,10 @@ const anthropic = await startFakeMessagesApi({
     const [resultado] = toolResults(req.body);
     if (resultado) {
       // Só o resultado da Ferramenta do CRM (bem ou mal): o de "listar Agentes" pode citar "buscar cliente".
-      const slow = /^(Cliente |A Ferramenta buscar cliente )/.test(resultado.content);
-      return { text: `Pela Ferramenta: ${resultado.content.split("\n")[0]}`, delayMs: slow ? 2000 : delayMs };
+      // O resultado bem-sucedido vem marcado como dado (`<resultado_de_ferramenta …>`): a primeira linha é o conteúdo.
+      const content = resultado.content.replace(/^<resultado_de_ferramenta[^>]*>\n/, "");
+      const slow = /^(Cliente |A Ferramenta buscar cliente )/.test(content);
+      return { text: `Pela Ferramenta: ${content.split("\n")[0]}`, delayMs: slow ? 2000 : delayMs };
     }
     // O contexto leva as mensagens recentes num só `user`, uma por parágrafo, e fecha com
     // "Responda à última mensagem…": a de origem é o penúltimo parágrafo.

@@ -279,7 +279,11 @@ describe("o passo da Ferramenta no Andamento pela Conta", () => {
       lenta.soltar("contrato-2019.pdf");
       const depois = await andamento(aba, origem, (e) => e.step === "writing" && e.tools.length > 0);
       expect(depois.tools[0]!.state).toBe("done");
-      expect((await respostaA(t, geral.id, origem)).body).toBe("contrato-2019.pdf");
+      // O resultado chega ao modelo marcado como dado, como pela Chave.
+      const marcado =
+        '<resultado_de_ferramenta nome="consultar_arquivo">\ncontrato-2019.pdf\n</resultado_de_ferramenta>';
+      expect((await respostaA(t, geral.id, origem)).body).toBe(marcado);
+      expect(t.claude.mcp().at(-1)).toMatchObject({ result: { isError: false, content: marcado } });
     },
     LONGO,
   );

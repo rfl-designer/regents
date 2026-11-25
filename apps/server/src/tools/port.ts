@@ -437,7 +437,7 @@ export function createToolPort(deps: {
               : await execute(def, (s) => def.prepare({ db, run }, input, s), signal);
           await end(id, outcome.ok ? undefined : outcome.reason, outcome.ok ? undefined : outcome.connect);
           if (!outcome.ok) return { content: `A Ferramenta ${def.title} falhou: ${outcome.reason}.`, isError: true };
-          if (def.access === "read") return { content: outcome.value as string, isError: false };
+          if (def.access === "read") return { content: markAsData(def.id, outcome.value as string), isError: false };
           const prepared = outcome.value as { action: Record<string, unknown>; summary: string };
           // A execução termina aqui (o `signal` aborta): o que volta ao modelo não chega a ser lido.
           return (await observer.approvalRequested({ tool: def, ...prepared }))
@@ -450,6 +450,15 @@ export function createToolPort(deps: {
 }
 
 export type ToolPort = ReturnType<typeof createToolPort>;
+
+/**
+ * O resultado de uma Ferramenta como os dois cérebros o entregam ao modelo: entre marcadores
+ * explícitos de dado (Spec #44), com um marcador forjado dentro do conteúdo neutralizado.
+ */
+export function markAsData(tool: string, content: string) {
+  const safe = content.replace(/<(\/?)(resultado_de_ferramenta)/gi, "&lt;$1$2");
+  return `<resultado_de_ferramenta nome="${tool}">\n${safe}\n</resultado_de_ferramenta>`;
+}
 
 /** "<causa>; pode ter sido feita — confira no GitHub": a escrita de resultado incerto. */
 function uncertainReason(def: ToolDefinition | undefined, cause: string) {

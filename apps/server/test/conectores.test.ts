@@ -215,7 +215,9 @@ describe("pela Chave", () => {
       expect(nomes(t, 0)).toEqual([id("buscar cliente")]);
       expect(crm.calls).toEqual([{ name: "buscar_cliente", arguments: { nome: "Acme" }, token: TOKEN }]);
       const [resultado] = toolResults(respostas(t)[1]!.body);
-      expect(resultado?.content).toBe("Cliente Acme: plano Ouro, desde 2021.");
+      expect(resultado?.content).toBe(
+        `<resultado_de_ferramenta nome="${id("buscar cliente")}">\nCliente Acme: plano Ouro, desde 2021.\n</resultado_de_ferramenta>`,
+      );
       expect(resultado?.is_error).toBeFalsy();
     },
     LONGO,
@@ -279,7 +281,9 @@ describe("pela Conta", () => {
       });
 
       const origem = await enviar(t, geral.id, "@Faro a Acme é cliente?", juliana);
-      expect((await respostaA(t, geral.id, origem)).body).toBe("Cliente Acme: plano Ouro, desde 2021.");
+      expect((await respostaA(t, geral.id, origem)).body).toBe(
+        `<resultado_de_ferramenta nome="${id("buscar cliente")}">\nCliente Acme: plano Ouro, desde 2021.\n</resultado_de_ferramenta>`,
+      );
 
       const [listou] = t.claude.mcp();
       expect(listou).toMatchObject({ listed: [id("buscar cliente")] });
