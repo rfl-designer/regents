@@ -14,15 +14,18 @@ async function chamar<T>(app: { baseUrl: string }, method: string, path: string,
   return (res.status === 204 ? undefined : res.json()) as Promise<T>;
 }
 
-/** O CRM falso que o `serve.ts` subiu. */
-const crm = () =>
-  JSON.parse(readFileSync(resolve(import.meta.dirname, "../.e2e/crm.json"), "utf8")) as { url: string; token: string };
+/** O CRM falso que o `serve.ts` deste app subiu (o arquivo leva a porta do app). */
+const crm = (app: { baseUrl: string }) =>
+  JSON.parse(readFileSync(resolve(import.meta.dirname, `../.e2e/crm-${new URL(app.baseUrl).port}.json`), "utf8")) as {
+    url: string;
+    token: string;
+  };
 
 describe("Conector com a credencial de cada Membro", () => {
   test('sem a credencial, o Andamento mostra a Ferramenta indisponível com "Ligar CRM", e o Membro liga a dele em Meus Conectores', {
     timeout: 120_000,
   }, async ({ app, screen }) => {
-    const { url, token } = crm();
+    const { url, token } = crm(app);
     const sufixo = Date.now() % 1_000_000;
     const nome = `CRM${sufixo}`;
     await chamar(app, "PUT", "/api/workspace-key", { apiKey: "sk-ant-e2e" });

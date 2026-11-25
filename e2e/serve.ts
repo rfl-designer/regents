@@ -20,7 +20,7 @@
  * Pedido de aprovação; a continuação responde o padrão.
  *
  * Sobe também um CRM falso (servidor MCP remoto, `startRemoteMcp`) que aceita o token `crm-e2e`, com
- * a leitura `buscar_cliente`; o endereço e o token ficam em `.e2e/crm.json`, para o teste adicionar o
+ * a leitura `buscar_cliente`; o endereço e o token ficam em `.e2e/crm-<PORT>.json`, para o teste adicionar o
  * Conector. Com `[crm]`, o Agente que tem a Ferramenta dele a pede, e a resposta seguinte sai bem
  * devagar (2 s por pedaço), para o Andamento com o uso dela ficar à vista.
  *
@@ -58,7 +58,8 @@ const crm = startRemoteMcp({
   ],
 });
 mkdirSync(".e2e", { recursive: true });
-writeFileSync(".e2e/crm.json", JSON.stringify({ url: crm.url, token: "crm-e2e" }));
+// Um arquivo por app (pela porta): o runner pode subir mais de um ao mesmo tempo.
+writeFileSync(`.e2e/crm-${process.env.PORT}.json`, JSON.stringify({ url: crm.url, token: "crm-e2e" }));
 
 const delayMs = Number(process.env.FAKE_MESSAGES_API_DELAY_MS ?? 400);
 const failures = new Map<string, number>();
@@ -67,7 +68,8 @@ const anthropic = await startFakeMessagesApi({
     if (req.body.output_config) return desfecho(req);
     const [resultado] = toolResults(req.body);
     if (resultado) {
-      const slow = resultado.content.includes("buscar cliente") || resultado.content.startsWith("Cliente ");
+      // Só o resultado da Ferramenta do CRM (bem ou mal): o de "listar Agentes" pode citar "buscar cliente".
+      const slow = /^(Cliente |A Ferramenta buscar cliente )/.test(resultado.content);
       return { text: `Pela Ferramenta: ${resultado.content.split("\n")[0]}`, delayMs: slow ? 2000 : delayMs };
     }
     // O contexto leva as mensagens recentes num só `user`, uma por parágrafo, e fecha com
