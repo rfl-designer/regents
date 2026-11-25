@@ -904,7 +904,7 @@ export type MemoryScope = "workspace" | "conversation" | "agent";
 
 /**
  * Um item de Memória, como quem vê a conversa de origem o vê (ADR 0012). Item de
- * `GET /api/conversations/:id/memory` e de `memory.updated`.
+ * `GET /api/conversations/:id/memory`, de `GET /api/agents/:id/memory` e de `memory.updated`.
  */
 export interface MemoryItemDto {
   id: string;
@@ -916,6 +916,11 @@ export interface MemoryItemDto {
    * trecho, para a lista mostrar de onde veio e saltar até ela. Nula como `conversationId`.
    */
   origin: { messageId: string; threadRootId: string | null; author: string; excerpt: string } | null;
+  /**
+   * Na Memória do Agente (`scope: "agent"`): de quem é a lição (o Andamento mostra "guardou na
+   * Memória de Faro: …"). Nulo nos outros escopos.
+   */
+  agent: { id: string; name: string } | null;
   text: string;
   /**
    * Quem guardou: a extração (o Shearim, ao fim da resposta de um Agente: o Andamento da mensagem
@@ -1231,6 +1236,12 @@ export type ServerEvent =
    * origem (ADR 0012). O cliente trata como "insere ou troca pelo `id`".
    */
   | { type: "memory.updated"; item: MemoryItemDto }
+  /**
+   * O Admin apagou um Agente (#65), para todos: ele sai das listas e dos Canais, e a Memória do
+   * Agente dele sai junto (o cliente tira os itens com `agent.id` igual). A Memória da Conversa que
+   * ele gerou e as mensagens dele ficam.
+   */
+  | { type: "agent.deleted"; agentId: string }
   /** A Articuladora deu o Desfecho de uma mensagem, para quem vê a conversa. */
   | { type: "outcome.created"; outcome: OutcomeDto }
   /** Um Pedido de aprovação novo, ou que mudou de estado: para quem vê a conversa. */

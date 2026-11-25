@@ -1,12 +1,20 @@
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
 import { findVisibleConversation } from "../conversations";
-import { type Db, schema } from "../db/client";
+import { type Db, isUuid, schema } from "../db/client";
 import type { EventHub } from "../events";
 import type { Env } from "../members";
 import { MAX_ITEM_LENGTH } from "./extraction";
-import { conversationMemory, correctItem, editableItem, publishMemory, selectMemory, undoItem } from "./items";
+import {
+  agentMemory,
+  conversationMemory,
+  correctItem,
+  editableItem,
+  publishMemory,
+  selectMemory,
+  undoItem,
+} from "./items";
 
 /**
  * As rotas da Memória (spec #60). Cada Membro, Admin inclusive, só vê a Memória cuja conversa
@@ -25,6 +33,23 @@ export function memoryRoutes(deps: { db: Db; clock: Clock; events: EventHub }) {
     const conversation = await findVisibleConversation(db, c.get("member"), c.req.param("id"));
     if (!conversation) return c.json({ error: "not_found" }, 404);
     return c.json(await conversationMemory(db, conversation.id));
+  });
+
+  /**
+   * A Memória do Agente (a tela do Agente, para todo Membro): só os itens cuja conversa de origem
+   * quem olha vê, Admin inclusive. Ativos e arquivados, do mais novo ao mais velho.
+   */
+  routes.get("/agents/:id/memory", async (c) => {
+    const id = c.req.param("id");
+    const { agents } = schema;
+    const [agent] = isUuid(id)
+      ? await db
+          .select({ id: agents.id })
+          .from(agents)
+          .where(and(eq(agents.id, id), isNull(agents.deletedAt)))
+      : [];
+    if (!agent) return c.json({ error: "not_found" }, 404);
+    return c.json(await agentMemory(db, agent.id, c.get("member").id));
   });
 
   /** Desfaz um item: ele fica arquivado, sem versão nova, e sai do resumo. Devolve o item. */

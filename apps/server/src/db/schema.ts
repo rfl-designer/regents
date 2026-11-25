@@ -140,9 +140,17 @@ export const agents = pgTable(
      * na fila e não recebem o resumo nem a busca na Memória. Só o Admin muda; vem ligada.
      */
     memoryEnabled: boolean().notNull().default(true),
+    /**
+     * O Admin apagou o Agente (#65). A linha fica, só com o nome, a foto e a descrição de antes,
+     * para o histórico das conversas (as mensagens, o Andamento, os Desfechos e os gastos dele
+     * apontam para ela); ele sai das listas, dos Canais e do identificador de Menção, e não age
+     * mais. A Memória do Agente sai junto; a Memória da Conversa que ele gerou fica.
+     */
+    deletedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
-    uniqueIndex("agents_name_lower_unique").on(sql`lower(${t.name})`),
+    // O nome volta a ficar livre quando o Agente é apagado.
+    uniqueIndex("agents_name_lower_unique").on(sql`lower(${t.name})`).where(sql`${t.deletedAt} is null`),
     uniqueIndex("agents_one_builtin").on(t.builtin).where(sql`${t.builtin}`),
   ],
 );

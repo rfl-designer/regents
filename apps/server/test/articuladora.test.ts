@@ -120,7 +120,8 @@ describe("o Admin adapta a Articuladora sem quebrar o Desfecho", () => {
     const apagar = await t.as(juliana).delete(`/api/agents/${sophya.id}`);
     const doBruno = await t.as(bruno).patch(`/api/agents/${sophya.id}`, { name: "Bruna" });
 
-    expect(apagar.status).toBe(404);
+    expect(apagar.status).toBe(403);
+    expect(await apagar.json()).toMatchObject({ error: "builtin_locked" });
     expect(doBruno.status).toBe(403);
     expect(await articuladora(t)).toEqual(sophya);
   });

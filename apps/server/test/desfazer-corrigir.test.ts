@@ -134,6 +134,7 @@ describe("corrigir", () => {
       scope: "conversation",
       conversationId: produto.id,
       origin: item!.origin,
+      agent: null,
       text: "O preço sobe em fevereiro.",
       createdBy: "member",
       state: "active",

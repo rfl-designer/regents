@@ -26,6 +26,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { AgentPanel } from "./AgentView";
 import { Avatar } from "./Avatar";
 import { agentToolsText } from "./agent-tools";
 import { api } from "./api";
@@ -107,6 +108,7 @@ interface Props {
 export function ChannelView({ channel, me, onChanged, focus }: Props) {
   const joined = channel.participants.some((p) => p.kind === "member" && p.id === me.id);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState<string | null>(null);
   return (
     <main className="channel">
       <ChannelHeader
@@ -114,6 +116,7 @@ export function ChannelView({ channel, me, onChanged, focus }: Props) {
         joined={joined}
         onChanged={onChanged}
         onMemory={() => setMemoryOpen((v) => !v)}
+        onAgent={(id) => setAgentOpen((v) => (v === id ? null : id))}
       />
       <Conversation
         conversationId={channel.id}
@@ -122,6 +125,8 @@ export function ChannelView({ channel, me, onChanged, focus }: Props) {
         focus={focus}
         memoryOpen={memoryOpen}
         onCloseMemory={() => setMemoryOpen(false)}
+        agentOpen={agentOpen}
+        onCloseAgent={() => setAgentOpen(null)}
         // Escrever num Canal público é entrar nele; o `channel.updated` também chega, mas a tela não espera.
         onSent={() => {
           if (!joined) api.channel(channel.id).then(onChanged, () => {});
@@ -147,6 +152,8 @@ export function Conversation({
   focus,
   memoryOpen = false,
   onCloseMemory,
+  agentOpen = null,
+  onCloseAgent,
 }: {
   conversationId: string;
   label: string;
@@ -156,6 +163,9 @@ export function Conversation({
   /** A lista "Memória" da conversa aberta ao lado (o botão fica no cabeçalho do Canal ou da DM). */
   memoryOpen?: boolean;
   onCloseMemory?(): void;
+  /** A tela do Agente aberta ao lado (#65), pelo id: o cabeçalho do Canal ou da DM a abre. */
+  agentOpen?: string | null;
+  onCloseAgent?(): void;
   /**
    * A mensagem para onde a notificação levou (a da falha, com "Tentar de novo"): quando ela
    * chega, vem para o meio da tela e pisca; numa Thread, a Thread abre.
@@ -255,6 +265,10 @@ export function Conversation({
       const { item } = event;
       setMemory((prev) => ({ ...prev, [item.id]: item }));
     }
+    // O Agente apagado leva a Memória do Agente dele junto; a da Conversa fica.
+    if (event.type === "agent.deleted") {
+      setMemory((prev) => Object.fromEntries(Object.entries(prev).filter(([, i]) => i.agent?.id !== event.agentId)));
+    }
     if (event.type === "outcome.created" && event.outcome.channelId === conversationId) {
       const { outcome } = event;
       setOutcomes((prev) => ({ ...prev, [outcome.messageId]: outcome }));
@@ -329,6 +343,12 @@ export function Conversation({
     find: (id) => messages?.find((m) => m.id === id),
   };
   const root = openThread ? messages?.find((m) => m.id === openThread) : undefined;
+  /** Leva à mensagem de origem de um item de Memória desta conversa (na Thread, se nasceu numa). */
+  const openOrigin = (item: MemoryItemDto) => {
+    if (!item.origin) return;
+    if (item.origin.threadRootId) setOpenThread(item.origin.threadRootId);
+    else reading.jump(item.origin.messageId);
+  };
 
   return (
     <div className="conversation-view">
@@ -362,12 +382,18 @@ export function Conversation({
           label={label}
           items={items}
           onChanged={(item) => setMemory((prev) => ({ ...prev, [item.id]: item }))}
-          onOpen={(item) => {
-            if (!item.origin) return;
-            if (item.origin.threadRootId) setOpenThread(item.origin.threadRootId);
-            else reading.jump(item.origin.messageId);
-          }}
+          onOpen={openOrigin}
           onClose={() => onCloseMemory?.()}
+        />
+      )}
+      {agentOpen && (
+        <AgentPanel
+          key={agentOpen}
+          agentId={agentOpen}
+          me={me}
+          conversationId={conversationId}
+          onOpen={openOrigin}
+          onClose={() => onCloseAgent?.()}
         />
       )}
       {root && messages && (
@@ -530,7 +556,8 @@ function MessageGroups({
               {saved.map((i) => (
                 <li key={i.id}>
                   <p className="memory-line" role="status">
-                    {ctx.replaced.has(i.id) ? "atualizou" : "guardou"} na Memória: {i.text}
+                    {ctx.replaced.has(i.id) ? "atualizou" : "guardou"} na Memória
+                    {i.agent ? ` de ${i.agent.name}` : ""}: {i.text}
                   </p>
                 </li>
               ))}
@@ -1112,7 +1139,6 @@ function MemoryPanel({
 }) {
   const active = items.filter((i) => i.state === "active");
   const archived = items.filter((i) => i.state === "archived");
-  const byId = new Map(items.map((i) => [i.id, i]));
   return (
     <aside className="thread-panel memory-panel" aria-label={`Memória de ${label}`}>
       <header className="thread-head">
@@ -1132,31 +1158,41 @@ function MemoryPanel({
             ))}
           </ul>
         )}
-        {archived.length > 0 && (
-          <section className="memory-archived" aria-label="Arquivados">
-            <h2 className="memory-subhead">Arquivados</h2>
-            <ul className="memory-items">
-              {archived.map((i) => {
-                const next = i.replacedById ? byId.get(i.replacedById) : undefined;
-                return (
-                  <li key={i.id} className="memory-item archived">
-                    <p className="memory-text">{i.text}</p>
-                    <p className="micro muted">
-                      {i.replacedById ? `substituído por: ${next?.text ?? "uma versão nova"}` : "desfeito"}
-                    </p>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        )}
+        <MemoryArchived archived={archived} all={items} />
       </div>
     </aside>
   );
 }
 
-/** Um item ativo da lista "Memória": o texto, a origem, e Desfazer ou Corrigir (com "Voltar"). */
-function MemoryItem({
+/** Os itens arquivados de uma lista de Memória, à parte: "desfeito" ou "substituído por: …". */
+export function MemoryArchived({ archived, all }: { archived: MemoryItemDto[]; all: MemoryItemDto[] }) {
+  if (archived.length === 0) return null;
+  const byId = new Map(all.map((i) => [i.id, i]));
+  return (
+    <section className="memory-archived" aria-label="Arquivados">
+      <h2 className="memory-subhead">Arquivados</h2>
+      <ul className="memory-items">
+        {archived.map((i) => {
+          const next = i.replacedById ? byId.get(i.replacedById) : undefined;
+          return (
+            <li key={i.id} className="memory-item archived">
+              <p className="memory-text">{i.text}</p>
+              <p className="micro muted">
+                {i.replacedById ? `substituído por: ${next?.text ?? "uma versão nova"}` : "desfeito"}
+              </p>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * Um item ativo de uma lista de Memória: o texto, de qual Agente é (na Memória do Agente), a
+ * origem, e Desfazer ou Corrigir (com "Voltar").
+ */
+export function MemoryItem({
   item: i,
   onOpen,
   onChanged,
@@ -1202,7 +1238,10 @@ function MemoryItem({
           </div>
         </form>
       ) : (
-        <p className="memory-text">{i.text}</p>
+        <p className="memory-text">
+          {i.text}
+          {i.agent && <span className="tag">Memória de {i.agent.name}</span>}
+        </p>
       )}
       {i.origin && (
         <button type="button" className="link-quiet micro memory-origin" onClick={() => onOpen(i)}>
@@ -1236,7 +1275,8 @@ function ChannelHeader({
   joined,
   onChanged,
   onMemory,
-}: Omit<Props, "me"> & { joined: boolean; onMemory(): void }) {
+  onAgent,
+}: Omit<Props, "me"> & { joined: boolean; onMemory(): void; onAgent(agentId: string): void }) {
   const [adding, setAdding] = useState<"person" | "agent" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const names = channel.participants.map((p) => p.displayName).join(", ");
@@ -1287,6 +1327,19 @@ function ChannelHeader({
           )
         )}
       </div>
+      <p className="hint agent-link">
+        Agentes:{" "}
+        {channel.participants
+          .filter((p) => p.kind === "agent")
+          .map((p, n) => (
+            <span key={p.id}>
+              {n > 0 && ", "}
+              <button type="button" className="link-quiet" onClick={() => onAgent(p.id)}>
+                {p.displayName}
+              </button>
+            </span>
+          ))}
+      </p>
       {channel.instructions && (
         <p className="instructions">
           <strong>Instruções do Canal:</strong> {channel.instructions}

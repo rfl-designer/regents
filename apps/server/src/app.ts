@@ -247,7 +247,10 @@ export function createApp(deps: AppDeps) {
   app.route("/api", reading.routes);
   app.route("/api", threadRoutes({ db }));
   app.route("/api", accounts.routes);
-  app.route("/api", agentRoutes({ db, clock, ledger, tools, github, onBudgetChanged: () => reconsider() }));
+  app.route(
+    "/api",
+    agentRoutes({ db, clock, ledger, tools, github, executions, events, onBudgetChanged: () => reconsider() }),
+  );
   app.route("/api", agentToolRoutes({ db, tools }));
   app.route("/api", connectors.routes);
   app.route(

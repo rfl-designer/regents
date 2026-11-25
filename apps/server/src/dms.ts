@@ -1,5 +1,5 @@
 import { DM_KINDS, type DmDto, type DmKind, type OpenDmInput } from "@shearim/contracts";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "./clock";
 import type { ConversationRow } from "./conversations";
@@ -61,7 +61,10 @@ export function dmRoutes(deps: { db: Db; clock: Clock; events: EventHub }) {
       }
       const [agent] =
         typeof agentId === "string" && isUuid(agentId)
-          ? await db.select({ id: agents.id }).from(agents).where(eq(agents.id, agentId))
+          ? await db
+              .select({ id: agents.id })
+              .from(agents)
+              .where(and(eq(agents.id, agentId), isNull(agents.deletedAt)))
           : [];
       if (!agent) return c.json({ error: "invalid_input", message: "Esse Agente não existe no Workspace." }, 400);
     } else if (others.length === 0) {

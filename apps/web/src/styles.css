@@ -378,6 +378,36 @@ body {
   width: 100%;
   font: inherit;
 }
+/* A tela do Agente (#65), ao lado da conversa: o que ele é, o liga/desliga e o Apagar do Admin, e a Memória dele */
+.agent-about,
+.agent-admin,
+.agent-note {
+  padding: 0 16px;
+}
+.agent-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-top: 12px;
+}
+.agent-admin {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.agent-panel button.danger {
+  font: inherit;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--error);
+  background: var(--error);
+  color: #fff;
+}
+.agent-link {
+  font-size: 0.85rem;
+}
 .memory-subhead {
   margin: 8px 16px 0;
   font-size: 0.85rem;
