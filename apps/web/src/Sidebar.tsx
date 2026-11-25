@@ -20,6 +20,9 @@ interface Props {
   /** Uma DM foi aberta (nova ou a que já existia). */
   onDmOpened(dm: DmDto): void;
   onOpenAdmin(view: AdminView): void;
+  /** A Memória do Workspace está aberta (todo Membro a vê). */
+  workspaceMemoryOpen: boolean;
+  onOpenWorkspaceMemory(): void;
 }
 
 export type AdminView =
@@ -119,6 +122,14 @@ export function Sidebar(props: Props) {
           + Nova DM
         </button>
       )}
+      <button
+        type="button"
+        className="link"
+        aria-current={props.workspaceMemoryOpen ? "page" : undefined}
+        onClick={props.onOpenWorkspaceMemory}
+      >
+        Memória do Workspace
+      </button>
       {props.isAdmin &&
         ADMIN_LINKS.map(([view, label]) => (
           <button

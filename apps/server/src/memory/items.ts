@@ -98,8 +98,8 @@ export function correctItem(
 }
 
 /**
- * Substitui o item ativo `old` (já travado em `tx`) por uma versão nova com o mesmo escopo, a
- * mesma conversa e o mesmo Agente, e arquiva o anterior, que aponta para ela (nada é apagado).
+ * Substitui o item ativo `old` (já travado em `tx`) por uma versão nova com o mesmo escopo (ou o
+ * do Workspace, na promoção), a mesma conversa e o mesmo Agente, e arquiva o anterior, que aponta para ela (nada é apagado).
  * A origem é a de `next`: a correção de gente mantém a do item; a extração põe a mensagem em que
  * a pessoa mudou o fato. Devolve o id da nova.
  */
@@ -112,13 +112,15 @@ export async function replaceItem(
     createdBy: Item["createdBy"];
     createdByMemberId?: string;
     executionId?: string;
+    /** Só na promoção (#66): a versão nova vai para a Memória do Workspace. */
+    scope?: "workspace";
     now: Date;
   },
 ): Promise<string> {
   const id = crypto.randomUUID();
   await tx.insert(memoryItems).values({
     id,
-    scope: old.scope,
+    scope: next.scope ?? old.scope,
     conversationId: old.conversationId,
     originMessageId: next.originMessageId,
     agentId: old.agentId,
@@ -134,6 +136,37 @@ export async function replaceItem(
     .set({ state: "archived", replacedById: id, archivedAt: next.now })
     .where(eq(memoryItems.id, old.id));
   return id;
+}
+
+/**
+ * Se o item pode ir para a Memória do Workspace: só um da Memória da Conversa de um Canal público.
+ * Canal privado e DM, nunca: a promoção não alarga o alcance (ADR 0012).
+ */
+export async function isPromotable(db: Db | Tx, item: Item): Promise<boolean> {
+  if (item.scope !== "conversation") return false;
+  const [origin] = await db.select().from(channels).where(eq(channels.id, item.conversationId!));
+  return origin?.kind === "public";
+}
+
+/**
+ * Promove o item `id` à Memória do Workspace, pela mão do Admin `by`: a versão do Workspace, com
+ * o mesmo texto e a mesma origem (a conversa e a mensagem), substitui a da Conversa, que fica
+ * arquivada e aponta para ela. Devolve o id da nova, ou `archived` se o item já não estava ativo.
+ * Quem chama já conferiu `isPromotable`.
+ */
+export function promoteItem(db: Db, input: { id: string; by: Pick<Member, "id">; now: Date }) {
+  return db.transaction(async (tx): Promise<string | "archived"> => {
+    const old = await lockActiveItem(tx, input.id);
+    if (!old) return "archived";
+    return replaceItem(tx, old, {
+      text: old.text,
+      originMessageId: old.originMessageId,
+      createdBy: "admin",
+      createdByMemberId: input.by.id,
+      scope: "workspace",
+      now: input.now,
+    });
+  });
 }
 
 const originAgent = alias(agents, "origin_agent");
@@ -176,10 +209,42 @@ export async function selectMemory(db: Db | Tx, where: SQL | undefined): Promise
 
 /**
  * A Memória da Conversa `conversationId` (com as Threads), ativos e arquivados, do mais novo para
- * o mais velho. Quem chama já conferiu que quem olha vê a conversa.
+ * o mais velho, com os itens dela promovidos à Memória do Workspace. Quem chama já conferiu que
+ * quem olha vê a conversa.
  */
 export function conversationMemory(db: Db, conversationId: string) {
-  return selectMemory(db, and(eq(memoryItems.scope, "conversation"), eq(memoryItems.conversationId, conversationId)));
+  return selectMemory(
+    db,
+    and(inArray(memoryItems.scope, ["conversation", "workspace"]), eq(memoryItems.conversationId, conversationId)),
+  );
+}
+
+/** A Memória do Workspace, ativos e arquivados, do mais novo para o mais velho: todo Membro a vê. */
+export function workspaceMemory(db: Db) {
+  return selectMemory(db, eq(memoryItems.scope, "workspace"));
+}
+
+/**
+ * Escreve um item direto na Memória do Workspace, pela mão do Admin `by`: sem conversa nem
+ * mensagem de origem. Devolve o id.
+ */
+export async function writeWorkspaceItem(
+  db: Db,
+  input: { text: string; by: Pick<Member, "id">; now: Date },
+): Promise<string> {
+  const id = crypto.randomUUID();
+  await db.insert(memoryItems).values({
+    id,
+    scope: "workspace",
+    conversationId: null,
+    originMessageId: null,
+    text: input.text,
+    createdBy: "admin",
+    createdByMemberId: input.by.id,
+    state: "active",
+    createdAt: input.now,
+  });
+  return id;
 }
 
 /**

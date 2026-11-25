@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, type SQL } from "drizzle-orm";
 import { type Db, schema } from "../db/client";
 
 const { memoryItems } = schema;
@@ -8,9 +8,9 @@ const { memoryItems } = schema;
  * `system` depois das Instruções do Canal e antes de "quem é quem", com a precedência dita ao
  * modelo e um orçamento fixo da Instalação (`SHEARIM_MEMORY_SUMMARY_CHARS`).
  *
- * Hoje entra a Memória da Conversa atual (com as Threads, o mesmo `channelId`). A ordem prevista é
- * Workspace → Conversa → Agente, cada escopo um grupo de `memorySummary`; a Memória da Conversa de
- * outras conversas nunca entra aqui (só pela busca).
+ * Entram a Memória do Workspace (#66) e a da Conversa atual (com as Threads, o mesmo
+ * `channelId`). A ordem é Workspace → Conversa → Agente, cada escopo um grupo de `memorySummary`;
+ * a Memória da Conversa de outras conversas nunca entra aqui (só pela busca).
  */
 
 /** O orçamento do resumo, em caracteres das linhas dos itens, se a Instalação não ajusta. */
@@ -24,7 +24,11 @@ export interface SummaryItem {
 export interface MemorySummary {
   /** A seção pronta para o `system` (vazia quando não entra nenhum item). */
   text: string;
-  /** Os itens que entraram por inteiro: a resposta os guarda, e a extração dela os recebe. */
+  /**
+   * Os itens que entraram por inteiro e que a extração pode substituir: a resposta os guarda, e a
+   * extração dela os recebe. A Memória do Workspace entra no texto, mas não aqui: a extração nunca
+   * guarda nela (só o Admin).
+   */
   shown: SummaryItem[];
   /** Os que passaram do orçamento (os mais velhos): ficam de fora; o #69 os põe só pelo título. */
   left: SummaryItem[];
@@ -33,28 +37,55 @@ export interface MemorySummary {
 const PRECEDENCE =
   "O que os Agentes guardaram de conversas anteriores. O Contexto do Workspace, as Instruções do Canal e as suas instruções valem acima da Memória: quando se contradizem, siga-os.";
 
-/** O resumo da Memória para uma resposta na conversa `conversationId`, dentro de `budget` caracteres. */
+/**
+ * O resumo da Memória para uma resposta na conversa `conversationId`, dentro de `budget`
+ * caracteres: a Memória do Workspace, depois a da Conversa (com as Threads), cada uma um grupo.
+ * Os grupos dividem o mesmo orçamento, na ordem: o primeiro item que não cabe fecha o resumo, e
+ * ele e o resto (deste e dos grupos de depois) ficam em `left`.
+ */
 export async function memorySummary(db: Db, input: { conversationId: string; budget: number }): Promise<MemorySummary> {
-  const newestFirst = await db
+  const groups = [
+    {
+      title: "Memória do Workspace (vale em todo o Workspace), da mais antiga para a mais nova:",
+      extractable: false,
+      newestFirst: await activeNewestFirst(db, eq(memoryItems.scope, "workspace")),
+    },
+    {
+      title: "Memória da Conversa (desta conversa e das Threads dela), da mais antiga para a mais nova:",
+      extractable: true,
+      newestFirst: await activeNewestFirst(
+        db,
+        and(eq(memoryItems.scope, "conversation"), eq(memoryItems.conversationId, input.conversationId)),
+      ),
+    },
+  ];
+  const sections: string[] = [];
+  const shown: SummaryItem[] = [];
+  const left: SummaryItem[] = [];
+  let budget = input.budget;
+  for (const group of groups) {
+    if (left.length) {
+      left.push(...group.newestFirst);
+      continue;
+    }
+    const fitted = fit(group.newestFirst, budget);
+    budget -= fitted.used;
+    left.push(...fitted.left);
+    if (!fitted.shown.length) continue;
+    if (group.extractable) shown.push(...fitted.shown);
+    sections.push(group.title, fitted.shown.map(line).join("\n"));
+  }
+  if (!sections.length) return { text: "", shown, left };
+  return { text: ["## Memória", PRECEDENCE, ...sections].join("\n\n"), shown, left };
+}
+
+/** Os itens ativos que atendem a `where`, do mais novo para o mais velho. */
+function activeNewestFirst(db: Db, where: SQL | undefined): Promise<SummaryItem[]> {
+  return db
     .select({ id: memoryItems.id, text: memoryItems.text })
     .from(memoryItems)
-    .where(
-      and(
-        eq(memoryItems.scope, "conversation"),
-        eq(memoryItems.conversationId, input.conversationId),
-        eq(memoryItems.state, "active"),
-      ),
-    )
+    .where(and(where, eq(memoryItems.state, "active")))
     .orderBy(desc(memoryItems.seq));
-  const { shown, left } = fit(newestFirst, input.budget);
-  if (!shown.length) return { text: "", shown, left };
-  const text = [
-    "## Memória",
-    PRECEDENCE,
-    "Memória da Conversa (desta conversa e das Threads dela), da mais antiga para a mais nova:",
-    shown.map(line).join("\n"),
-  ].join("\n\n");
-  return { text, shown, left };
 }
 
 const line = (item: SummaryItem) => `- ${item.text}`;
@@ -72,5 +103,5 @@ function fit(newestFirst: SummaryItem[], budget: number) {
     used += cost;
     count++;
   }
-  return { shown: newestFirst.slice(0, count).reverse(), left: newestFirst.slice(count) };
+  return { shown: newestFirst.slice(0, count).reverse(), left: newestFirst.slice(count), used };
 }
