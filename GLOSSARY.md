@@ -89,3 +89,25 @@ _Avoid_: approval, confirmação, permissão
 **Andamento**:
 O estado visível do tratamento de uma mensagem pelos Agentes, do recebimento até a resposta, a falha com motivo ou o cancelamento por quem escreveu. Uma mensagem que envolve Agentes sempre termina em resposta, em falha visível ou em cancelamento visível, nunca no limbo.
 _Avoid_: status, progresso, execução
+
+### O que os Agentes lembram
+
+**Memória**:
+O que fica de uma conversa para os Agentes usarem em respostas futuras, sempre com a conversa de origem. Só entra numa resposta que alcança essa origem: o que nasceu num Canal privado ou numa DM não aparece fora do alcance dela, nem pelo nome. É guardada pelo Shearim ao fim de uma resposta de Agente, a partir do que as pessoas disseram naquela troca, à vista no Andamento e sem Pedido de aprovação; uma conversa só entre pessoas não vira Memória, nem o que veio de fora por uma Ferramenta. Quem vê a conversa de origem pode desfazer ou corrigir o que foi guardado, e cada Membro, Admin inclusive, só vê a Memória cuja origem ele vê. Uma correção substitui a versão anterior, que fica arquivada. O Admin liga ou desliga a Memória de cada Agente, e o Desfecho não a lê. Não substitui o Contexto do Workspace, as Instruções do Canal nem as instruções do Agente, que são escritos por gente e valem acima dela quando se contradizem.
+_Avoid_: lembrança, conhecimento, contexto, histórico
+
+**Memória do Workspace**:
+A Memória que vale em todo o Workspace. Quem a escreve é um Admin, direto ou promovendo um item da Memória da Conversa de um Canal público; o Shearim não guarda nela sozinho.
+_Avoid_: memória global, memória do time
+
+**Memória da Conversa**:
+A Memória dos fatos e das decisões de um Canal ou de uma DM, com as Threads deles, igual para todos os Agentes que falam ali.
+_Avoid_: memória do canal, memória da DM, resumo do canal
+
+**Memória do Agente**:
+A Memória do jeito de trabalhar de um Agente: as lições e as correções que as pessoas deram a ele. Fatos sobre o mundo não ficam aqui, ficam na Memória da Conversa de origem. Sai junto com o Agente quando ele é apagado.
+_Avoid_: playbook, aprendizados, personalidade
+
+**Tarefa**:
+Um trabalho designado a um Agente que vai além de uma resposta e tem estado próprio. Ainda não foi modelada.
+_Avoid_: missão, job, ticket, issue

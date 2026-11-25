@@ -1,0 +1,20 @@
+# A Memória é guardada pelo Shearim ao fim da resposta, sem Pedido de aprovação
+
+Quem guarda a Memória é o próprio Shearim, num passo que roda depois de entregue a resposta de um Agente, e não o Agente durante a resposta. O passo faz uma chamada curta a um modelo pequeno, fixo da Instalação, com saída estruturada. A chamada lê aquela troca e devolve o que vale guardar e em qual escopo: a Memória da Conversa ou a Memória do Agente. Um pedido explícito ("lembra que…") também é pego aqui, porque está na troca. A escrita não passa por Pedido de aprovação. Ela fica à vista no Andamento ("guardou na Memória: …") e pode ser desfeita ou corrigida por quem vê a conversa. Escolhemos um caminho único e determinístico, que é igual pela Conta e pela Chave. Com isso a regra da spec 44, "toda escrita de Ferramenta passa por Pedido de aprovação", continua sem exceção, e o Agente não precisa lembrar de lembrar.
+
+## Considered Options
+
+- **Uma capacidade do Agente** (`remember`/`forget` no meio da resposta, como no `agentes-chat`): não custa chamada a mais, mas o modelo esquece de chamar. O `agentes-chat` acabou somando a ela extração automática, reflexão e feedback, e chegou a seis caminhos de escrita difíceis de prever.
+- **Um hook do Claude Code** (`Stop`, como os hooks do `ai-memory`): só existe no cérebro pela Conta, porque o cérebro pela Chave fala direto com a Messages API, e roda comando no container. O passo do Shearim faz o mesmo sem nenhuma das duas limitações.
+- **Os dois caminhos juntos** (o Agente guarda o que pedem, e o passo de fim pega o resto): cobre mais casos, mas cria dois caminhos de escrita.
+- **Pedido de aprovação para cada item**: afogaria o autor em aprovações por algo que fica dentro do Workspace e pode ser desfeito.
+
+## Consequências
+
+- Cada resposta de um Agente com a Memória ligada custa uma chamada a mais. Ela segue a tabela de quem paga da resposta (a Conta do autor, senão a Chave) e conta no orçamento do Agente.
+- Uma conversa só entre pessoas não vira Memória. Para guardar uma decisão dessas, alguém pede a um Agente ("@Sophya guarda essa decisão").
+- Uma falha da extração não deixa a mensagem no limbo, porque a resposta já chegou. Ela aparece no Andamento como "não guardou na Memória: <motivo>". Há uma nova tentativa automática, sem push e sem botão. Sem quem pague (Conta no limite e sem Chave utilizável), a extração não roda, e isso também aparece.
+- O Admin liga ou desliga a Memória de cada Agente. Ela vem ligada, inclusive para a Articuladora.
+- O Desfecho não lê Memória nem dispara a extração (ADR 0009).
+- A extração só guarda a partir do que uma pessoa disse: uma decisão, uma correção, um fato ou um pedido de "lembra". A resposta do Agente serve de contexto, e resultado de Ferramenta (página, issue, Conector) nunca vira Memória. É a defesa contra conteúdo de fora, como o Pedido de aprovação é na spec 44.
+- A extração recebe a Memória que entrou na resposta e pode criar um item ou substituir um existente, e o anterior fica arquivado. Ela nunca apaga.
