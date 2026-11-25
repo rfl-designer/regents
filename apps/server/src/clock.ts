@@ -9,10 +9,18 @@ export interface Clock {
   after(ms: number, fn: () => void): () => void;
 }
 
+/** O maior prazo de um `setTimeout` (32 bits, ~24,8 dias): acima dele, o timer dispara na hora. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 export const systemClock: Clock = {
   now: () => new Date(),
   after(ms, fn) {
-    const timer = setTimeout(fn, ms);
+    // Prazo maior que o do `setTimeout`: uma cadeia de timers até ele.
+    let timer: ReturnType<typeof setTimeout>;
+    const arm = (left: number) => {
+      timer = left > MAX_TIMER_MS ? setTimeout(() => arm(left - MAX_TIMER_MS), MAX_TIMER_MS) : setTimeout(fn, left);
+    };
+    arm(ms);
     return () => clearTimeout(timer);
   },
 };

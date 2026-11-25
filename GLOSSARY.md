@@ -43,7 +43,7 @@ Um participante de IA do Workspace, com nome, descrição, instruções, modelo 
 _Avoid_: bot, assistente, IA
 
 **Articuladora**:
-O Agente que vem com o Workspace, se chama Sophya por padrão e está em todo Canal, público ou privado. Não pode ser apagada nem removida de um Canal. Num Canal com outros Agentes, ela dá o Desfecho de cada mensagem de pessoa; num Canal só com ela, responde só por Menção. Conhece todos os Agentes e os Canais que quem escreveu pode ver. Só o Admin troca o nome, o modelo e o orçamento dela; as instruções dela são do Shearim.
+O Agente que vem com o Workspace, se chama Sophya por padrão e está em todo Canal, público ou privado. Não pode ser apagada nem removida de um Canal. Num Canal com outros Agentes, ela dá o Desfecho de cada mensagem de pessoa; num Canal só com ela, responde só por Menção. Conhece todos os Agentes, com as Ferramentas de cada um, e os Canais que quem escreveu pode ver. Só o Admin troca o nome, o modelo e o orçamento dela; as instruções dela são do Shearim.
 _Avoid_: Líder, braço direito, router, coordenador
 
 ### Onde se conversa
@@ -73,6 +73,18 @@ _Avoid_: marcação, tag, chamada
 **Desfecho**:
 O resultado visível que a Articuladora dá a uma mensagem de pessoa num Canal com outros Agentes: responder, delegar a até dois Agentes do Canal, ou marcar que nenhum Agente precisa agir, sempre com um motivo de uma frase. Uma mensagem num Canal assim nunca fica sem Desfecho.
 _Avoid_: roteamento, decisão, triagem
+
+**Ferramenta**:
+Uma ação que um Agente pode usar durante uma resposta: ler o Workspace, ler a web, ou ler e agir num sistema de fora por um Conector. O Admin escolhe as Ferramentas de cada Agente, inclusive as da Articuladora. No Workspace, uma Ferramenta alcança só o que o autor da mensagem e todos os participantes da conversa podem ver. Toda escrita passa por um Pedido de aprovação; leitura não. Um Agente só escreve em conversas que a resposta alcança, de que ele participa e em que o autor pode escrever. O uso de uma Ferramenta aparece no Andamento, e o que ela gasta conta no orçamento do Agente. Uma resposta usa Ferramentas até um teto; ao chegar nele, o Agente responde com o que tem. O Desfecho nunca usa Ferramentas.
+_Avoid_: tool, skill, capacidade, função
+
+**Conector**:
+A ligação do Workspace a um sistema de fora, adicionada pelo Admin, que traz as Ferramentas desse sistema. A credencial é de cada Membro, que liga a sua, ou do Workspace, uma só para todos. Com a credencial do Workspace, quem fala com o Agente alcança o que ela alcança, e a descrição do Agente diz isso. Um Conector alcança o que a credencial alcança, mesmo numa conversa com quem não teria esse acesso, e o Andamento mostra de quem é a credencial usada. Para um autor que não ligou a credencial dele, as Ferramentas do Conector ficam indisponíveis naquela resposta, e só ele vê como ligá-la. O GitHub é um Conector que vem com o Shearim: o Admin o instala na conta do time no GitHub, escolhe os repositórios e pode restringir cada Agente a alguns deles.
+_Avoid_: integração, plugin, app, MCP
+
+**Pedido de aprovação**:
+O pedido que uma resposta de Agente cria antes de toda escrita, mostrando exatamente o que vai ser feito. Todos da conversa o veem, e só o autor da mensagem que disparou a resposta o aprova ou recusa, sem editar o que vai ser feito. Depois de aprovado, ou recusado com um motivo opcional, o Agente continua a resposta. Expira em 24 horas, e aí a resposta termina sem continuar.
+_Avoid_: approval, confirmação, permissão
 
 **Andamento**:
 O estado visível do tratamento de uma mensagem pelos Agentes, do recebimento até a resposta, a falha com motivo ou o cancelamento por quem escreveu. Uma mensagem que envolve Agentes sempre termina em resposta, em falha visível ou em cancelamento visível, nunca no limbo.

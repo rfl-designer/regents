@@ -6,13 +6,18 @@ import { accountPushes } from "./account-pushes";
 import { type AccountHooks, type AccountsConfig, createAccounts } from "./accounts";
 import { processTracker } from "./accounts/claude-cli";
 import { adminPushes } from "./admin-pushes";
+import { createAgentPoster } from "./agent-posts";
 import { agentRoutes } from "./agents";
+import { approvalRoutes } from "./approvals";
 import type { Clock } from "./clock";
 import { conversationRoutes } from "./conversations";
 import type { Db } from "./db/client";
 import { dmRoutes } from "./dms";
 import { createEventHub } from "./events";
 import { createExecutions, type ExecutionHooks, type ExecutionLimits } from "./executions";
+import { createGitHub, type GitHubConfig } from "./github/connector";
+import { githubRoutes } from "./github/routes";
+import { githubTools } from "./github/tools";
 import type { Identity, IdentityPort } from "./identity/port";
 import { IdentityUnavailableError } from "./identity/whois";
 import { createInstallation, type InstallationConfig } from "./installation/status";
@@ -30,6 +35,12 @@ import { createPush, type PushConfig } from "./push";
 import { createReading, unreadOf } from "./reading";
 import type { SecretBox } from "./secrets";
 import { threadRoutes } from "./threads";
+import { createConnectors } from "./tools/connectors";
+import { createMcpEndpoint } from "./tools/mcp";
+import { createToolPort, type ToolDefinition } from "./tools/port";
+import { agentToolRoutes } from "./tools/routes";
+import { WEB_TOOLS } from "./tools/web";
+import { WORKSPACE_TOOLS } from "./tools/workspace";
 import { workspaceContextRoutes } from "./workspace-context";
 import { workspaceKeyRoutes } from "./workspace-key";
 
@@ -61,6 +72,16 @@ export interface AppDeps {
   installation?: InstallationConfig;
   /** Os tetos de concorrência das execuções (padrão: 2 por Conta, 4 na Chave, 8 processos). */
   limits?: Partial<ExecutionLimits>;
+  /**
+   * A porta de Ferramentas: o prazo padrão de uma chamada (`SHEARIM_TOOL_TIMEOUT_S`), o teto de
+   * turnos de Ferramenta de uma resposta (`SHEARIM_TOOL_MAX_TURNS`, padrão 20) e o catálogo
+   * (padrão: as Ferramentas do Workspace; os testes juntam Ferramentas que travam ou falham).
+   */
+  tools?: { timeoutMs?: number; maxTurns?: number; definitions?: readonly ToolDefinition[] };
+  /** Onde fica o GitHub (padrão: github.com). Os testes apontam para o falso. */
+  github?: Partial<GitHubConfig>;
+  /** O Pedido de aprovação: o prazo até expirar (`SHEARIM_APPROVAL_TTL_H`; padrão 24 h). */
+  approvals?: { ttlMs?: number };
 }
 
 export type AppHooks = JoinRequestHooks & ExecutionHooks & KeyHooks & AccountHooks;
@@ -112,12 +133,30 @@ export function createApp(deps: AppDeps) {
   const accounts = createAccounts({ db, clock, events, config: deps.accounts, hooks });
   // Pela Conta, um `claude -p` por execução (ADR 0006); os processos vivos morrem no `close`.
   const runs = processTracker();
+  // As Ferramentas pela Conta: o `claude -p` as lista e chama neste endpoint, só no loopback.
+  const mcp = createMcpEndpoint();
   const model = createModelPort({
     key: deps.keyBrain ?? keyBrain({ baseURL: deps.anthropicBaseUrl }),
-    account: accountBrain({ claudeBin: deps.accounts.claudeBin, procs: runs, stopGrace: deps.accounts.stopGrace }),
+    account: accountBrain({
+      claudeBin: deps.accounts.claudeBin,
+      procs: runs,
+      stopGrace: deps.accounts.stopGrace,
+      mcp,
+    }),
   });
   const reading = createReading({ db, clock, events });
   const ledger = createKeyLedger({ db, clock, events, hooks });
+  // Os Conectores trazem as Ferramentas deles ao catálogo, lidas a cada uso.
+  const connectors = createConnectors({ db, clock, secrets, events, notify: push.notify });
+  // O GitHub, o Conector embutido (ADR 0010): as Ferramentas dele vêm depois das fixas.
+  const github = createGitHub({ db, clock, secrets, config: deps.github });
+  const tools = createToolPort({
+    db,
+    clock,
+    definitions: [...(deps.tools?.definitions ?? [...WORKSPACE_TOOLS, ...WEB_TOOLS]), ...githubTools(github)],
+    extra: connectors.definitions,
+    timeoutMs: deps.tools?.timeoutMs,
+  });
   // As mensagens novas (de pessoa e as respostas de Agente) vão ao push pelo mesmo `messageCreated`.
   const executions = createExecutions({
     db,
@@ -130,7 +169,10 @@ export function createApp(deps: AppDeps) {
     reading,
     push,
     ledger,
+    tools,
     limits: deps.limits,
+    maxToolTurns: deps.tools?.maxTurns,
+    approvalTtlMs: deps.approvals?.ttlMs,
   });
   // A volta da Conta (ou a troca da Chave, ou do orçamento) solta quem espera por ela na fila.
   const reconsider = (memberId?: string) => void executions.reconsider(memberId).catch(() => {});
@@ -197,9 +239,24 @@ export function createApp(deps: AppDeps) {
   app.route("/api", reading.routes);
   app.route("/api", threadRoutes({ db }));
   app.route("/api", accounts.routes);
-  app.route("/api", agentRoutes({ db, clock, ledger, onBudgetChanged: () => reconsider() }));
+  app.route("/api", agentRoutes({ db, clock, ledger, tools, github, onBudgetChanged: () => reconsider() }));
+  app.route("/api", agentToolRoutes({ db, tools }));
+  app.route("/api", connectors.routes);
+  app.route(
+    "/api",
+    approvalRoutes({
+      db,
+      clock,
+      events,
+      tools,
+      // A escrita aprovada posta como o Agente, sem Desfecho e sem acionar Agente.
+      post: createAgentPoster({ db, clock, events, reading, push }),
+      continueAfter: executions.continueAfter,
+    }),
+  );
   app.route("/api", workspaceKeyRoutes({ db, clock, secrets, onChanged: () => reconsider() }));
   app.route("/api", workspaceContextRoutes({ db }));
+  app.route("/api", githubRoutes({ db, github }));
   app.route("/api", installation.routes);
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
@@ -235,13 +292,17 @@ export function createApp(deps: AppDeps) {
       await accounts.recover();
       accounts.watch();
       executions.start();
+      // As credenciais dos Conectores ligadas pelo login se renovam antes de vencer.
+      connectors.start();
       if (deps.installation?.watch) installation.start();
     },
     close: async () => {
+      await connectors.stop();
       await installation.stop();
       await accounts.close();
       // Depois do `executions.stop()` não sobra nenhum; isto é só a rede de segurança.
       await runs.killAll();
+      await mcp.stop();
       await push.idle();
     },
   };

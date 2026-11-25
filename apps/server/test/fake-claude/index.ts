@@ -13,6 +13,7 @@ import {
   type FakeClaudeCall,
   type FakeClaudeScript,
   type FakeClaudeSignal,
+  type FakeMcpEntry,
 } from "./script";
 
 export * from "./script";
@@ -30,6 +31,8 @@ export interface FakeClaude {
   callsOf(kind: "auth login" | "auth status" | "auth logout" | "-p"): FakeClaudeCall[];
   /** Os sinais que os `-p` levaram, em ordem (de um só processo, com `pid`). */
   signals(pid?: number): FakeClaudeSignal[];
+  /** O que os `-p` fizeram como clientes MCP (`{ tool }`), em ordem. */
+  mcp(): FakeMcpEntry[];
   dispose(): void;
 }
 
@@ -61,6 +64,14 @@ export function fakeClaude(script: FakeClaudeScript = {}): FakeClaude {
         .filter(Boolean)
         .map((l) => JSON.parse(l) as FakeClaudeSignal)
         .filter((s) => pid === undefined || s.pid === pid);
+    },
+    mcp() {
+      const log = join(home, "mcp.jsonl");
+      if (!existsSync(log)) return [];
+      return readFileSync(log, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as FakeMcpEntry);
     },
     callsOf(kind) {
       return fake.calls().filter((c) => {

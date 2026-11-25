@@ -55,6 +55,11 @@ export function mentionPattern() {
   return /(?<![\p{L}\p{N}_.@])@([\p{L}\p{N}_]+)/gu;
 }
 
+/** "Faro", "Faro e Prisma", "Faro, Prisma e Lince" (vazio: ""). */
+export function joinPt(list: readonly string[]) {
+  return list.length <= 1 ? (list[0] ?? "") : `${list.slice(0, -1).join(", ")} e ${list.at(-1)}`;
+}
+
 /** O identificador de Menção como é guardado: sem `@` na frente, sem acento, em minúsculas. */
 export function normalizeHandle(text: string) {
   return text.trim().replace(/^@+/, "").normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
@@ -347,7 +352,10 @@ export interface ConversationUnreadDto {
 export interface UnreadDto {
   /** Só as conversas com alguma não-lida. */
   conversations: ConversationUnreadDto[];
-  /** A soma de todas as não-lidas das conversas do Membro: o badge do ícone. */
+  /**
+   * O badge do ícone: a soma de todas as não-lidas das conversas do Membro e dos Pedidos de
+   * aprovação que esperam a decisão dele.
+   */
   total: number;
   /** Não-lidas que mencionam o Membro, em todas as conversas. */
   mentions: number;
@@ -393,7 +401,17 @@ export interface AgentDto {
    * contrato de roteamento dela são do Shearim.
    */
   builtin: boolean;
+  /** As Ferramentas concedidas a ele, na ordem do catálogo, para todo Membro (Spec #44). */
+  tools: AgentToolSummaryDto[];
+  /**
+   * As linhas geradas da descrição pública, sobre o que ele alcança fora do Workspace (uma por
+   * Conector com credencial do Workspace, e uma pelo GitHub, com os repositórios da lista dele):
+   * "acessa CRM com a credencial do Workspace".
+   */
+  reach: string[];
   instructions?: string;
+  /** Só para o Admin: os repositórios do GitHub a que o Agente está restrito (nulo: todos os da instalação). */
+  githubRepositories?: string[] | null;
   /**
    * Só para o Admin: o orçamento mensal na Chave, em dólares (nulo: sem teto). Conta só o que a
    * Chave pagou; a Conta de cada Membro não entra.
@@ -425,6 +443,242 @@ export interface CreateAgentInput {
  * Trocar o nome troca o identificador de Menção (`handle`).
  */
 export type UpdateAgentInput = Partial<CreateAgentInput>;
+
+// ---------- GitHub, o Conector embutido (ADR 0010) ----------
+
+/**
+ * O GitHub do Workspace, só para o Admin (`GET /api/github`):
+ * - `none`: nenhum GitHub App criado ("Criar o GitHub App");
+ * - `created`: o App existe, falta instalar na conta do time ("Instalar no GitHub");
+ * - `installed`: instalado; as Ferramentas do GitHub alcançam os repositórios escolhidos lá.
+ *
+ * `failure` é a instalação que o GitHub deixou de reconhecer (removida ou suspensa lá), vista na
+ * última chamada de uma Ferramenta: as Ferramentas falham com motivo até o Admin instalar de novo.
+ * Os segredos do App nunca voltam.
+ */
+export interface GitHubDto {
+  state: "none" | "created" | "installed";
+  app: { name: string; slug: string; owner: string; htmlUrl: string } | null;
+  installation: { id: number; account: string; installedAt: string } | null;
+  failure: { reason: string; at: string } | null;
+}
+
+/** Corpo de `POST /api/github/manifest`: o endereço da Instalação e, opcional, a organização dona do App. */
+export interface StartGitHubManifestInput {
+  /** O `location.origin` do PWA: para onde o GitHub manda o navegador de volta. */
+  origin: string;
+  /** A organização do time no GitHub; sem ela, o App fica na conta pessoal de quem cria. */
+  organization?: string;
+}
+
+/** O formulário que o PWA envia ao GitHub (`POST action`, campo `manifest`). */
+export interface GitHubManifestDto {
+  action: string;
+  manifest: string;
+}
+
+/** `POST /api/github/installation`: a página do GitHub onde o Admin instala o App e escolhe os repositórios. */
+export interface GitHubInstallDto {
+  url: string;
+}
+
+/**
+ * `GET /api/agents/:id/github` (só Admin): os repositórios do Agente na tela dele. `repositories`
+ * é a lista dele (nula: alcança tudo o que a instalação alcança); `available`, os que a instalação
+ * alcança agora (`dono/nome`), para escolher; `failure`, por que não deu para perguntar ao GitHub.
+ */
+export interface AgentGitHubDto {
+  repositories: string[] | null;
+  available: string[];
+  failure: string | null;
+}
+
+/** Corpo de `PUT /api/agents/:id/github`: a lista nova (nula: sem lista, todos os da instalação). */
+export interface SetAgentGitHubInput {
+  repositories: string[] | null;
+}
+
+// ---------- Ferramentas (Spec #44) ----------
+
+/**
+ * De onde vem uma Ferramenta: o próprio Workspace, a web, o GitHub (o Conector embutido, ADR 0010)
+ * ou um Conector MCP (com o Conector dela em `connector`).
+ */
+export type ToolOrigin = "workspace" | "web" | "github" | "connector";
+/** `read` só lê; `write` escreve, e toda escrita passa por um Pedido de aprovação. */
+export type ToolAccess = "read" | "write";
+
+/**
+ * Uma Ferramenta concedida a um Agente, como todo Membro a vê na lista de Agentes
+ * (`AgentDto.tools`): o nome e a origem. As concessões só o Admin edita.
+ */
+export interface AgentToolSummaryDto {
+  /** O id estável da Ferramenta (ex. `listar_agentes`). */
+  id: string;
+  /** O nome em pt-BR ("listar Agentes"). */
+  title: string;
+  origin: ToolOrigin;
+  /** Só nas de um Conector (`origin: "connector"`): qual, e de quem é a credencial. */
+  connector?: ToolConnectorDto;
+}
+
+/** O Conector de uma Ferramenta, como a lista de Agentes e a tela do Agente o mostram. */
+export interface ToolConnectorDto {
+  id: string;
+  name: string;
+  /** De quem é a credencial que a Ferramenta usa: do Workspace (uma só para todos) ou do autor. */
+  credential: ConnectorCredentialMode;
+}
+
+/**
+ * De quem é a credencial de um Conector: do Workspace (uma só, colada pelo Admin) ou de cada
+ * Membro (`member`: cada um liga a sua em Perfil › Conectores, e a resposta usa a do autor).
+ */
+export type ConnectorCredentialMode = "workspace" | "member";
+
+/**
+ * Um Conector (Spec #44): a ligação do Workspace a um servidor MCP remoto, adicionada pelo Admin.
+ * `GET /api/connectors`, `GET /api/connectors/:id` (relê o catálogo), `POST /api/connectors`
+ * (`CreateConnectorInput`), `PUT /api/connectors/:id/credential` (`{ token }`) e
+ * `DELETE /api/connectors/:id`, todos só do Admin. O token nunca volta.
+ */
+export interface ConnectorDto {
+  id: string;
+  name: string;
+  /** O endereço do servidor MCP (streamable HTTP). */
+  url: string;
+  credential: ConnectorCredentialMode;
+  /**
+   * `refused`: o servidor recusou a credencial do Workspace (401) numa chamada; o Admin cola outra.
+   * No modo de cada Membro é sempre `ok` (a recusa é da credencial de cada um, no Perfil dele).
+   */
+  credentialState: "ok" | "refused";
+  /** Quando a credencial foi recusada (ISO 8601), ou `null`. */
+  refusedAt: string | null;
+  /** O catálogo do `tools/list`, na ordem do servidor. */
+  tools: ConnectorToolDto[];
+  /** Ao reler o catálogo (`GET /api/connectors/:id`): por que não deu (o catálogo é o último lido). */
+  catalogError: string | null;
+}
+
+/** Uma Ferramenta do catálogo de um Conector. Só o que o servidor marca como "só leitura" é `read`. */
+export interface ConnectorToolDto {
+  /** O id da Ferramenta no Shearim (o que se concede e o que o modelo recebe), ex. `crm__buscar_cliente`. */
+  id: string;
+  /** O nome dela no servidor. */
+  name: string;
+  title: string;
+  description: string;
+  access: ToolAccess;
+}
+
+/**
+ * Corpo de `POST /api/connectors`: o nome (não se repete), o endereço, o modo da credencial
+ * (padrão: do Workspace) e um token, que lê o catálogo. No modo do Workspace, ele é a credencial
+ * do Workspace; no de cada Membro, vira a credencial do próprio Admin (que a desliga no Perfil).
+ */
+export interface CreateConnectorInput {
+  name: string;
+  url: string;
+  token: string;
+  credential?: ConnectorCredentialMode;
+}
+
+/**
+ * Ligar um Conector pelo login do próprio servidor MCP (OAuth, #56), quando ele oferece. O PWA
+ * manda o endereço da Instalação na tailnet (`origin`, o `location.origin` dele): é para lá que o
+ * servidor de autorização devolve o navegador (`${origin}${CONNECTOR_LOGIN_CALLBACK_PATH}`), e o
+ * retorno grava a credencial e leva de volta à tela de onde saiu, com `?conector=ligado` ou
+ * `?erro=<motivo>`.
+ *
+ * - `POST /api/connectors/login` (Admin, `CreateConnectorLoginInput`): adicionar pelo login; o
+ *   Conector só existe depois do retorno (o login do Admin lê o catálogo). Volta a `CONNECTORS_PATH`.
+ * - `POST /api/connectors/:id/credential/login` (Admin, `{ origin }`): religar a credencial do
+ *   Workspace (`409 member_credential` no modo de cada Membro). Volta a `CONNECTORS_PATH`.
+ * - `POST /api/me/connectors/:id/credential/login` (`{ origin }`): o Membro liga a dele. Volta a
+ *   `MY_CONNECTORS_PATH`.
+ *
+ * Respondem `ConnectorLoginDto`; `422 oauth_unavailable` quando o servidor não oferece login
+ * (cole um token), `422 connector_unreachable` quando ele não responde. A credencial do login se
+ * renova sozinha antes de vencer; a renovação recusada é a credencial recusada.
+ */
+export interface CreateConnectorLoginInput {
+  name: string;
+  url: string;
+  credential?: ConnectorCredentialMode;
+  origin: string;
+}
+
+export interface StartConnectorLoginInput {
+  origin: string;
+}
+
+/** Para onde o navegador vai fazer o login (o `authorization_endpoint` do servidor, com PKCE). */
+export interface ConnectorLoginDto {
+  authorizationUrl: string;
+}
+
+/**
+ * Um Conector com credencial de cada Membro, em Perfil › Conectores (`MY_CONNECTORS_PATH`), como o
+ * próprio Membro o vê: `GET /api/me/connectors`; ligar com `PUT /api/me/connectors/:id/credential`
+ * (`{ token }`, `422 credential_refused` se o servidor o recusa) e desligar com `DELETE` no mesmo
+ * caminho. O token nunca volta. Vai também no evento `my_connector.updated`, só ao Membro.
+ */
+export interface MyConnectorDto {
+  id: string;
+  name: string;
+  url: string;
+  /** `off`: não ligou; `ok`: ligada; `refused`: o servidor recusou (401) numa chamada, ligue de novo. */
+  credentialState: "off" | "ok" | "refused";
+  /** Quando foi recusada (ISO 8601), ou `null`. */
+  refusedAt: string | null;
+}
+
+/**
+ * Uma Ferramenta do Workspace na tela do Agente (só Admin): `GET /api/agents/:id/tools`, e a
+ * resposta de `PUT`/`DELETE /api/agents/:id/tools/:toolId` (conceder, retirar).
+ */
+export interface AgentToolDto {
+  /** O id estável da Ferramenta (ex. `listar_agentes`), o mesmo nome que o modelo recebe. */
+  id: string;
+  /** O nome em pt-BR, como o Admin e o Andamento o mostram ("listar Agentes"). */
+  title: string;
+  description: string;
+  origin: ToolOrigin;
+  access: ToolAccess;
+  granted: boolean;
+  /** Só nas de um Conector: qual, e de quem é a credencial. */
+  connector?: ToolConnectorDto;
+}
+
+/**
+ * Um uso de Ferramenta no Andamento: `running` enquanto roda ("listando os Agentes"), `done`, ou
+ * `failed` com o motivo ("listar Agentes falhou: não terminou em 60 s"). A resposta segue sem ela.
+ */
+export interface ToolCallDto {
+  id: string;
+  /** O id da Ferramenta. */
+  tool: string;
+  /** O nome em pt-BR ("listar Agentes"). */
+  title: string;
+  /** O que ela está fazendo, para o passo em andamento ("listando os Agentes"). */
+  label: string;
+  state: "running" | "done" | "failed";
+  /** Em `failed`: o motivo, em pt-BR. */
+  reason: string | null;
+  /** Quando começou (ISO 8601). */
+  startedAt: string;
+  /**
+   * Em `done`, numa Ferramenta de Conector com a credencial de cada Membro: de quem foi a
+   * credencial, para todos ("usou o CRM de Ana").
+   */
+  used?: string;
+  /**
+   * Só na cópia do autor, numa Ferramenta indisponível porque ele não ligou (ou teve recusada) a
+   * credencial dele: o atalho "Ligar <Conector>" (Perfil › Conectores).
+   */
+  connect?: { connectorId: string; name: string };
+}
 
 /** `GET`/`PUT /api/workspace-key` (só Admin). A Chave em si nunca volta ao navegador. */
 /** Sem backup bom há mais que isto, o Admin recebe push e vê a faixa (Spec, história 14). */
@@ -524,18 +778,36 @@ export interface WorkspaceContextDto {
  * `queued` esperando a vez, `running` com o passo em `step`, `retrying` (falhou uma vez, com o
  * motivo, e volta sozinha em `retryAt`), `done` com a resposta em `replyMessageId`, `failed` com
  * o motivo (depois da nova tentativa; o autor pode "Tentar de novo"), `not_acting` ("Agentes não
- * agem", com o motivo; não é falha) e `cancelled` (sem motivo: "cancelada por quem escreveu"; com
- * motivo, cancelada pelo Shearim, ex. "quem escreveu saiu do Workspace").
+ * agem", com o motivo; não é falha), `cancelled` (sem motivo: "cancelada por quem escreveu"; com
+ * motivo, cancelada pelo Shearim, ex. "quem escreveu saiu do Workspace") e `awaiting_approval`
+ * (o Pedido de aprovação espera o autor).
  */
-export type ExecutionState = "queued" | "running" | "retrying" | "done" | "failed" | "not_acting" | "cancelled";
-/** Os estados em que a execução ainda não terminou: o autor pode cancelar. */
-export const OPEN_STATES: readonly ExecutionState[] = ["queued", "running", "retrying"];
+export type ExecutionState =
+  | "queued"
+  | "running"
+  | "retrying"
+  | "done"
+  | "failed"
+  | "not_acting"
+  | "cancelled"
+  /**
+   * O Agente pediu uma escrita (ADR 0011): a execução criou o Pedido de aprovação e terminou, sem
+   * ocupar vaga, "esperando aprovação de <autor>". Na decisão, vira `done` e uma execução de
+   * continuação entra na fila para terminar a resposta.
+   */
+  | "awaiting_approval";
+/**
+ * Os estados em que a execução ainda não terminou: o autor pode cancelar. Esperando aprovação
+ * conta como aberta: cancelar a mensagem cancela o Pedido de aprovação junto.
+ */
+export const OPEN_STATES: readonly ExecutionState[] = ["queued", "running", "retrying", "awaiting_approval"];
 
 /**
  * O passo de uma execução em andamento. `writing` é a bolha "escrevendo"; `deciding` é o
- * roteamento da Articuladora ("Sophya decidindo quem responde").
+ * roteamento da Articuladora ("Sophya decidindo quem responde"); `tool` é uma Ferramenta rodando
+ * (o rótulo dela, "listando os Agentes", está no último item de `ExecutionDto.tools`).
  */
-export type ExecutionStep = "deciding" | "writing";
+export type ExecutionStep = "deciding" | "writing" | "tool";
 
 /**
  * O Andamento de uma execução, como todos que veem a conversa o veem.
@@ -599,6 +871,16 @@ export interface ExecutionDto {
    */
   yourAccount: YourAccountDto | null;
   replyMessageId: string | null;
+  /**
+   * Os usos de Ferramenta da tentativa atual, na ordem: o que está rodando e os que falharam ficam
+   * à vista (a resposta segue sem a Ferramenta que falhou). Vazio sem Ferramentas.
+   */
+  tools: ToolCallDto[];
+  /**
+   * "parou no limite de Ferramentas": a tentativa atual chegou ao teto de turnos de Ferramenta e o
+   * Agente responde com o que tem, numa última chamada sem Ferramentas (#53).
+   */
+  toolLimit: boolean;
 }
 
 /**
@@ -608,6 +890,56 @@ export interface ExecutionDto {
  * - `not_linked`: ele não ligou uma Conta ("Agentes não agem: você não ligou uma Conta e …").
  */
 export type YourAccountDto = { state: "limited"; until: string } | { state: "needs_relink" } | { state: "not_linked" };
+
+// ---------- Pedido de aprovação (ADR 0011) ----------
+
+/**
+ * Em que pé está um Pedido de aprovação: `pending` (o autor decide), `approved` (o Shearim fez a
+ * escrita, ou ela falhou: `failure`), `rejected` (com o motivo opcional), `expired` (24 h sem
+ * decisão) ou `cancelled` (a mensagem foi cancelada).
+ */
+export type ApprovalState = "pending" | "approved" | "rejected" | "expired" | "cancelled";
+
+/**
+ * Um Pedido de aprovação: a escrita que um Agente pediu durante uma resposta, à vista de todos que
+ * veem a conversa, ancorada sob a mensagem de origem. Só o autor (`author`) aprova ou recusa, sem
+ * editar. Item de `GET /api/conversations/:id/approvals` e de `approval.created`/`approval.updated`.
+ */
+export interface ApprovalRequestDto {
+  id: string;
+  channelId: string;
+  originMessageId: string;
+  /** A execução que pediu a escrita. */
+  executionId: string;
+  agent: { id: string; displayName: string; photo: string | null };
+  /** O autor da mensagem de origem: o único que decide. */
+  author: { id: string; displayName: string };
+  /** A Ferramenta de escrita (id e nome em pt-BR). */
+  tool: string;
+  toolTitle: string;
+  /** Exatamente o que vai ser feito, em pt-BR ("Postar em #anuncios: “…”"). */
+  summary: string;
+  state: ApprovalState;
+  /** Na recusa: o motivo que o autor deu, ou nulo. */
+  rejectReason: string | null;
+  /** Na aprovação: o resultado da ação ("mensagem postada em #anuncios"). */
+  result: string | null;
+  /** Na aprovação: o motivo de a ação ter falhado (ex. o autor perdeu o acesso), ou nulo. */
+  failure: string | null;
+  /**
+   * Na aprovação: a ação pode ter sido feita sem o Shearim saber (não terminou no prazo, o servidor
+   * reiniciou no meio). `failure` diz por quê e onde conferir; o cartão diz "resultado incerto".
+   */
+  uncertain: boolean;
+  createdAt: string;
+  expiresAt: string;
+  decidedAt: string | null;
+}
+
+/** Corpo de `POST /api/conversations/:id/approvals/:approvalId/reject`. */
+export interface RejectApprovalInput {
+  reason?: string;
+}
 
 // ---------- Desfecho (ADR 0004) ----------
 
@@ -768,12 +1100,20 @@ export const messagePath = (conversationId: string, messageId: string) =>
 export const INSTALLATION_PATH = "/instalacao";
 /** A seção Membros (o Admin decide os Pedidos de entrada): para onde leva o push de cada pedido. */
 export const MEMBERS_PATH = "/membros";
+/** O GitHub do Workspace (ADR 0010): para onde voltam os retornos do manifest e da instalação. */
+export const GITHUB_PATH = "/github";
 /** A Chave do Workspace: para onde leva o push do incidente da Chave. */
 export const WORKSPACE_KEY_PATH = "/chave";
 /** Os Agentes (orçamento e gasto): para onde leva o push do estouro de orçamento. */
 export const AGENTS_PATH = "/agentes";
 /** "Minha Conta": para onde levam os pushes da Conta (queda, assinatura repetida). */
 export const ACCOUNT_PATH = "/conta";
+/** Perfil › Conectores: onde o Membro liga as credenciais dele (e para onde leva o push da recusa). */
+export const MY_CONNECTORS_PATH = "/perfil/conectores";
+/** Os Conectores (só Admin): para onde volta o login de um Conector com a credencial do Workspace. */
+export const CONNECTORS_PATH = "/conectores";
+/** Onde o servidor de autorização de um Conector devolve o navegador depois do login (OAuth, #56). */
+export const CONNECTOR_LOGIN_CALLBACK_PATH = "/api/connector-login/callback";
 
 // ---------- eventos do WebSocket ----------
 
@@ -810,6 +1150,8 @@ export type ServerEvent =
   | { type: "message.created"; message: MessageDto }
   /** A Conta do Membro (ou o fluxo de ligação) mudou. Vai só para as conexões do próprio Membro. */
   | { type: "account.updated"; account: AccountDto }
+  /** A credencial do Membro num Conector mudou (ligada, desligada, recusada). Só para ele. */
+  | { type: "my_connector.updated"; connector: MyConnectorDto }
   /**
    * Um Canal apareceu ou mudou (criado, alguém entrou ou foi adicionado, Instruções ou N mudaram)
    * para quem pode vê-lo. Para quem acabou de ser adicionado a um privado, é a primeira vez que o vê.
@@ -840,6 +1182,9 @@ export type ServerEvent =
   | { type: "execution.updated"; execution: ExecutionDto }
   /** A Articuladora deu o Desfecho de uma mensagem, para quem vê a conversa. */
   | { type: "outcome.created"; outcome: OutcomeDto }
+  /** Um Pedido de aprovação novo, ou que mudou de estado: para quem vê a conversa. */
+  | { type: "approval.created"; approval: ApprovalRequestDto }
+  | { type: "approval.updated"; approval: ApprovalRequestDto }
   /**
    * As não-lidas do Membro mudaram (chegou mensagem numa conversa dele, ou ele leu algo em
    * qualquer aba ou aparelho). Vai só para as conexões do próprio Membro.

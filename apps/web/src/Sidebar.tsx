@@ -1,5 +1,6 @@
 import type { AgentDto, ChannelDto, DmDto, MeDto, MemberSummaryDto, UnreadDto } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
+import { agentToolsText } from "./agent-tools";
 import { ApiFailure, api } from "./api";
 import { dmTitle } from "./DmView";
 
@@ -21,14 +22,24 @@ interface Props {
   onOpenAdmin(view: AdminView): void;
 }
 
-export type AdminView = "members" | "context" | "settings" | "agents" | "key" | "installation";
+export type AdminView =
+  | "members"
+  | "context"
+  | "settings"
+  | "agents"
+  | "connectors"
+  | "key"
+  | "github"
+  | "installation";
 
 const ADMIN_LINKS: [AdminView, string][] = [
   ["members", "Membros"],
   ["context", "Contexto do Workspace"],
   ["settings", "Instruções dos Canais"],
   ["agents", "Agentes"],
+  ["connectors", "Conectores"],
   ["key", "Chave do Workspace"],
+  ["github", "GitHub"],
   ["installation", "Instalação"],
 ];
 
@@ -253,6 +264,10 @@ function NewDm({ me, onCancel, onOpened }: { me: MeDto; onCancel(): void; onOpen
               <button type="button" className="link" disabled={busy} onClick={() => open(() => api.openAgentDm(a.id))}>
                 {a.name}
               </button>
+              <small className="hint">
+                {a.description ? `${a.description} · ` : ""}
+                {agentToolsText(a)}
+              </small>
             </li>
           ))}
         </ul>

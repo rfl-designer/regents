@@ -1,5 +1,6 @@
 import type https from "node:https";
 import {
+  type ApprovalRequestDto,
   type ConversationKind,
   conversationPath,
   type DeviceDto,
@@ -50,7 +51,7 @@ export interface PushConfig {
 
 /**
  * Push (Spec, módulo 12): o par VAPID, as inscrições por aparelho, os pushes de conversa (Menção
- * e DM, #31; resposta de Agente, Thread seguida e falha, #32) e os aparelhos do Membro, com
+ * e DM, #31; resposta de Agente, Thread seguida e falha, #32; Pedido de aprovação, #52) e os aparelhos do Membro, com
  * "parou em", remoção e `devices.updated` (#33).
  *
  * `Urgency: high` para Menção, DM e falha; `normal` para Thread e resposta de Agente. Os de
@@ -319,6 +320,34 @@ export function createPush(deps: {
     });
   }
 
+  /**
+   * Um Agente pediu uma escrita: o autor da mensagem recebe "<Agente> pede sua aprovação"
+   * (`Urgency: high`), com o resumo, que abre a mensagem (onde está o cartão). Tem `tag` própria,
+   * por Pedido. Cala se ele está com a conversa à vista (o cartão já está na tela).
+   */
+  function approvalRequested(approval: ApprovalRequestDto) {
+    const watching = presence.watchersOf(approval.channelId);
+    enqueue(async () => {
+      const authorId = approval.author.id;
+      if (watching.has(authorId) || (await departed([authorId])).length > 0) return;
+      const [conversation] = await db
+        .select({ kind: channels.kind, name: channels.name })
+        .from(channels)
+        .where(eq(channels.id, approval.channelId));
+      if (!conversation) return;
+      const who = `${approval.agent.displayName} pede sua aprovação`;
+      await deliverNotice(authorId, {
+        title: isChannelKind(conversation.kind) ? `#${conversation.name} · ${who}` : who,
+        // O resumo leva o texto inteiro da escrita: o push service recusa corpo grande (~4 KB).
+        body: excerpt(approval.summary),
+        path: messagePath(approval.channelId, approval.originMessageId),
+        tag: `aprovacao-${approval.id}`,
+        topic: approval.id.replaceAll("-", ""),
+        urgency: "high",
+      });
+    });
+  }
+
   /** Abriu a conversa: as próximas notificações dela recomeçam do "1". */
   function conversationOpened(memberId: string, conversationId: string) {
     enqueue(async () => {
@@ -399,6 +428,7 @@ export function createPush(deps: {
     conversationOpened,
     notify,
     executionFailed,
+    approvalRequested,
     /**
      * O Membro foi removido do Workspace: os aparelhos dele deixam de receber push na hora (as
      * inscrições, os aparelhos e as contagens somem; quem volta liga as notificações de novo).

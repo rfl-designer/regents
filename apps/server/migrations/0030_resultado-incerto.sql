@@ -1,0 +1,1 @@
+ALTER TABLE "approval_requests" ADD COLUMN "uncertain" boolean DEFAULT false NOT NULL;

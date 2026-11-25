@@ -5,10 +5,27 @@ import {
   OPEN_STATES,
   type YourAccountDto,
 } from "@shearim/contracts";
-import { type AnyColumn, and, asc, desc, eq, gt, inArray, lte, min, ne, or, type SQL, sql } from "drizzle-orm";
+import {
+  type AnyColumn,
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNull,
+  lte,
+  min,
+  ne,
+  or,
+  type SQL,
+  sql,
+} from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { type AccountStanding, accountStanding } from "./accounts";
 import type { Agent } from "./agents";
+import { APPROVAL_EXPIRED_REASON, continuationNote, insertApproval, publishApproval } from "./approvals";
 import { ROUTING_MODEL } from "./articuladora";
 import type { Clock } from "./clock";
 import { buildContext, type Call } from "./context";
@@ -25,9 +42,10 @@ import type { Reading } from "./reading";
 import { buildRouting, parseDecision, ROUTING_SCHEMA } from "./routing";
 import type { SecretBox } from "./secrets";
 import { recordFollows } from "./threads";
+import { type ToolPort, toolCallsOf, withoutConnect } from "./tools/port";
 import { readWorkspaceKey } from "./workspace-key";
 
-const { executions, agents, channels, messages, accounts } = schema;
+const { executions, agents, channels, messages, accounts, approvalRequests, executionToolCalls } = schema;
 type Row = typeof executions.$inferSelect;
 /**
  * O tipo de uma execução: `mention` (Agente mencionado), `dm` (o Agente de uma DM com Agente),
@@ -83,11 +101,17 @@ export function limitsFromEnv(env: Record<string, string | undefined>): Partial<
 const STALL_REASON: Record<ExecutionStep, string> = {
   deciding: "ficou 2 minutos sem dar o Desfecho",
   writing: "ficou 2 minutos sem escrever nada",
+  // Enquanto a Ferramenta roda, vale o prazo dela (a vigia espera); este só aparece se nada a encerra.
+  tool: "ficou 2 minutos sem escrever nada",
 };
 const RESTART_REASON = "o servidor reiniciou";
+/** Quando a expiração dos Pedidos falha, a nova tentativa sai depois disso. */
+const EXPIRY_RETRY_MS = 60_000;
+/** A causa do resultado incerto de uma ação aprovada que o servidor deixou no meio. */
+const RESTART_DURING_ACTION = "o servidor reiniciou durante a ação";
 
 /** Por que uma execução em andamento foi interrompida (o `reason` do `AbortSignal`). */
-type Interruption = "stalled" | "cancelled" | "shutdown";
+type Interruption = "stalled" | "cancelled" | "shutdown" | "approval";
 
 /**
  * O que as execuções pedem às Contas: marcar o que a execução pela Conta viu, para que as
@@ -160,6 +184,12 @@ export interface Executions {
   ): Promise<string[]>;
   /** Anuncia o Andamento das execuções que `enqueue` gravou e acorda o trabalhador. */
   queued(ids: readonly string[]): Promise<void>;
+  /**
+   * O Pedido de aprovação `approvalRequestId` foi decidido (ADR 0011): a execução que esperava
+   * (`executionId`) termina, e entra na fila a continuação da resposta, ligada ao Pedido, com a
+   * mesma mensagem de origem e a hora de chegada dela. Nada se ela já não esperava aprovação.
+   */
+  continueAfter(executionId: string, approvalRequestId: string): Promise<void>;
   /** O Andamento das execuções de uma conversa que ainda não viraram resposta, como `viewerId` o vê. */
   openIn(channelId: string, viewerId: string): Promise<ExecutionDto[]>;
   /**
@@ -206,12 +236,18 @@ export function createExecutions(deps: {
   hooks?: ExecutionHooks;
   /** A resposta conta como não-lida para quem participa da conversa. */
   reading: Pick<Reading, "messageCreated">;
-  /** O push da resposta (#32), pelo mesmo caminho da mensagem de pessoa. */
-  push: Pick<Push, "messageCreated">;
+  /** O push da resposta (#32), pelo mesmo caminho da mensagem de pessoa, e o do Pedido de aprovação (#52). */
+  push: Pick<Push, "messageCreated" | "approvalRequested">;
   /** O gasto na Chave por Agente e por mês, o orçamento e os incidentes da Chave (#28). */
   ledger: KeyLedger;
+  /** A porta de Ferramentas: as Ferramentas de cada execução, com o passo no Andamento. */
+  tools: ToolPort;
   /** Os tetos de concorrência (padrão: os da Spec, `DEFAULT_LIMITS`). */
   limits?: Partial<ExecutionLimits>;
+  /** O teto de turnos de Ferramenta de uma resposta (padrão: `MAX_TOOL_TURNS`, 20; #53). */
+  maxToolTurns?: number;
+  /** O prazo do Pedido de aprovação (padrão: 24 h, `APPROVAL_TTL_MS`; `SHEARIM_APPROVAL_TTL_H`). */
+  approvalTtlMs?: number;
 }): Executions {
   const { db, clock, events, model, secrets, hooks, reading, ledger, push } = deps;
   const limits: ExecutionLimits = { ...DEFAULT_LIMITS, ...deps.limits };
@@ -283,15 +319,44 @@ export function createExecutions(deps: {
    */
   async function backToQueue(job: Row, change: Partial<typeof executions.$inferInsert> = {}) {
     if (await transition(job.id, "queued", { attempt: job.attempt - 1, payer: null, ...change })) {
+      // A tentativa volta a ser usada: os usos da execução descartada não são da refeita.
+      await forgetToolCalls(job.id, job.attempt);
       await publish(job.id);
     }
     wake();
   }
 
-  /** Ao subir: toda execução em andamento ficou sem processo vivo e vira "o servidor reiniciou". */
+  /** Apaga os usos de Ferramenta das tentativas a partir de `fromAttempt`, cujo número vai ser reusado. */
+  async function forgetToolCalls(executionId: string, fromAttempt: number) {
+    await db
+      .delete(executionToolCalls)
+      .where(and(eq(executionToolCalls.executionId, executionId), gte(executionToolCalls.attempt, fromAttempt)));
+  }
+
+  /**
+   * Ao subir: toda execução em andamento ficou sem processo vivo e vira "o servidor reiniciou". E o
+   * Pedido decidido cuja continuação não saiu (o servidor caiu entre a decisão e ela) continua
+   * agora (ADR 0003). A ação aprovada sem resultado gravado não se repete: pode ter sido feita, e o
+   * resultado fica incerto.
+   */
   async function recover() {
     const orphans = await db.select().from(executions).where(eq(executions.state, "running"));
     for (const job of orphans) await fail(job, RESTART_REASON);
+    const decided = await db
+      .select({ r: approvalRequests })
+      .from(approvalRequests)
+      .innerJoin(executions, eq(executions.id, approvalRequests.executionId))
+      .where(and(eq(executions.state, "awaiting_approval"), inArray(approvalRequests.state, ["approved", "rejected"])));
+    for (const { r } of decided) {
+      if (r.state === "approved" && r.result === null && r.failure === null) {
+        await db
+          .update(approvalRequests)
+          .set({ failure: await deps.tools.uncertainReason(r.tool, RESTART_DURING_ACTION), uncertain: true })
+          .where(and(eq(approvalRequests.id, r.id), isNull(approvalRequests.result), isNull(approvalRequests.failure)));
+        await publishApproval(db, events, r.id, "approval.updated");
+      }
+      await continueAfter(r.executionId, r.id);
+    }
   }
 
   /**
@@ -327,6 +392,7 @@ export function createExecutions(deps: {
           heldUntil: null,
           apiRetryAttempt: null,
           apiRetryMax: null,
+          toolLimit: false,
           attempt: sql`${executions.attempt} + 1`,
         })
         .where(and(eq(executions.id, candidate.id), readyAt(now), onTurn(now)))
@@ -543,8 +609,23 @@ export function createExecutions(deps: {
   async function run(job: Row, agent: Agent, payer: Choice, controller: AbortController) {
     if (job.kind === "route") return route(job, payer, controller, agent);
     const result = await byPayer(job, payer, controller, async (payer) => {
-      const context = await buildContext(db, agent, job.originMessageId, await callOf(job));
-      return { model: agent.model, ...context, payer };
+      const tools = toolsOf(job);
+      const offered = await tools.list();
+      const context = await buildContext(db, agent, job.originMessageId, await callOf(job), offered);
+      // A continuação sabe o que a resposta já pediu e o que o autor decidiu (ADR 0011).
+      if (job.approvalRequestId) {
+        const note = await continuationNote(db, job.approvalRequestId);
+        context.messages = context.messages.map((m, i) =>
+          i === context.messages.length - 1 ? { ...m, content: `${m.content}\n\n${note}` } : m,
+        );
+      }
+      return {
+        model: agent.model,
+        ...context,
+        payer,
+        // A continuação de um Pedido é uma execução nova: conta o teto do zero.
+        ...(offered.length ? { tools, maxToolTurns: deps.maxToolTurns } : {}),
+      };
     });
     if (!result) return;
     const { text, end } = result;
@@ -618,16 +699,37 @@ export function createExecutions(deps: {
    * interrompida. `reason` nulo é o cancelamento por quem escreveu; com motivo, foi o Shearim.
    */
   async function cancelWhere(where: SQL, reason: string | null): Promise<ExecutionDto[]> {
-    const cancelled = await db
-      .update(executions)
-      .set({ ...leaving("cancelled", clock.now()), reason, authorReason: null, held: false, heldUntil: null })
-      .where(and(where, inArray(executions.state, [...OPEN_STATES])))
-      .returning({ id: executions.id });
+    const now = clock.now();
+    // A execução esperando aprovação e o Pedido dela juntos: uma decisão que chegou antes ganha.
+    const { cancelled, approvals } = await db.transaction(async (tx) => {
+      const cancelled = await tx
+        .update(executions)
+        .set({ ...leaving("cancelled", now), reason, authorReason: null, held: false, heldUntil: null })
+        .where(and(where, inArray(executions.state, [...OPEN_STATES])))
+        .returning({ id: executions.id });
+      const approvals = cancelled.length
+        ? await tx
+            .update(approvalRequests)
+            .set({ state: "cancelled", decidedAt: now })
+            .where(
+              and(
+                inArray(
+                  approvalRequests.executionId,
+                  cancelled.map((c) => c.id),
+                ),
+                eq(approvalRequests.state, "pending"),
+              ),
+            )
+            .returning({ id: approvalRequests.id })
+        : [];
+      return { cancelled, approvals };
+    });
     for (const { id } of cancelled) {
       waiting.delete(id);
       running.get(id)?.abort("cancelled" satisfies Interruption);
       await publish(id);
     }
+    for (const { id } of approvals) await publishApproval(db, events, id, "approval.updated");
     if (cancelled.length === 0) return [];
     // A que saiu da fila pode ter sido a que segurava a série.
     wake();
@@ -648,6 +750,7 @@ export function createExecutions(deps: {
     const { signal } = controller;
     const step = (job.step as ExecutionStep | null) ?? "writing";
     const watchdog = stallWatch(clock, STALL_MS, () => controller.abort("stalled" satisfies Interruption));
+    watchdogs.set(job.id, watchdog);
     let text = "";
     let end: TerminalModelEvent | undefined;
     let apiRetrying = false;
@@ -660,12 +763,21 @@ export function createExecutions(deps: {
         .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
       await publish(job.id);
     }
+    /** "parou no limite de Ferramentas": a última chamada, sem Ferramentas, vem agora. */
+    async function showToolLimit() {
+      await db
+        .update(executions)
+        .set({ toolLimit: true })
+        .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
+      await publish(job.id);
+    }
     try {
       for await (const event of model.run(request, signal)) {
         if (isProgress(event)) watchdog.reset();
         if (event.type === "api_retry") await showApiRetry(event);
         else if ((event.type === "text" || event.type === "thinking") && apiRetrying) await showApiRetry(null);
         if (event.type === "text") text += event.text;
+        else if (event.type === "tool_limit") await showToolLimit();
         else if (event.type === "usage")
           spent.usage = { model: event.model, usage: event.usage, costUsd: event.costUsd };
         else if (event.type === "done") {
@@ -676,6 +788,7 @@ export function createExecutions(deps: {
       }
     } finally {
       watchdog.cancel();
+      watchdogs.delete(job.id);
     }
     if (signal.aborted) {
       // Na vigia, é falha. No cancelamento, já está gravado. No reinício, continua "em andamento"
@@ -684,6 +797,72 @@ export function createExecutions(deps: {
       return undefined;
     }
     return { text, end };
+  }
+
+  /** A vigia de cada execução que está rodando: a Ferramenta a pausa enquanto roda. */
+  const watchdogs = new Map<string, StallWatch>();
+
+  /**
+   * As Ferramentas da execução, pela porta de Ferramentas. Enquanto uma roda, o passo é o dela
+   * ("listando os Agentes") e vale o prazo dela, não o da vigia; o começo e o fim contam como
+   * progresso. A porta grava o uso; aqui ficam o passo e o anúncio do Andamento.
+   */
+  function toolsOf(job: Row) {
+    // Ferramentas podem rodar em paralelo: a vigia pausa com a primeira e volta só com a última.
+    let toolsRunning = 0;
+    const step = async (next: ExecutionStep) => {
+      await db
+        .update(executions)
+        .set({ step: next, since: clock.now() })
+        .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
+      await publish(job.id);
+    };
+    return deps.tools.forExecution(
+      {
+        executionId: job.id,
+        attempt: job.attempt,
+        agentId: job.agentId,
+        channelId: job.channelId,
+        originMessageId: job.originMessageId,
+      },
+      {
+        async started() {
+          if (toolsRunning++ === 0) watchdogs.get(job.id)?.pause();
+          await step("tool");
+        },
+        async finished() {
+          if (--toolsRunning > 0) return;
+          watchdogs.get(job.id)?.resume();
+          await step("writing");
+        },
+        async approvalRequested({ tool, action, summary }) {
+          // O Pedido e o fim da execução juntos: um cancelamento que chegou antes ganha, e nada fica.
+          const created = await db.transaction(async (tx) => {
+            if (!(await transition(job.id, "awaiting_approval", {}, { tx }))) return undefined;
+            return insertApproval(tx, {
+              executionId: job.id,
+              channelId: job.channelId,
+              originMessageId: job.originMessageId,
+              agentId: job.agentId,
+              tool: tool.id,
+              toolTitle: tool.title,
+              action,
+              summary,
+              now: clock.now(),
+              ttlMs: deps.approvalTtlMs,
+            });
+          });
+          if (!created) return false;
+          const { id, expiresAt } = created;
+          armExpiry(expiresAt);
+          // Encerra pelo caminho do cancelamento, com o motivo próprio: o texto parcial é descartado.
+          running.get(job.id)?.abort("approval" satisfies Interruption);
+          await publish(job.id);
+          push.approvalRequested(await publishApproval(db, events, id, "approval.created"));
+          return true;
+        },
+      },
+    );
   }
 
   /** Por que o Agente foi chamado (o preâmbulo do contexto). */
@@ -703,7 +882,7 @@ export function createExecutions(deps: {
   async function route(job: Row, payer: Choice, controller: AbortController, articuladora: Agent) {
     let routing: Awaited<ReturnType<typeof buildRouting>> | undefined;
     const result = await byPayer(job, payer, controller, async (payer) => {
-      routing = await buildRouting(db, articuladora, job.originMessageId);
+      routing = await buildRouting(db, articuladora, job.originMessageId, deps.tools.grantsOf);
       const { team: _, ...request } = routing;
       return { model: ROUTING_MODEL, ...request, output: { schema: ROUTING_SCHEMA }, payer };
     });
@@ -977,7 +1156,97 @@ export function createExecutions(deps: {
     arm();
   }
 
+  /**
+   * A expiração dos Pedidos de aprovação (ADR 0011): um alarme no relógio para o próximo pendente
+   * a vencer. Vencido, o Pedido passa a expirado e a execução que o esperava termina em "a
+   * aprovação expirou", sem continuação. Ao subir, expira o que venceu com o servidor parado.
+   */
+  let expiryAlarm: { at: number; cancel: () => void } | undefined;
+  function armExpiry(at: Date) {
+    if (stopping || (expiryAlarm && expiryAlarm.at <= at.getTime())) return;
+    expiryAlarm?.cancel();
+    const cancel = clock.after(Math.max(0, at.getTime() - clock.now().getTime()), () => {
+      expiryAlarm = undefined;
+      void expireOrRetry();
+    });
+    expiryAlarm = { at: at.getTime(), cancel };
+  }
+
+  /**
+   * Expira o que venceu; se falhar no meio (o próximo alarme não chegou a ser armado), tenta de novo
+   * em `EXPIRY_RETRY_MS`: nenhum Pedido fica pendente depois do prazo.
+   */
+  async function expireOrRetry() {
+    try {
+      await expireApprovals();
+    } catch (err) {
+      console.error("shearim: a expiração dos Pedidos falhou; tenta de novo em 1 min", err);
+      armExpiry(new Date(clock.now().getTime() + EXPIRY_RETRY_MS));
+    }
+  }
+
+  async function expireApprovals() {
+    const now = clock.now();
+    // O Pedido e o fim da execução juntos: uma decisão que chegou antes ganha (só sai o pendente).
+    const expired = await db.transaction(async (tx) => {
+      const rows = await tx
+        .update(approvalRequests)
+        .set({ state: "expired", decidedAt: now })
+        .where(and(eq(approvalRequests.state, "pending"), lte(approvalRequests.expiresAt, now)))
+        .returning({ id: approvalRequests.id, executionId: approvalRequests.executionId });
+      if (rows.length > 0) {
+        await tx
+          .update(executions)
+          .set({ ...leaving("cancelled", now), reason: APPROVAL_EXPIRED_REASON, authorReason: null })
+          .where(
+            and(
+              inArray(
+                executions.id,
+                rows.map((r) => r.executionId),
+              ),
+              eq(executions.state, "awaiting_approval"),
+            ),
+          );
+      }
+      return rows;
+    });
+    for (const { id, executionId } of expired) {
+      await publish(executionId);
+      await publishApproval(db, events, id, "approval.updated");
+    }
+    const [next] = await db
+      .select({ at: min(approvalRequests.expiresAt) })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.state, "pending"));
+    if (next?.at) armExpiry(new Date(next.at));
+  }
+
+  async function continueAfter(executionId: string, approvalRequestId: string) {
+    const ids = await db.transaction(async (tx) => {
+      const [waited] = await tx.select().from(executions).where(eq(executions.id, executionId)).for("update");
+      if (!waited || !(await transition(waited.id, "done", {}, { from: "awaiting_approval", tx }))) return [];
+      const id = crypto.randomUUID();
+      await tx.insert(executions).values({
+        id,
+        kind: waited.kind,
+        channelId: waited.channelId,
+        originMessageId: waited.originMessageId,
+        threadRootId: waited.threadRootId,
+        agentId: waited.agentId,
+        state: "queued",
+        since: clock.now(),
+        arrivedAt: waited.arrivedAt,
+        approvalRequestId,
+      });
+      return [waited.id, id];
+    });
+    for (const id of ids) await publish(id);
+    wake();
+  }
+
   async function stop() {
+    expiryAlarm?.cancel();
+    expiryAlarm = undefined;
     monthTurn?.();
     monthTurn = undefined;
     stopping = true;
@@ -990,6 +1259,8 @@ export function createExecutions(deps: {
   return {
     enqueue: (tx, origin, calls) => insertRows(tx, origin, calls, clock.now()),
     queued,
+
+    continueAfter,
 
     openIn: async (channelId, viewerId) =>
       (await views(and(eq(executions.channelId, channelId), ne(executions.state, "done")))).map((v) =>
@@ -1015,6 +1286,7 @@ export function createExecutions(deps: {
         { from: "failed" },
       );
       if (!queued) return undefined;
+      await forgetToolCalls(executionId, 1);
       const dto = await publish(executionId);
       wake();
       return dto;
@@ -1026,6 +1298,7 @@ export function createExecutions(deps: {
       if (loop) return;
       stopping = false;
       watchMonthTurn();
+      void expireOrRetry();
       loop = work();
     },
 
@@ -1136,20 +1409,38 @@ function onTurn(now: Date) {
 
 /** Contam como progresso para a vigia: texto, pensamento e nova tentativa da API (nunca `ping`). */
 function isProgress(event: ModelEvent) {
-  return event.type === "text" || event.type === "thinking" || event.type === "api_retry";
+  return (
+    event.type === "text" || event.type === "thinking" || event.type === "tool_limit" || event.type === "api_retry"
+  );
 }
 
-/** Um prazo que recomeça a cada progresso e chama `onStall` se vencer. */
+/**
+ * Um prazo que recomeça a cada progresso e chama `onStall` se vencer. `pause` o suspende (uma
+ * Ferramenta rodando, com o prazo dela) até `resume`, que recomeça a contagem.
+ */
 function stallWatch(clock: Clock, ms: number, onStall: () => void) {
   let cancel = clock.after(ms, onStall);
+  let paused = false;
+  const arm = () => {
+    cancel();
+    cancel = clock.after(ms, onStall);
+  };
   return {
     reset() {
+      if (!paused) arm();
+    },
+    pause() {
+      paused = true;
       cancel();
-      cancel = clock.after(ms, onStall);
+    },
+    resume() {
+      paused = false;
+      arm();
     },
     cancel: () => cancel(),
   };
 }
+type StallWatch = ReturnType<typeof stallWatch>;
 
 /** Falhas que uma nova tentativa não conserta: a credencial e o pedido em si. */
 function isRetryable(end: TerminalModelEvent | undefined) {
@@ -1206,6 +1497,10 @@ async function selectViews(
     .leftJoin(accounts, eq(accounts.memberId, messages.authorMemberId))
     .where(where)
     .orderBy(asc(executions.arrivedAt), asc(executions.seq));
+  const tools = await toolCallsOf(
+    db,
+    rows.map(({ e }) => ({ id: e.id, attempt: e.attempt })),
+  );
   return rows.map(({ e, agentName, agentPhoto, authorId, account }) => {
     const reason = WITH_REASON.includes(e.state) ? e.reason : null;
     const everyone: ExecutionDto = {
@@ -1229,6 +1524,8 @@ async function selectViews(
       waitingTurn: (e.state === "queued" || e.state === "retrying") && waiting.has(e.id),
       yourAccount: null,
       replyMessageId: e.replyMessageId,
+      tools: withoutConnect(tools.get(e.id) ?? []),
+      toolLimit: e.toolLimit,
     };
     // A Conta explica o que se vê quando outra coisa paga, espera ou não age no lugar dela.
     const explains = everyone.held || everyone.payer === "key" || e.state === "not_acting";
@@ -1236,6 +1533,8 @@ async function selectViews(
       ...everyone,
       reason: reason && (e.authorReason ?? reason),
       yourAccount: explains ? yourAccount(accountStanding(account, now)) : null,
+      // Só o autor vê o atalho "Ligar <Conector>" de uma Ferramenta indisponível por falta da credencial dele.
+      tools: tools.get(e.id) ?? [],
     };
     return { everyone, author, authorId };
   });

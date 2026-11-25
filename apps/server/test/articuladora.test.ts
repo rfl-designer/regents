@@ -35,8 +35,13 @@ describe("a Articuladora existe em todo Workspace", () => {
         description: expect.stringContaining("Articuladora"),
         model: "claude-sonnet-5-5",
         builtin: true,
+        // Sem Ferramentas até o Admin conceder (Spec #44).
+        tools: [],
+        reach: [],
         // O Admin lê as instruções dela (são do Shearim; ele só não as edita).
         instructions: expect.stringContaining("Articuladora"),
+        // Sem lista de repositórios do GitHub (#58): alcança todos os da instalação.
+        githubRepositories: null,
         // O orçamento dela, como o de todo Agente (#28): sem teto até o Admin definir.
         monthlyBudgetUsd: null,
         keySpendUsd: 0,

@@ -33,6 +33,17 @@ export interface FakeReply {
   streamError?: { type: string; message: string };
   stopReason?: string;
   usage?: { input_tokens: number; output_tokens: number };
+  /**
+   * O modelo pede Ferramentas (client tools): um bloco `tool_use` por item, depois do texto (se
+   * houver), com `stop_reason: "tool_use"`. A próxima chamada traz os `tool_result` (`toolResults`).
+   */
+  toolUse?: { name: string; input?: Record<string, unknown>; id?: string }[];
+  /**
+   * As server tools da web que o lado da Anthropic roda antes do texto: um bloco `server_tool_use`
+   * e o resultado (`web_search_tool_result`/`web_fetch_tool_result`) por item, ou o erro dele
+   * (`error`: o `error_code`). Cada busca sem erro conta em `usage.server_tool_use.web_search_requests`.
+   */
+  serverToolUse?: { name: "web_search" | "web_fetch"; input?: Record<string, unknown>; id?: string; error?: string }[];
 }
 
 /** Uma chamada que chegou ao falso. */
@@ -48,7 +59,7 @@ export interface RecordedRequest {
     max_tokens: number;
     stream?: boolean;
     system?: string | { type: string; text: string }[];
-    messages: { role: string; content: string | { type: string; text?: string }[] }[];
+    messages: { role: string; content: string | { type: string; text?: string; [k: string]: unknown }[] }[];
     [k: string]: unknown;
   };
 }
@@ -96,6 +107,20 @@ export function lastUserText(body: RecordedRequest["body"]) {
   return last.content.map((b) => b.text ?? "").join("");
 }
 
+/** Um `tool_result` que o Shearim devolveu ao modelo. */
+export interface RecordedToolResult {
+  tool_use_id: string;
+  content: string;
+  is_error?: boolean;
+}
+
+/** Os `tool_result` da última mensagem de usuário do pedido (vazio se ela não traz nenhum). */
+export function toolResults(body: RecordedRequest["body"]): RecordedToolResult[] {
+  const last = body.messages.at(-1);
+  if (last?.role !== "user" || typeof last.content === "string") return [];
+  return last.content.filter((b) => b.type === "tool_result") as unknown as RecordedToolResult[];
+}
+
 /**
  * O padrão: um texto curto; ao roteamento da Articuladora (com `output_config`), o Desfecho
  * "nenhum", para um teste que não roteiriza o roteamento não ver resposta a mais.
@@ -128,6 +153,42 @@ export async function startFakeMessagesApi(
           if (signal.aborted) throw new Error("cliente desistiu");
           controller.enqueue(sse(event, data));
           if (delay) await sleep(delay);
+        };
+        const searches = (reply.serverToolUse ?? []).filter((s) => s.name === "web_search" && !s.error).length;
+        const finish = async (stopReason: string) => {
+          await send("message_delta", {
+            type: "message_delta",
+            delta: { stop_reason: stopReason, stop_sequence: null },
+            usage: {
+              output_tokens: usage.output_tokens,
+              ...(reply.serverToolUse && { server_tool_use: { web_search_requests: searches, web_fetch_requests: 0 } }),
+            },
+          });
+          await send("message_stop", { type: "message_stop" });
+          controller.close();
+        };
+        /** Os blocos `tool_use` a partir de `first`, com a entrada em `input_json_delta`, e o fim `tool_use`. */
+        const sendTools = async (first: number) => {
+          for (const [i, tool] of (reply.toolUse ?? []).entries()) {
+            const index = first + i;
+            await send("content_block_start", {
+              type: "content_block_start",
+              index,
+              content_block: {
+                type: "tool_use",
+                id: tool.id ?? `toolu_falso_${crypto.randomUUID()}`,
+                name: tool.name,
+                input: {},
+              },
+            });
+            await send("content_block_delta", {
+              type: "content_block_delta",
+              index,
+              delta: { type: "input_json_delta", partial_json: JSON.stringify(tool.input ?? {}) },
+            });
+            await send("content_block_stop", { type: "content_block_stop", index });
+          }
+          await finish(reply.stopReason ?? "tool_use");
         };
         try {
           await send("message_start", {
@@ -170,6 +231,48 @@ export async function startFakeMessagesApi(
             await send("content_block_stop", { type: "content_block_stop", index });
             index++;
           }
+          for (const server of reply.serverToolUse ?? []) {
+            const id = server.id ?? `srvtoolu_falso_${crypto.randomUUID()}`;
+            const input = server.input ?? {};
+            await send("content_block_start", {
+              type: "content_block_start",
+              index,
+              content_block: { type: "server_tool_use", id, name: server.name, input: {} },
+            });
+            await send("content_block_delta", {
+              type: "content_block_delta",
+              index,
+              delta: { type: "input_json_delta", partial_json: JSON.stringify(input) },
+            });
+            await send("content_block_stop", { type: "content_block_stop", index });
+            index++;
+            const url = String(input.url ?? "https://exemplo.com/");
+            const content = server.error
+              ? { type: `${server.name}_tool_result_error`, error_code: server.error }
+              : server.name === "web_search"
+                ? [{ type: "web_search_result", url, title: "Resultado", encrypted_content: "xyz", page_age: null }]
+                : {
+                    type: "web_fetch_result",
+                    url,
+                    retrieved_at: "2026-11-24T12:00:00Z",
+                    content: {
+                      type: "document",
+                      source: { type: "text", media_type: "text/plain", data: "A página." },
+                    },
+                  };
+            await send("content_block_start", {
+              type: "content_block_start",
+              index,
+              content_block: { type: `${server.name}_tool_result`, tool_use_id: id, content },
+            });
+            await send("content_block_stop", { type: "content_block_stop", index });
+            index++;
+          }
+          const tools = reply.toolUse ?? [];
+          if (tools.length && pieces.length === 0) {
+            await sendTools(index);
+            return;
+          }
           await send("content_block_start", {
             type: "content_block_start",
             index,
@@ -194,13 +297,11 @@ export async function startFakeMessagesApi(
             return;
           }
           await send("content_block_stop", { type: "content_block_stop", index });
-          await send("message_delta", {
-            type: "message_delta",
-            delta: { stop_reason: reply.stopReason ?? "end_turn", stop_sequence: null },
-            usage: { output_tokens: usage.output_tokens },
-          });
-          await send("message_stop", { type: "message_stop" });
-          controller.close();
+          if (tools.length) {
+            await sendTools(index + 1);
+            return;
+          }
+          await finish(reply.stopReason ?? "end_turn");
         } catch {
           // O cliente fechou a conexão no meio: nada a fazer.
           try {

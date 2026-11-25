@@ -6,6 +6,8 @@
  * se do outro lado está a Messages API (pela Chave, `key.ts`) ou um `claude -p` (pela Conta, #26).
  */
 
+import type { ExecutionTools } from "../tools/port";
+
 /** Uma mensagem do contexto, já com o autor marcado no texto quando importa. */
 export interface ModelMessage {
   role: "user" | "assistant";
@@ -31,6 +33,29 @@ export interface ModelRequest {
    * do `claude -p`, com o `structured_output` do `result` emitido como o texto (ADR 0009).
    */
   output?: { schema: Record<string, unknown> };
+  /**
+   * As Ferramentas da execução (a porta de Ferramentas, já presa à execução). Pela Chave, o
+   * cérebro as oferece como client tools e roda o vai-e-vem de `tool_use`: cada chamada passa pela
+   * porta, que grava o passo no Andamento e aplica o prazo. Ausente: o pedido vai sem Ferramentas
+   * (o roteamento, ADR 0009).
+   */
+  tools?: ExecutionTools;
+  /**
+   * O teto de turnos de Ferramenta da resposta (padrão `MAX_TOOL_TURNS`; #53). Ao chegar nele, o
+   * cérebro emite `tool_limit` e faz uma última chamada sem Ferramentas, com `toolLimitNote`.
+   */
+  maxToolTurns?: number;
+}
+
+/** O teto de turnos de Ferramenta de uma resposta, se a Instalação não ajusta (`SHEARIM_TOOL_MAX_TURNS`). */
+export const MAX_TOOL_TURNS = 20;
+
+/** O que a última chamada diz ao modelo quando a resposta chegou ao teto de turnos de Ferramenta. */
+export function toolLimitNote(turns: number) {
+  return (
+    `[Shearim] Esta resposta chegou ao limite de Ferramentas (${turns} turnos de Ferramenta). ` +
+    "Não há mais Ferramentas: responda agora com o que você tem e diga o que ficou faltando, se faltou algo."
+  );
 }
 
 export interface ModelUsage {
@@ -39,7 +64,7 @@ export interface ModelUsage {
 }
 
 /**
- * O que um cérebro emite. Contam como progresso para a vigia: `text`, `thinking` e `api_retry`.
+ * O que um cérebro emite. Contam como progresso para a vigia: `text`, `thinking`, `tool_limit` e `api_retry`.
  * Todo fluxo termina com exatamente um destes: `done`, `failed`, `auth_failed`,
  * `billing_failed` ou `limit` (ou nada, quando o `signal` foi abortado).
  */
@@ -48,6 +73,11 @@ export type ModelEvent =
   | { type: "text"; text: string }
   /** Um pedaço de pensamento (o texto pode vir vazio: só conta como sinal de vida). */
   | { type: "thinking" }
+  /**
+   * A resposta chegou ao teto de turnos de Ferramenta: o que vem depois é a última chamada, sem
+   * Ferramentas ("parou no limite de Ferramentas"). Conta como progresso.
+   */
+  | { type: "tool_limit" }
   /** A API está sendo tentada de novo (n/m): "tentando de novo (n/m)". */
   | { type: "api_retry"; attempt: number; max: number }
   /**

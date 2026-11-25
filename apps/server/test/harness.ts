@@ -26,8 +26,10 @@ import { type Db, migrationsFolder, schema } from "../src/db/client";
 import type { Identity, IdentityPort, NoIdentityReason } from "../src/identity/port";
 import { secretBox } from "../src/secrets";
 import { FAKE_LOGIN_CODE, type FakeClaude, fakeClaude } from "./fake-claude";
+import { startFakeGitHub } from "./fakes/github-api";
 import { startFakeMessagesApi } from "./fakes/messages-api";
 import { type Delivery, type FakeSubscription, type PushCollector, startPushCollector } from "./fakes/push-collector";
+import { startRemoteMcp } from "./fakes/remote-mcp";
 
 // ---------- limpeza automática (o preload roda `runCleanups` no afterEach) ----------
 
@@ -355,6 +357,20 @@ export async function fakeMessagesApi() {
   return api;
 }
 
+/** A API do GitHub falsa (o lado da web e o da API), que fecha sozinha no fim do teste. */
+export async function fakeGitHub() {
+  const github = await startFakeGitHub();
+  onCleanup(() => github.stop());
+  return github;
+}
+
+/** Um servidor MCP remoto falso (um Conector), que fecha sozinho no fim do teste. */
+export function remoteMcp(opts: Parameters<typeof startRemoteMcp>[0]) {
+  const server = startRemoteMcp(opts);
+  onCleanup(() => server.stop());
+  return server;
+}
+
 /** O coletor de push (o dublê dos push services), que fecha sozinho no fim do teste. */
 export async function pushCollector() {
   const collector = await startPushCollector();
@@ -399,6 +415,12 @@ export async function testApp(
     installation?: AppDeps["installation"];
     /** Os tetos de concorrência das execuções (padrão: os da Spec). */
     limits?: AppDeps["limits"];
+    /** A porta de Ferramentas: prazo e catálogo (ex.: uma Ferramenta que trava). */
+    tools?: AppDeps["tools"];
+    /** Onde fica o GitHub (os testes apontam para o falso, `fakeGitHub().config`). */
+    github?: AppDeps["github"];
+    /** O prazo do Pedido de aprovação (padrão: 24 h). */
+    approvals?: AppDeps["approvals"];
   } = {},
 ) {
   const db = opts.db ?? (await testDb()).db;
@@ -422,6 +444,9 @@ export async function testApp(
       push: { contact: TEST_VAPID_CONTACT, agent: push.agent },
       installation: opts.installation,
       limits: opts.limits,
+      tools: opts.tools,
+      github: opts.github,
+      approvals: opts.approvals,
     });
     await built.start();
     return built;

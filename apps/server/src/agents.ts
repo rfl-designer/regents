@@ -2,6 +2,7 @@ import {
   AGENT_MODELS,
   type AgentDto,
   type AgentModel,
+  type AgentToolSummaryDto,
   type CreateAgentInput,
   type UpdateAgentInput,
 } from "@shearim/contracts";
@@ -10,9 +11,11 @@ import { Hono } from "hono";
 import { withBuiltinText } from "./articuladora";
 import type { Clock } from "./clock";
 import { type Db, isUuid, schema } from "./db/client";
+import type { GitHub } from "./github/connector";
 import { budgetOf, type KeyLedger, keySpend, monthOf, parseBudget } from "./key-budget";
 import type { Env } from "./members";
 import { claimHandle, handleBase } from "./mention-handles";
+import type { ToolPort } from "./tools/port";
 
 export type Agent = typeof schema.agents.$inferSelect;
 /** O Agente com o identificador de Menção dele (`mention_handles`). */
@@ -26,15 +29,21 @@ const PHOTO = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 const PHOTO_MAX = 400_000;
 const BUDGET_INVALID = "O orçamento mensal é um valor em dólares, zero ou mais (vazio: sem teto).";
 
-/** Agentes: o Admin cria; todo Membro vê o nome, a foto, a descrição e o modelo. */
+/** Agentes: o Admin cria; todo Membro vê o nome, a foto, a descrição, o modelo e as Ferramentas. */
 export function agentRoutes(deps: {
   db: Db;
   clock: Clock;
   ledger: KeyLedger;
+  /** As Ferramentas concedidas a cada Agente (a porta de Ferramentas). */
+  tools: Pick<ToolPort, "grantsOf">;
+  /** As listas de repositórios do GitHub de cada Agente (#58): a descrição diz quais ele alcança. */
+  github?: Pick<GitHub, "agentRepositories">;
   /** O Admin mudou o orçamento de um Agente: quem espera na fila por quem pague decide de novo. */
   onBudgetChanged?: () => void;
 }) {
   const { db, clock, ledger } = deps;
+  const toolsOf = async (id: string) => (await deps.tools.grantsOf([id])).get(id) ?? [];
+  const reposOf = async (ids?: readonly string[]) => (await deps.github?.agentRepositories(ids)) ?? new Map();
   const routes = new Hono<Env>();
 
   routes.get("/agents", async (c) => {
@@ -44,9 +53,12 @@ export function agentRoutes(deps: {
       .from(agents)
       .innerJoin(mentionHandles, eq(mentionHandles.agentId, agents.id))
       .orderBy(desc(agents.builtin), asc(agents.createdAt), asc(agents.name));
-    if (!admin) return c.json(all.map((a) => toAgentDto(a, { admin })));
+    const grants = await deps.tools.grantsOf();
+    const repos = await reposOf();
+    const of = (id: string) => ({ tools: grants.get(id) ?? [], githubRepositories: repos.get(id) ?? null });
+    if (!admin) return c.json(all.map((a) => toAgentDto(a, { admin, ...of(a.id) })));
     const spend = await keySpend(db, monthOf(clock.now()));
-    return c.json(all.map((a) => toAgentDto(a, { admin, keySpendUsd: spend.get(a.id) ?? 0 })));
+    return c.json(all.map((a) => toAgentDto(a, { admin, ...of(a.id), keySpendUsd: spend.get(a.id) ?? 0 })));
   });
 
   routes.post("/agents", async (c) => {
@@ -90,7 +102,7 @@ export function agentRoutes(deps: {
       return { ...agent, handle };
     });
     if (!created) return c.json({ error: "name_taken", message: `Já existe um Agente chamado ${name}.` }, 409);
-    return c.json(toAgentDto(created, { admin: true, keySpendUsd: 0 }), 201);
+    return c.json(toAgentDto(created, { admin: true, tools: [], githubRepositories: null, keySpendUsd: 0 }), 201);
   });
 
   /**
@@ -169,7 +181,14 @@ export function agentRoutes(deps: {
     const budgetChanged = change.monthlyBudgetUsd !== undefined && change.monthlyBudgetUsd !== current.monthlyBudgetUsd;
     const budget = budgetChanged ? await ledger.budgetChanged(updated.id) : await ledger.budgetNow(updated.id);
     if (budgetChanged) deps.onBudgetChanged?.();
-    return c.json(toAgentDto(updated, { admin: true, keySpendUsd: budget.keySpendUsd }));
+    return c.json(
+      toAgentDto(updated, {
+        admin: true,
+        tools: await toolsOf(updated.id),
+        githubRepositories: (await reposOf([updated.id])).get(updated.id) ?? null,
+        keySpendUsd: budget.keySpendUsd,
+      }),
+    );
   });
 
   return routes;
@@ -185,10 +204,20 @@ export function agentHandleBase(name: string) {
 }
 
 /**
- * O Agente como `GET /api/agents` o devolve. Para o Admin, também as instruções e, com
- * `keySpendUsd` (o gasto do mês na Chave), o orçamento.
+ * O Agente como `GET /api/agents` o devolve, com as Ferramentas concedidas a ele. Para o Admin,
+ * também as instruções, a lista de repositórios do GitHub e, com `keySpendUsd` (o gasto do mês na
+ * Chave), o orçamento.
  */
-export function toAgentDto(row: AgentWithHandle, opts: { admin: boolean; keySpendUsd?: number }): AgentDto {
+export function toAgentDto(
+  row: AgentWithHandle,
+  opts: {
+    admin: boolean;
+    tools: AgentToolSummaryDto[];
+    /** Os repositórios do GitHub a que o Agente está restrito (nulo ou ausente: todos os da instalação). */
+    githubRepositories?: string[] | null;
+    keySpendUsd?: number;
+  },
+): AgentDto {
   const a = withBuiltinText(row);
   const dto: AgentDto = {
     id: a.id,
@@ -198,11 +227,29 @@ export function toAgentDto(row: AgentWithHandle, opts: { admin: boolean; keySpen
     description: a.description,
     model: a.model as AgentModel,
     builtin: a.builtin,
+    tools: opts.tools,
+    reach: reachLines(opts.tools),
   };
-  if (opts.admin) dto.instructions = a.instructions;
+  if (opts.admin) {
+    dto.instructions = a.instructions;
+    dto.githubRepositories = opts.githubRepositories ?? null;
+  }
   if (opts.admin && opts.keySpendUsd !== undefined) {
     const { monthlyBudgetUsd, keySpendUsd, overBudget } = budgetOf(row, opts.keySpendUsd);
     Object.assign(dto, { monthlyBudgetUsd, keySpendUsd, overBudget });
   }
   return dto;
+}
+
+/**
+ * "acessa CRM com a credencial do Workspace": uma linha por Conector das Ferramentas dele, e uma
+ * pelo GitHub (sempre com a credencial do Workspace, ADR 0010). A lista de repositórios do Agente
+ * é configuração do Admin (`githubRepositories`) e não entra aqui.
+ */
+export function reachLines(tools: readonly AgentToolSummaryDto[]): string[] {
+  const names = new Set<string>();
+  for (const t of tools) if (t.connector?.credential === "workspace") names.add(t.connector.name);
+  const lines = [...names].map((name) => `acessa ${name} com a credencial do Workspace`);
+  if (tools.some((t) => t.origin === "github")) lines.push("acessa o GitHub com a credencial do Workspace");
+  return lines;
 }

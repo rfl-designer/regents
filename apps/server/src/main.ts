@@ -16,6 +16,8 @@
  *   Workspace. No compose, `/run/secrets/master_key`. Sem a variável, `.data/secrets/master_key`,
  *   gerada se faltar (só desenvolvimento).
  * - `SHEARIM_ANTHROPIC_BASE_URL`: a Messages API (padrão: a da Anthropic; o e2e usa a falsa).
+ * - `SHEARIM_GITHUB_URL` e `SHEARIM_GITHUB_API_URL`: o GitHub (padrão: github.com e api.github.com;
+ *   o e2e usa o falso).
  * - `SHEARIM_BACKUPS_DIR`: `./backups` (padrão `.data/backups`; no compose, `/backups`): os dumps de
  *   antes de migrar e de restaurar, e os backups noturnos do comando `backup`.
  * - `SHEARIM_BACKUP_AT`: a hora do backup noturno, `HH:MM` na hora local do container (padrão 03:00).
@@ -31,6 +33,7 @@ import { resolve } from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { createApp } from "./app";
+import { approvalTtlFromEnv } from "./approvals";
 import { systemClock } from "./clock";
 import { connect, MEMORY } from "./db/connect";
 import { limitsFromEnv } from "./executions";
@@ -48,6 +51,7 @@ import {
 import { migrationState, NewerDatabaseError } from "./installation/migrations";
 import { localApiNodeKey, type NodeKeyPort, noNodeKey } from "./installation/node-key";
 import { loadMasterKey, secretBox } from "./secrets";
+import { toolMaxTurnsFromEnv, toolTimeoutFromEnv } from "./tools/port";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 
@@ -212,8 +216,14 @@ async function main(command: string | undefined) {
   const vapidContact = process.env.SHEARIM_VAPID_CONTACT || DEV_VAPID_CONTACT;
   if (!/^(mailto:|https:)/.test(vapidContact)) fail(`SHEARIM_VAPID_CONTACT=${vapidContact} não é mailto: nem https:.`);
   let limits: ReturnType<typeof limitsFromEnv>;
+  let toolTimeoutMs: number | undefined;
+  let toolMaxTurns: number | undefined;
+  let approvalTtlMs: number | undefined;
   try {
     limits = limitsFromEnv(process.env);
+    toolTimeoutMs = toolTimeoutFromEnv(process.env);
+    toolMaxTurns = toolMaxTurnsFromEnv(process.env);
+    approvalTtlMs = approvalTtlFromEnv(process.env);
   } catch (err) {
     fail((err as Error).message);
   }
@@ -227,12 +237,20 @@ async function main(command: string | undefined) {
     },
     secrets,
     anthropicBaseUrl: process.env.SHEARIM_ANTHROPIC_BASE_URL || undefined,
+    github: {
+      ...(process.env.SHEARIM_GITHUB_URL ? { webUrl: process.env.SHEARIM_GITHUB_URL } : {}),
+      ...(process.env.SHEARIM_GITHUB_API_URL ? { apiUrl: process.env.SHEARIM_GITHUB_API_URL } : {}),
+    },
     devRoutes: who.routes,
     push: { contact: vapidContact },
     // A seção Instalação: a versão (a tag da imagem), o backup e a chave do nó, com os avisos.
     installation: { version: process.env.SHEARIM_VERSION || "dev", watch: true, nodeKey: who.nodeKey },
     // Os tetos de concorrência das execuções (2 por Conta, 4 na Chave, 8 processos no host).
     limits,
+    // O prazo padrão de uma chamada de Ferramenta (60 s) e o teto de turnos de Ferramenta (20).
+    tools: { timeoutMs: toolTimeoutMs, maxTurns: toolMaxTurns },
+    // O prazo do Pedido de aprovação (24 h).
+    approvals: { ttlMs: approvalTtlMs },
   });
   // O par VAPID nasce na primeira subida (e daí em diante é sempre o mesmo, guardado no banco).
   await shearim.push.ensureKeys();

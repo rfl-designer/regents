@@ -229,6 +229,7 @@ export const executionState = pgEnum("execution_state", [
   "failed",
   "not_acting",
   "cancelled",
+  "awaiting_approval",
 ]);
 /**
  * `mention`: um Agente mencionado. `dm`: o Agente de uma DM com Agente, a cada mensagem.
@@ -298,6 +299,16 @@ export const executions = pgTable(
     arrivedAt: timestamp({ withTimezone: true }).notNull(),
     replyMessageId: uuid().references(() => messages.id),
     finishedAt: timestamp({ withTimezone: true }),
+    /**
+     * A tentativa atual chegou ao teto de turnos de Ferramenta ("parou no limite de Ferramentas"):
+     * o Agente responde com o que tem, numa última chamada sem Ferramentas (#53).
+     */
+    toolLimit: boolean().notNull().default(false),
+    /**
+     * Na continuação (ADR 0011): o Pedido de aprovação depois de cuja decisão ela segue a resposta.
+     * Nulo na execução que a mensagem disparou.
+     */
+    approvalRequestId: uuid().references((): AnyPgColumn => approvalRequests.id),
   },
   (t) => [index().on(t.state, t.arrivedAt, t.seq), index().on(t.channelId, t.state)],
 );
@@ -630,4 +641,265 @@ export const installationAlerts = pgTable(
     sentAt: timestamp({ withTimezone: true }).notNull(),
   },
   (t) => [primaryKey({ columns: [t.kind, t.ref] })],
+);
+
+// ---------- Ferramentas (Spec #44) ----------
+
+/**
+ * Os Conectores (Spec #44): servidores MCP remotos que o Admin liga ao Workspace. `key` é o prefixo
+ * dos ids das Ferramentas dele (`crm__buscar_cliente`), tirado do nome. No modo do Workspace, o
+ * token vai cifrado com a chave mestra, como a Chave; `credentialState` vira `refused` quando o
+ * servidor o recusa (401), até o Admin colar outro.
+ */
+export const connectors = pgTable(
+  "connectors",
+  {
+    id: uuid().primaryKey(),
+    name: text().notNull(),
+    key: text().notNull().unique(),
+    /** `mcp`: um servidor MCP remoto. */
+    kind: text().notNull(),
+    url: text().notNull(),
+    /** `workspace`: uma credencial só, a do Workspace; `member`: a de cada Membro (`memberConnectorCredentials`). */
+    credentialMode: text().notNull(),
+    tokenCiphertext: text(),
+    tokenIv: text(),
+    /** `ok` ou `refused`. */
+    credentialState: text().notNull(),
+    refusedAt: timestamp({ withTimezone: true }),
+    /**
+     * Credencial do Workspace ligada pelo login do servidor (OAuth, #56): o token de renovação, o
+     * cliente registrado e os metadados do servidor de autorização, em JSON cifrado. Sem login
+     * (token colado), nulos.
+     */
+    oauthCiphertext: text(),
+    oauthIv: text(),
+    /** Quando o token de acesso do login vence; a renovação vem antes. Nulo: não vence (ou colado). */
+    expiresAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [uniqueIndex("connectors_name_lower").on(sql`lower(${t.name})`)],
+);
+
+/**
+ * As credenciais de cada Membro nos Conectores do modo `member` (Spec #44): o token que ele colou
+ * em Perfil › Conectores, cifrado com a chave mestra, e o estado (`ok`, ou `refused` quando o
+ * servidor o recusou). Desligar apaga a linha; remover o Membro do Workspace também.
+ */
+export const memberConnectorCredentials = pgTable(
+  "member_connector_credentials",
+  {
+    connectorId: uuid()
+      .notNull()
+      .references(() => connectors.id, { onDelete: "cascade" }),
+    memberId: uuid()
+      .notNull()
+      .references(() => members.id),
+    tokenCiphertext: text().notNull(),
+    tokenIv: text().notNull(),
+    /** `ok` ou `refused`. */
+    state: text().notNull(),
+    refusedAt: timestamp({ withTimezone: true }),
+    /** Ligada pelo login do servidor (OAuth, #56): como em `connectors`. Colada: nulos. */
+    oauthCiphertext: text(),
+    oauthIv: text(),
+    expiresAt: timestamp({ withTimezone: true }),
+    connectedAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.connectorId, t.memberId] })],
+);
+
+/**
+ * Os logins de Conector em andamento (#56): o `state` que o servidor de autorização devolve no
+ * retorno, quem começou (só ele termina), para quê (`create`: adicionar o Conector; `workspace`:
+ * religar a credencial do Workspace; `member`: a credencial do Membro) e, cifrado, o verificador
+ * PKCE, o cliente registrado e os metadados. O retorno consome a linha; vale por pouco tempo.
+ */
+export const connectorLogins = pgTable("connector_logins", {
+  state: text().primaryKey(),
+  memberId: uuid()
+    .notNull()
+    .references(() => members.id, { onDelete: "cascade" }),
+  purpose: text().notNull(),
+  connectorId: uuid().references(() => connectors.id, { onDelete: "cascade" }),
+  /** Só no `create`: o Conector que o retorno adiciona. */
+  name: text(),
+  url: text().notNull(),
+  credentialMode: text(),
+  redirectUri: text().notNull(),
+  secretCiphertext: text().notNull(),
+  secretIv: text().notNull(),
+  createdAt: timestamp({ withTimezone: true }).notNull(),
+});
+
+/**
+ * O catálogo de cada Conector, como o `tools/list` dele o devolveu da última vez (relido quando o
+ * Admin abre o Conector). `tool` é o id no Shearim; `name`, o do servidor. Só `readOnly` é leitura.
+ */
+export const connectorTools = pgTable(
+  "connector_tools",
+  {
+    tool: text().primaryKey(),
+    connectorId: uuid()
+      .notNull()
+      .references(() => connectors.id, { onDelete: "cascade" }),
+    position: integer().notNull(),
+    name: text().notNull(),
+    title: text().notNull(),
+    description: text().notNull(),
+    inputSchema: jsonb().$type<Record<string, unknown>>().notNull(),
+    readOnly: boolean().notNull(),
+  },
+  (t) => [index().on(t.connectorId, t.position)],
+);
+
+/**
+ * As Ferramentas concedidas a cada Agente, pelo Admin. `tool` é o id da Ferramenta no catálogo;
+ * as de um Conector levam a coluna do Conector, com a remoção em cascata: remover o Conector tira
+ * as concessões dele de todos os Agentes.
+ */
+export const agentTools = pgTable(
+  "agent_tools",
+  {
+    agentId: uuid()
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    tool: text().notNull(),
+    connectorId: uuid().references(() => connectors.id, { onDelete: "cascade" }),
+    grantedAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.agentId, t.tool] })],
+);
+
+/**
+ * Cada uso de Ferramenta numa execução, para o Andamento: o passo em andamento e a falha com
+ * motivo. `attempt` é a tentativa da execução em que ele aconteceu (o Andamento mostra só os da
+ * tentativa atual).
+ */
+export const executionToolCalls = pgTable(
+  "execution_tool_calls",
+  {
+    id: uuid().primaryKey(),
+    seq: bigint({ mode: "number" }).generatedAlwaysAsIdentity(),
+    executionId: uuid()
+      .notNull()
+      .references(() => executions.id),
+    attempt: integer().notNull(),
+    tool: text().notNull(),
+    title: text().notNull(),
+    label: text().notNull(),
+    /** `running`, `done` ou `failed`. */
+    state: text().notNull(),
+    reason: text(),
+    /** Numa de Conector com a credencial de cada Membro: "usou o CRM de Ana" (todos veem, ao terminar bem). */
+    used: text(),
+    /** Indisponível por falta da credencial do autor: o Conector do atalho "Ligar <Conector>" (só o autor vê). */
+    connectConnectorId: uuid(),
+    connectName: text(),
+    startedAt: timestamp({ withTimezone: true }).notNull(),
+    finishedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [index().on(t.executionId, t.attempt)],
+);
+
+export const approvalState = pgEnum("approval_state", ["pending", "approved", "rejected", "expired", "cancelled"]);
+
+/**
+ * Os Pedidos de aprovação (ADR 0011): a escrita que um Agente pediu numa execução, guardada com a
+ * ação exata (a Ferramenta, os argumentos e o hash deles) e o resumo que o autor da mensagem de
+ * origem aprova ou recusa. Na aprovação, o Shearim executa a ação guardada; o resultado (ou a
+ * falha) e a recusa vão à execução de continuação.
+ */
+export const approvalRequests = pgTable(
+  "approval_requests",
+  {
+    id: uuid().primaryKey(),
+    seq: bigint({ mode: "number" }).generatedAlwaysAsIdentity(),
+    /** A execução que pediu a escrita (e terminou em "esperando aprovação"). */
+    executionId: uuid()
+      .notNull()
+      .references((): AnyPgColumn => executions.id),
+    /** A conversa da mensagem de origem, onde o cartão aparece. */
+    channelId: uuid()
+      .notNull()
+      .references(() => channels.id),
+    originMessageId: uuid()
+      .notNull()
+      .references(() => messages.id),
+    authorMemberId: uuid()
+      .notNull()
+      .references(() => members.id),
+    agentId: uuid()
+      .notNull()
+      .references(() => agents.id),
+    tool: text().notNull(),
+    /** O nome da Ferramenta em pt-BR, como era quando o Pedido foi criado. */
+    toolTitle: text().notNull(),
+    /** Os argumentos já resolvidos (a ação exata que será executada). */
+    action: jsonb().$type<Record<string, unknown>>().notNull(),
+    actionHash: text().notNull(),
+    /** O que vai ser feito, em pt-BR, como o cartão mostra. */
+    summary: text().notNull(),
+    state: approvalState().notNull(),
+    /** Na recusa: o motivo opcional do autor. */
+    rejectReason: text(),
+    /** Na aprovação: o resultado da ação, ou o motivo da falha dela (`failure`). */
+    result: text(),
+    failure: text(),
+    /**
+     * A ação aprovada pode ter sido feita lá fora sem o Shearim saber (estourou o prazo, o servidor
+     * reiniciou no meio): `failure` diz por quê e onde conferir.
+     */
+    uncertain: boolean().notNull().default(false),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    decidedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [index().on(t.channelId, t.seq), index().on(t.executionId)],
+);
+
+/**
+ * O GitHub App da Instalação e a instalação dele na conta do time (ADR 0010): uma linha só, uma
+ * instalação por Workspace. Os segredos do App (a chave privada, o segredo do webhook e o do
+ * cliente) ficam num JSON cifrado com a chave mestra, como a Chave do Workspace.
+ */
+export const githubApp = pgTable(
+  "github_app",
+  {
+    id: integer().primaryKey().default(1),
+    /** O `state` do fluxo em andamento (manifest ou instalação), conferido no retorno e apagado nele. */
+    pendingState: text(),
+    /** O endereço da Instalação de onde o fluxo começou (os retornos do manifest). */
+    origin: text(),
+    appId: bigint({ mode: "number" }),
+    slug: text(),
+    name: text(),
+    owner: text(),
+    htmlUrl: text(),
+    secretsCiphertext: text(),
+    secretsIv: text(),
+    createdAt: timestamp({ withTimezone: true }),
+    installationId: bigint({ mode: "number" }),
+    installationAccount: text(),
+    installedAt: timestamp({ withTimezone: true }),
+    /** A instalação que o GitHub deixou de reconhecer: o motivo e quando o Shearim viu. */
+    failureReason: text(),
+    failedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [check("github_app_uma_linha", sql`${t.id} = 1`)],
+);
+
+/**
+ * Os repositórios do GitHub a que o Admin restringiu um Agente (Spec #44), como `dono/nome`. Sem
+ * linha, o Agente alcança tudo o que a instalação alcança; com linhas, só estes.
+ */
+export const agentGithubRepositories = pgTable(
+  "agent_github_repositories",
+  {
+    agentId: uuid()
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    repository: text().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.agentId, t.repository] })],
 );

@@ -1,7 +1,16 @@
-import { AGENT_MODELS, type AgentDto, type AgentModel, type WorkspaceKeyDto } from "@shearim/contracts";
+import {
+  AGENT_MODELS,
+  type AgentDto,
+  type AgentGitHubDto,
+  type AgentModel,
+  type AgentToolDto,
+  type ToolOrigin,
+  type WorkspaceKeyDto,
+} from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
-import { ApiFailure, api } from "./api";
+import { agentToolsText } from "./agent-tools";
+import { api, messageOf } from "./api";
 import { dateTimeShort } from "./format";
 import { INCIDENT_TEXT, usd } from "./KeyBanners";
 import { useServerEvents } from "./live";
@@ -21,11 +30,6 @@ function budgetInput(text: string): number | null | undefined {
   return Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 const BUDGET_INVALID = "O orçamento mensal é um valor em dólares, zero ou mais (vazio: sem teto).";
-
-function messageOf(err: unknown, fallback: string) {
-  const body = err instanceof ApiFailure ? err.body : null;
-  return body && "message" in body ? body.message : fallback;
-}
 
 /** Só para o Admin: a Chave do Workspace. Ela é gravada daqui e nunca mais aparece. */
 export function WorkspaceKeySettings() {
@@ -159,6 +163,7 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
           </button>
         </div>
         <p className="body">{a.description || "Sem descrição."}</p>
+        <p className="hint">{agentToolsText(a)}</p>
         <p className={a.overBudget ? "error" : "hint"}>
           Gasto na Chave este mês: {usd.format(a.keySpendUsd ?? 0)}
           {a.monthlyBudgetUsd === null || a.monthlyBudgetUsd === undefined
@@ -166,13 +171,24 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
             : ` de ${usd.format(a.monthlyBudgetUsd)}${a.overBudget ? " · estourado: não usa a Chave até o mês virar" : ""}`}
         </p>
         {editing && (
-          <EditAgent
-            agent={a}
-            onSaved={(changed) => {
-              onChanged(changed);
-              setEditing(false);
-            }}
-          />
+          <>
+            <EditAgent
+              agent={a}
+              onSaved={(changed) => {
+                onChanged(changed);
+                setEditing(false);
+              }}
+            />
+            <AgentTools
+              agent={a}
+              onChanged={async () => {
+                // As Ferramentas e a linha de alcance ("acessa CRM com…") como o servidor as diz.
+                const fresh = (await api.agents().catch(() => [])).find((x) => x.id === a.id);
+                if (fresh) onChanged(fresh);
+              }}
+            />
+            <AgentGitHub agent={a} onChanged={(repos) => onChanged({ ...a, githubRepositories: repos })} />
+          </>
         )}
       </div>
     </li>
@@ -254,6 +270,182 @@ function EditAgent({ agent, onSaved }: { agent: AgentDto; onSaved(agent: AgentDt
         )}
       </div>
     </form>
+  );
+}
+
+const ORIGIN_LABEL: Record<Exclude<ToolOrigin, "connector">, string> = {
+  workspace: "Do Workspace",
+  web: "Da web",
+  github: "Do GitHub",
+};
+
+/** O grupo de uma Ferramenta na tela do Agente: a origem, e cada Conector no seu. */
+const groupOf = (t: AgentToolDto) => (t.connector ? `connector:${t.connector.id}` : t.origin);
+function groupLabel(t: AgentToolDto) {
+  if (!t.connector) return ORIGIN_LABEL[t.origin as Exclude<ToolOrigin, "connector">];
+  const whose = t.connector.credential === "member" ? "credencial de cada Membro" : "credencial do Workspace";
+  return `Do Conector ${t.connector.name} (${whose})`;
+}
+
+/**
+ * As Ferramentas do Agente, agrupadas por origem, cada uma marcada como leitura ou escrita (toda
+ * escrita passa por um Pedido de aprovação). Conceder ou retirar vale na hora, sem "Salvar".
+ */
+function AgentTools({ agent, onChanged }: { agent: AgentDto; onChanged(tools: AgentToolDto[]): void }) {
+  const [tools, setTools] = useState<AgentToolDto[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.agentTools(agent.id).then(setTools, () => setError("Não foi possível carregar as Ferramentas."));
+  }, [agent.id]);
+
+  async function toggle(tool: AgentToolDto) {
+    setBusy(tool.id);
+    setError(null);
+    try {
+      const next = await api.setAgentTool(agent.id, tool.id, !tool.granted);
+      setTools(next);
+      onChanged(next);
+    } catch (err) {
+      setError(
+        messageOf(err, `A Ferramenta ${tool.title} não foi ${tool.granted ? "retirada" : "concedida"}. Tente de novo.`),
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const groups = [...new Map(tools?.map((t) => [groupOf(t), t])).entries()];
+  return (
+    <fieldset className="settings-row" aria-label={`Ferramentas de ${agent.name}`}>
+      <legend>Ferramentas</legend>
+      {tools === null && !error && <p className="hint">Carregando…</p>}
+      {groups.map(([group, first]) => (
+        <div key={group}>
+          <p className="hint">{groupLabel(first)}</p>
+          {tools
+            ?.filter((t) => groupOf(t) === group)
+            .map((t) => (
+              <label key={t.id} className="hint">
+                <input type="checkbox" checked={t.granted} disabled={busy !== null} onChange={() => toggle(t)} />{" "}
+                {t.title} <span className="tag">{t.access === "read" ? "leitura" : "escrita"}</span>
+                <br />
+                <small>{t.description}</small>
+              </label>
+            ))}
+        </div>
+      ))}
+      {error && (
+        <span className="error" role="alert">
+          {error}
+        </span>
+      )}
+    </fieldset>
+  );
+}
+
+/**
+ * Os repositórios do GitHub do Agente (#58): todos os que a instalação alcança (sem lista) ou só
+ * os escolhidos entre eles. Vale a partir do "Salvar"; uma lista vazia não existe.
+ */
+function AgentGitHub({ agent, onChanged }: { agent: AgentDto; onChanged(repositories: string[] | null): void }) {
+  const [state, setState] = useState<AgentGitHubDto | null>(null);
+  const [draft, setDraft] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    api.agentGitHub(agent.id).then(
+      (got) => {
+        setState(got);
+        setDraft(got.repositories);
+      },
+      () => setError("Não foi possível carregar os repositórios do GitHub."),
+    );
+  }, [agent.id]);
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const got = await api.setAgentGitHub(agent.id, draft);
+      setState(got);
+      setDraft(got.repositories);
+      setSaved(true);
+      onChanged(got.repositories);
+    } catch (err) {
+      setError(messageOf(err, "A lista de repositórios não foi salva. Tente de novo."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const toggle = (repo: string) =>
+    setDraft((d) => (d?.includes(repo) ? d.filter((r) => r !== repo) : [...(d ?? []), repo]));
+  // Os da lista que a instalação não alcança mais continuam à vista, para o Admin tirá-los.
+  const options = state ? [...new Set([...state.available, ...(state.repositories ?? [])])] : [];
+  const choosable = state !== null && (state.available.length > 0 || state.repositories !== null);
+  const unchanged = JSON.stringify(draft) === JSON.stringify(state?.repositories ?? null);
+
+  return (
+    <fieldset className="settings-row" aria-label={`Repositórios do GitHub de ${agent.name}`}>
+      <legend>Repositórios do GitHub</legend>
+      {state === null && !error && <p className="hint">Carregando…</p>}
+      {state?.failure && (
+        <p className="notice" role="status">
+          Não deu para ver os repositórios que a instalação do GitHub alcança: {state.failure}.
+        </p>
+      )}
+      {choosable && (
+        <>
+          <label className="hint">
+            <input
+              type="radio"
+              name={`github-${agent.id}`}
+              checked={draft === null}
+              disabled={busy}
+              onChange={() => setDraft(null)}
+            />{" "}
+            Todos os que a instalação do GitHub alcança
+          </label>
+          <label className="hint">
+            <input
+              type="radio"
+              name={`github-${agent.id}`}
+              checked={draft !== null}
+              disabled={busy}
+              onChange={() => setDraft(state?.repositories ?? [])}
+            />{" "}
+            Só estes:
+          </label>
+          {draft !== null &&
+            options.map((repo) => (
+              <label key={repo} className="hint">
+                <input type="checkbox" checked={draft.includes(repo)} disabled={busy} onChange={() => toggle(repo)} />{" "}
+                {repo}
+                {!state?.available.includes(repo) && <span className="tag">fora da instalação</span>}
+              </label>
+            ))}
+          {draft !== null && draft.length === 0 && (
+            <p className="hint">Escolha ao menos um repositório, ou deixe o Agente alcançar todos.</p>
+          )}
+          <div className="row">
+            <button type="button" disabled={busy || unchanged || (draft !== null && draft.length === 0)} onClick={save}>
+              Salvar repositórios
+            </button>
+            {saved && unchanged && <span className="hint">Salvo.</span>}
+          </div>
+        </>
+      )}
+      {error && (
+        <span className="error" role="alert">
+          {error}
+        </span>
+      )}
+    </fieldset>
   );
 }
 

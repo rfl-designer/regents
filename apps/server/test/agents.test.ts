@@ -96,6 +96,12 @@ describe("Agentes", () => {
       handle: "faro",
       builtin: false,
       ...faro,
+      // Nasce sem Ferramentas: o Admin as concede na tela do Agente (Spec #44).
+      tools: [],
+      // Sem Conector, nenhuma linha de alcance na descrição pública.
+      reach: [],
+      // Sem lista de repositórios do GitHub: alcança todos os da instalação (só o Admin vê, #58).
+      githubRepositories: null,
       // O orçamento e o gasto na Chave, só para o Admin (#28).
       monthlyBudgetUsd: null,
       keySpendUsd: 0,
@@ -122,7 +128,14 @@ describe("Agentes", () => {
     const visto = await semArticuladora(t, bruno);
     const doAdmin = await semArticuladora(t, juliana);
 
-    const { instructions: _, monthlyBudgetUsd: _b, keySpendUsd: _g, overBudget: _o, ...publico } = criado;
+    const {
+      instructions: _,
+      monthlyBudgetUsd: _b,
+      keySpendUsd: _g,
+      overBudget: _o,
+      githubRepositories: _r,
+      ...publico
+    } = criado;
     expect(visto).toEqual([publico]);
     expect(doAdmin).toEqual([criado]);
   });

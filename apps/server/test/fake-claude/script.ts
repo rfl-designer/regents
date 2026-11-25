@@ -33,8 +33,25 @@ export type AssistantErrorCategory =
 
 /** Um passo roteirizado de um `claude -p` (`{ kind: "steps" }`), na ordem. */
 export type FakeStep =
-  /** Um bloco de texto, em deltas de até 8 caracteres (`stream_event` com `text_delta`). */
+  /**
+   * Um bloco de texto, em deltas de até 8 caracteres (`stream_event` com `text_delta`).
+   * `{resultado}` no texto vira o resultado da última Ferramenta chamada (`{ tool }`).
+   */
   | { text: string }
+  /**
+   * Chama uma Ferramenta como o Claude Code: como cliente MCP de verdade, conecta no servidor do
+   * `--mcp-config` (na primeira vez, com `tools/list`), emite o `tool_use` (`mcp__<servidor>__<name>`)
+   * no `stream-json`, chama `tools/call`, emite o `tool_result` e começa um turno novo. Cada passo
+   * vai para `fake.mcp()`.
+   */
+  | { tool: { name: string; input?: Record<string, unknown> } }
+  /**
+   * Usa uma tool nativa do Claude Code (`WebSearch`, `WebFetch`): o `tool_use` com o nome dela no
+   * `stream-json`, o `tool_result` (com `is_error` e o texto de `error`, se veio) e um turno novo.
+   * Fora do `--tools`, o resultado é o erro "No such tool available", como no real. `hang`: depois
+   * do `tool_use`, fica mudo para sempre (a tool travou), até levar sinal.
+   */
+  | { native: { name: "WebSearch" | "WebFetch"; input?: Record<string, unknown>; error?: string; hang?: true } }
   /** Um bloco de pensamento (`thinking` vazio, como nos modelos atuais). */
   | { thinking: true }
   /** Fica mudo por um tempo (de verdade: é um processo). */
@@ -146,6 +163,13 @@ export interface FakeClaudeCall {
   cwd: string;
   env: Record<string, string>;
 }
+
+/** Um passo do `fake-claude` como cliente MCP (`fake.mcp()`). */
+export type FakeMcpEntry =
+  | { pid: number; listed: string[] }
+  | { pid: number; called: string; input: unknown; result: { content: string; isError: boolean } }
+  /** O endpoint recusou (o status HTTP, quando veio) ou não respondeu. */
+  | { pid: number; refused: string };
 
 /** Um sinal que um `-p` levou. */
 export interface FakeClaudeSignal {

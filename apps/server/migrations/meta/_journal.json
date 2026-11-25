@@ -155,6 +155,69 @@
       "when": 1795537636768,
       "tag": "0021_sem-tentar-de-novo-do-autor",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1795558463595,
+      "tag": "0022_ferramentas",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1795560895134,
+      "tag": "0023_pedido-de-aprovacao",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795564884929,
+      "tag": "0024_conectores",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1795569252380,
+      "tag": "0025_teto-de-ferramentas",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1795569984426,
+      "tag": "0026_github-app",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1795570609402,
+      "tag": "0027_repositorios-por-agente",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1795571839924,
+      "tag": "0028_credencial-do-membro",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1795572747151,
+      "tag": "0029_login-dos-conectores",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1795575526104,
+      "tag": "0030_resultado-incerto",
+      "breakpoints": true
     }
   ]
 }

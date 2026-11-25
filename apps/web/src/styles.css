@@ -360,6 +360,11 @@ body {
     content: "...";
   }
 }
+.tool-failed {
+  margin: 2px 0 0;
+  font-size: 0.85rem;
+  color: var(--warn);
+}
 .failcard {
   margin: 0;
   min-width: 0;
@@ -367,6 +372,30 @@ body {
   background: var(--error-bg);
   border-radius: 8px;
   padding: 8px 10px;
+}
+.approval {
+  margin: 0;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.approval.pending {
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: var(--warn-bg);
+}
+.approval .summary {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.approval .why {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.approval .why.error {
+  color: var(--error);
 }
 .failcard .why {
   margin: 2px 0 0;
@@ -562,8 +591,12 @@ button.link[aria-current="page"] {
   margin: 0;
   padding: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
+  flex-direction: column;
+  gap: 6px;
+}
+.dm-agents li {
+  display: flex;
+  flex-direction: column;
 }
 .new-channel input[type="text"],
 .new-channel input:not([type]),

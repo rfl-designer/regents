@@ -1,16 +1,26 @@
 import type {
   AccountDto,
   AgentDto,
+  AgentGitHubDto,
+  AgentToolDto,
   ApiError,
+  ApprovalRequestDto,
   ApproveJoinRequestDto,
   ChannelDto,
   ChannelSettingsDto,
+  ConnectorDto,
+  ConnectorLoginDto,
   CreateAgentInput,
   CreateChannelInput,
+  CreateConnectorInput,
+  CreateConnectorLoginInput,
   DeviceDto,
   DmDto,
   ExecutionDto,
   FollowedThreadDto,
+  GitHubDto,
+  GitHubInstallDto,
+  GitHubManifestDto,
   InstallationDto,
   JoinRequestAdminDto,
   JoinRequestDto,
@@ -18,6 +28,7 @@ import type {
   MemberRole,
   MemberSummaryDto,
   MessageDto,
+  MyConnectorDto,
   MyJoinRequestDto,
   OutcomeDto,
   PushKeyDto,
@@ -42,6 +53,12 @@ export class ApiFailure extends Error {
   ) {
     super(body?.error ?? `HTTP ${status}`);
   }
+}
+
+/** A mensagem que o servidor mandou com o erro (`{ error, message }`), ou `fallback`. */
+export function messageOf(err: unknown, fallback: string) {
+  const body = err instanceof ApiFailure ? err.body : null;
+  return body && "message" in body && typeof body.message === "string" ? body.message : fallback;
 }
 
 /** O servidor não respondeu (Tailscale desligado, servidor fora do ar). */
@@ -136,17 +153,58 @@ export const api = {
   /** Cancela o que a mensagem ainda tem em andamento (só quem escreveu). */
   cancelMessage: (conversationId: string, messageId: string) =>
     call<ExecutionDto[]>(`/api/conversations/${conversationId}/messages/${messageId}/cancel`, post),
+  /** Os Pedidos de aprovação de uma conversa (todos que a veem). */
+  approvals: (conversationId: string) => call<ApprovalRequestDto[]>(`/api/conversations/${conversationId}/approvals`),
+  /** Aprovar ou recusar um Pedido (só o autor da mensagem de origem). */
+  approveRequest: (conversationId: string, approvalId: string) =>
+    call<ApprovalRequestDto>(`/api/conversations/${conversationId}/approvals/${approvalId}/approve`, post),
+  rejectRequest: (conversationId: string, approvalId: string, reason: string) =>
+    call<ApprovalRequestDto>(
+      `/api/conversations/${conversationId}/approvals/${approvalId}/reject`,
+      json("POST", reason.trim() ? { reason } : {}),
+    ),
   /** Os Desfechos da Articuladora numa conversa (uma DM não tem). */
   outcomes: (conversationId: string) => call<OutcomeDto[]>(`/api/conversations/${conversationId}/outcomes`),
   updateAgent: (agentId: string, input: UpdateAgentInput) =>
     call<AgentDto>(`/api/agents/${agentId}`, json("PATCH", input)),
   agents: () => call<AgentDto[]>("/api/agents"),
+  agentTools: (agentId: string) => call<AgentToolDto[]>(`/api/agents/${agentId}/tools`),
+  setAgentTool: (agentId: string, toolId: string, granted: boolean) =>
+    call<AgentToolDto[]>(`/api/agents/${agentId}/tools/${toolId}`, { method: granted ? "PUT" : "DELETE" }),
   createAgent: (input: CreateAgentInput) => call<AgentDto>("/api/agents", json("POST", input)),
   addAgent: (channelId: string, agentId: string) =>
     call<ChannelDto>(`/api/channels/${channelId}/agents`, json("POST", { agentId })),
   workspaceContext: () => call<WorkspaceContextDto>("/api/workspace-context"),
   setWorkspaceContext: (context: string) =>
     call<WorkspaceContextDto>("/api/workspace-context", json("PUT", { context })),
+  connectors: () => call<ConnectorDto[]>("/api/connectors"),
+  /** Abrir o Conector relê o catálogo do servidor. */
+  connector: (id: string) => call<ConnectorDto>(`/api/connectors/${id}`),
+  createConnector: (input: CreateConnectorInput) => call<ConnectorDto>("/api/connectors", json("POST", input)),
+  setConnectorToken: (id: string, token: string) =>
+    call<ConnectorDto>(`/api/connectors/${id}/credential`, json("PUT", { token })),
+  /** Adicionar pelo login do servidor: o navegador vai ao login e volta com o Conector gravado. */
+  connectorLogin: (input: CreateConnectorLoginInput) =>
+    call<ConnectorLoginDto>("/api/connectors/login", json("POST", input)),
+  /** Religar a credencial do Workspace pelo login do servidor. */
+  connectorRelogin: (id: string, origin: string) =>
+    call<ConnectorLoginDto>(`/api/connectors/${id}/credential/login`, json("POST", { origin })),
+  removeConnector: (id: string) => call<void>(`/api/connectors/${id}`, { method: "DELETE" }),
+  /** Perfil › Conectores: as credenciais do próprio Membro nos Conectores de cada Membro. */
+  myConnectors: () => call<MyConnectorDto[]>("/api/me/connectors"),
+  connectMine: (id: string, token: string) =>
+    call<MyConnectorDto>(`/api/me/connectors/${id}/credential`, json("PUT", { token })),
+  /** Ligar a minha pelo login do servidor. */
+  connectMineLogin: (id: string, origin: string) =>
+    call<ConnectorLoginDto>(`/api/me/connectors/${id}/credential/login`, json("POST", { origin })),
+  disconnectMine: (id: string) => call<void>(`/api/me/connectors/${id}/credential`, { method: "DELETE" }),
   workspaceKey: () => call<WorkspaceKeyDto>("/api/workspace-key"),
   setWorkspaceKey: (apiKey: string) => call<WorkspaceKeyDto>("/api/workspace-key", json("PUT", { apiKey })),
+  github: () => call<GitHubDto>("/api/github"),
+  githubManifest: (origin: string, organization: string) =>
+    call<GitHubManifestDto>("/api/github/manifest", json("POST", { origin, organization: organization || undefined })),
+  githubInstall: () => call<GitHubInstallDto>("/api/github/installation", { method: "POST" }),
+  agentGitHub: (agentId: string) => call<AgentGitHubDto>(`/api/agents/${agentId}/github`),
+  setAgentGitHub: (agentId: string, repositories: string[] | null) =>
+    call<AgentGitHubDto>(`/api/agents/${agentId}/github`, json("PUT", { repositories })),
 };
