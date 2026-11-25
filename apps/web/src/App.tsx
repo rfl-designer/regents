@@ -2,6 +2,7 @@ import {
   ACCOUNT_PATH,
   AGENTS_PATH,
   type ChannelDto,
+  CONNECTORS_PATH,
   conversationOfPath,
   conversationPath,
   type DmDto,
@@ -92,7 +93,7 @@ const SCREENS: Record<Screen, { path?: string; admin?: true; render(ctx: ScreenC
   context: { admin: true, render: () => <WorkspaceContextSettings /> },
   settings: { admin: true, render: () => <ChannelSettings /> },
   agents: { path: AGENTS_PATH, admin: true, render: () => <AgentsSettings /> },
-  connectors: { admin: true, render: () => <ConnectorsSettings /> },
+  connectors: { path: CONNECTORS_PATH, admin: true, render: () => <ConnectorsSettings /> },
   key: { path: WORKSPACE_KEY_PATH, admin: true, render: () => <WorkspaceKeySettings /> },
   github: { path: GITHUB_PATH, admin: true, render: () => <GitHubSettings /> },
   installation: {

@@ -292,9 +292,12 @@ export function createApp(deps: AppDeps) {
       await accounts.recover();
       accounts.watch();
       executions.start();
+      // As credenciais dos Conectores ligadas pelo login se renovam antes de vencer.
+      connectors.start();
       if (deps.installation?.watch) installation.start();
     },
     close: async () => {
+      await connectors.stop();
       await installation.stop();
       await accounts.close();
       // Depois do `executions.stop()` não sobra nenhum; isto é só a rede de segurança.

@@ -9,9 +9,11 @@ import type {
   ChannelDto,
   ChannelSettingsDto,
   ConnectorDto,
+  ConnectorLoginDto,
   CreateAgentInput,
   CreateChannelInput,
   CreateConnectorInput,
+  CreateConnectorLoginInput,
   DeviceDto,
   DmDto,
   ExecutionDto,
@@ -175,11 +177,20 @@ export const api = {
   createConnector: (input: CreateConnectorInput) => call<ConnectorDto>("/api/connectors", json("POST", input)),
   setConnectorToken: (id: string, token: string) =>
     call<ConnectorDto>(`/api/connectors/${id}/credential`, json("PUT", { token })),
+  /** Adicionar pelo login do servidor: o navegador vai ao login e volta com o Conector gravado. */
+  connectorLogin: (input: CreateConnectorLoginInput) =>
+    call<ConnectorLoginDto>("/api/connectors/login", json("POST", input)),
+  /** Religar a credencial do Workspace pelo login do servidor. */
+  connectorRelogin: (id: string, origin: string) =>
+    call<ConnectorLoginDto>(`/api/connectors/${id}/credential/login`, json("POST", { origin })),
   removeConnector: (id: string) => call<void>(`/api/connectors/${id}`, { method: "DELETE" }),
   /** Perfil › Conectores: as credenciais do próprio Membro nos Conectores de cada Membro. */
   myConnectors: () => call<MyConnectorDto[]>("/api/me/connectors"),
   connectMine: (id: string, token: string) =>
     call<MyConnectorDto>(`/api/me/connectors/${id}/credential`, json("PUT", { token })),
+  /** Ligar a minha pelo login do servidor. */
+  connectMineLogin: (id: string, origin: string) =>
+    call<ConnectorLoginDto>(`/api/me/connectors/${id}/credential/login`, json("POST", { origin })),
   disconnectMine: (id: string) => call<void>(`/api/me/connectors/${id}/credential`, { method: "DELETE" }),
   workspaceKey: () => call<WorkspaceKeyDto>("/api/workspace-key"),
   setWorkspaceKey: (apiKey: string) => call<WorkspaceKeyDto>("/api/workspace-key", json("PUT", { apiKey })),

@@ -29,7 +29,7 @@ import { FAKE_LOGIN_CODE, type FakeClaude, fakeClaude } from "./fake-claude";
 import { startFakeGitHub } from "./fakes/github-api";
 import { startFakeMessagesApi } from "./fakes/messages-api";
 import { type Delivery, type FakeSubscription, type PushCollector, startPushCollector } from "./fakes/push-collector";
-import { type FakeRemoteTool, startRemoteMcp } from "./fakes/remote-mcp";
+import { startRemoteMcp } from "./fakes/remote-mcp";
 
 // ---------- limpeza automática (o preload roda `runCleanups` no afterEach) ----------
 
@@ -365,7 +365,7 @@ export async function fakeGitHub() {
 }
 
 /** Um servidor MCP remoto falso (um Conector), que fecha sozinho no fim do teste. */
-export function remoteMcp(opts: { token: string | string[]; tools: FakeRemoteTool[] }) {
+export function remoteMcp(opts: Parameters<typeof startRemoteMcp>[0]) {
   const server = startRemoteMcp(opts);
   onCleanup(() => server.stop());
   return server;

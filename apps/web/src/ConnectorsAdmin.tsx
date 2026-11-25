@@ -1,6 +1,7 @@
 import type { ConnectorCredentialMode, ConnectorDto } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { ApiFailure, api } from "./api";
+import { goToLogin, loginReturn } from "./connector-login";
 import { dateTimeShort } from "./format";
 
 function messageOf(err: unknown, fallback: string) {
@@ -9,12 +10,14 @@ function messageOf(err: unknown, fallback: string) {
 }
 
 /**
- * Só para o Admin: os Conectores (servidores MCP remotos) com a credencial do Workspace. O token é
- * colado aqui, fica cifrado e não volta. As Ferramentas de cada um se concedem na tela do Agente.
+ * Só para o Admin: os Conectores (servidores MCP remotos). A credencial do Workspace se liga pelo
+ * login do servidor, quando ele oferece, ou colando um token; fica cifrada e não volta. As
+ * Ferramentas de cada um se concedem na tela do Agente.
  */
 export function ConnectorsSettings() {
   const [connectors, setConnectors] = useState<ConnectorDto[] | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const [back] = useState(loginReturn);
 
   useEffect(() => {
     api.connectors().then(setConnectors, () => setLoadError(true));
@@ -30,6 +33,16 @@ export function ConnectorsSettings() {
         Ferramentas dele alcança o que o token alcança; a descrição do Agente diz isso. Ferramenta sem a marca de "só
         leitura" do servidor é escrita e passa por Pedido de aprovação.
       </p>
+      {back && "ok" in back && (
+        <p className="hint" role="status">
+          Login concluído: a credencial ficou gravada.
+        </p>
+      )}
+      {back && "error" in back && (
+        <p className="error" role="alert">
+          {back.error}
+        </p>
+      )}
       {loadError && (
         <p className="error" role="alert">
           Não foi possível carregar os Conectores.
@@ -80,6 +93,11 @@ function ConnectorItem(props: { connector: ConnectorDto; onChanged(c: ConnectorD
       setToken("");
     }, "O token não foi gravado.");
   };
+  const relogin = () =>
+    act(
+      async () => goToLogin((await api.connectorRelogin(c.id, location.origin)).authorizationUrl),
+      "O login não começou.",
+    );
   const remove = () => {
     if (!confirm(`Remover o ${c.name}? As Ferramentas dele saem de todos os Agentes.`)) return;
     void act(async () => {
@@ -146,6 +164,9 @@ function ConnectorItem(props: { connector: ConnectorDto; onChanged(c: ConnectorD
           <button type="submit" disabled={busy || !token.trim()}>
             Trocar token
           </button>
+          <button type="button" disabled={busy} onClick={relogin}>
+            Ligar de novo pelo login
+          </button>
         </form>
       )}
       {error && (
@@ -177,6 +198,18 @@ function NewConnector({ onCreated }: { onCreated(c: ConnectorDto): void }) {
     } catch (err) {
       setError(messageOf(err, "O Conector não foi adicionado. Tente de novo."));
     } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Sem token: o login do servidor (quando ele não oferece, o motivo diz para colar um token). */
+  async function login() {
+    setBusy(true);
+    setError(null);
+    try {
+      goToLogin((await api.connectorLogin({ name, url, credential, origin: location.origin })).authorizationUrl);
+    } catch (err) {
+      setError(messageOf(err, "O login não começou. Tente de novo."));
       setBusy(false);
     }
   }
@@ -221,7 +254,10 @@ function NewConnector({ onCreated }: { onCreated(c: ConnectorDto): void }) {
       />
       <div className="row">
         <button type="submit" disabled={busy || !name.trim() || !url.trim() || !token.trim()}>
-          Adicionar
+          Adicionar com o token
+        </button>
+        <button type="button" disabled={busy || !name.trim() || !url.trim()} onClick={login}>
+          Ligar pelo login do servidor
         </button>
         {error && (
           <span className="error" role="alert">

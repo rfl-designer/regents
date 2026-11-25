@@ -580,6 +580,40 @@ export interface CreateConnectorInput {
 }
 
 /**
+ * Ligar um Conector pelo login do próprio servidor MCP (OAuth, #56), quando ele oferece. O PWA
+ * manda o endereço da Instalação na tailnet (`origin`, o `location.origin` dele): é para lá que o
+ * servidor de autorização devolve o navegador (`${origin}${CONNECTOR_LOGIN_CALLBACK_PATH}`), e o
+ * retorno grava a credencial e leva de volta à tela de onde saiu, com `?conector=ligado` ou
+ * `?erro=<motivo>`.
+ *
+ * - `POST /api/connectors/login` (Admin, `CreateConnectorLoginInput`): adicionar pelo login; o
+ *   Conector só existe depois do retorno (o login do Admin lê o catálogo). Volta a `CONNECTORS_PATH`.
+ * - `POST /api/connectors/:id/credential/login` (Admin, `{ origin }`): religar a credencial do
+ *   Workspace (`409 member_credential` no modo de cada Membro). Volta a `CONNECTORS_PATH`.
+ * - `POST /api/me/connectors/:id/credential/login` (`{ origin }`): o Membro liga a dele. Volta a
+ *   `MY_CONNECTORS_PATH`.
+ *
+ * Respondem `ConnectorLoginDto`; `422 oauth_unavailable` quando o servidor não oferece login
+ * (cole um token), `422 connector_unreachable` quando ele não responde. A credencial do login se
+ * renova sozinha antes de vencer; a renovação recusada é a credencial recusada.
+ */
+export interface CreateConnectorLoginInput {
+  name: string;
+  url: string;
+  credential?: ConnectorCredentialMode;
+  origin: string;
+}
+
+export interface StartConnectorLoginInput {
+  origin: string;
+}
+
+/** Para onde o navegador vai fazer o login (o `authorization_endpoint` do servidor, com PKCE). */
+export interface ConnectorLoginDto {
+  authorizationUrl: string;
+}
+
+/**
  * Um Conector com credencial de cada Membro, em Perfil › Conectores (`MY_CONNECTORS_PATH`), como o
  * próprio Membro o vê: `GET /api/me/connectors`; ligar com `PUT /api/me/connectors/:id/credential`
  * (`{ token }`, `422 credential_refused` se o servidor o recusa) e desligar com `DELETE` no mesmo
@@ -1066,6 +1100,10 @@ export const AGENTS_PATH = "/agentes";
 export const ACCOUNT_PATH = "/conta";
 /** Perfil › Conectores: onde o Membro liga as credenciais dele (e para onde leva o push da recusa). */
 export const MY_CONNECTORS_PATH = "/perfil/conectores";
+/** Os Conectores (só Admin): para onde volta o login de um Conector com a credencial do Workspace. */
+export const CONNECTORS_PATH = "/conectores";
+/** Onde o servidor de autorização de um Conector devolve o navegador depois do login (OAuth, #56). */
+export const CONNECTOR_LOGIN_CALLBACK_PATH = "/api/connector-login/callback";
 
 // ---------- eventos do WebSocket ----------
 
