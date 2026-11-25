@@ -1,5 +1,5 @@
 import type { MemoryItemDto } from "@shearim/contracts";
-import { and, desc, eq, inArray, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { type Db, isUuid, schema, type Tx } from "../db/client";
 import type { EventHub } from "../events";
@@ -11,7 +11,8 @@ const { memoryItems, messages, members, agents, channels } = schema;
 /**
  * O item de Memória (spec #60): criar, listar e anunciar. O alcance não é guardado: quem lê
  * confere a conversa de origem na hora (ADR 0012). Nada é apagado: a correção arquiva a versão
- * anterior, que aponta para a nova, e desfazer arquiva.
+ * anterior, que aponta para a nova, e desfazer arquiva. A única exceção (spec #60) é a Memória do
+ * Agente apagado, que sai junto com ele (`forgetAgent`).
  */
 
 /** O trecho da mensagem de origem que a lista mostra. */
@@ -68,6 +69,15 @@ export async function editableItem(
   if (item.scope === "workspace") return who.role === "admin" ? item : "not_admin";
   const [origin] = await db.select().from(channels).where(eq(channels.id, item.conversationId!));
   return origin && (await canSee(db, who.id, origin)) ? item : "not_found";
+}
+
+/**
+ * Apaga a Memória do Agente `agentId`, ativos e arquivados: o único apagamento de Memória (spec
+ * #60), quando o Admin apaga o Agente (#65). A Memória da Conversa que ele gerou fica. Quem chama
+ * já cancelou a extração em andamento dele.
+ */
+export async function forgetAgent(db: Db, agentId: string): Promise<void> {
+  await db.delete(memoryItems).where(and(eq(memoryItems.scope, "agent"), eq(memoryItems.agentId, agentId)));
 }
 
 /** O item `id` travado para mudar na transação `tx`, se ainda ativo (senão, nada a mudar). */
@@ -248,6 +258,23 @@ export function agentMemory(db: Db, agentId: string, viewerId: string) {
       seenBy(db, viewerId, memoryItems.conversationId),
     ),
   );
+}
+
+/**
+ * Os itens com origem numa das conversas `conversationIds` (o alcance de uma resposta, ADR 0012):
+ * da Memória da Conversa, ou da Memória do Agente `agentId`. O resumo (`summary.ts`) e a busca
+ * (`search.ts`) filtram por aqui.
+ */
+export function inReach(
+  conversationIds: readonly string[],
+  of: { scope: "conversation" } | { scope: "agent"; agentId: string },
+): SQL {
+  if (conversationIds.length === 0) return sql`false`;
+  return and(
+    eq(memoryItems.scope, of.scope),
+    of.scope === "agent" ? eq(memoryItems.agentId, of.agentId) : undefined,
+    inArray(memoryItems.conversationId, [...conversationIds]),
+  )!;
 }
 
 /** A Memória do Workspace, ativos e arquivados, do mais novo para o mais velho: todo Membro a vê. */

@@ -17,7 +17,8 @@ import type { Executions } from "./executions";
 import type { GitHub } from "./github/connector";
 import { budgetOf, type KeyLedger, keySpend, monthOf, parseBudget } from "./key-budget";
 import type { Env } from "./members";
-import { claimHandle, handleBase } from "./mention-handles";
+import { forgetAgent } from "./memory/items";
+import { claimHandle, handleBase, releaseHandle } from "./mention-handles";
 import { audienceOf } from "./participation";
 import type { ToolPort } from "./tools/port";
 
@@ -25,7 +26,7 @@ export type Agent = typeof schema.agents.$inferSelect;
 /** O Agente com o identificador de Menção dele (`mention_handles`). */
 export type AgentWithHandle = Agent & { handle: string };
 
-const { agents, mentionHandles, channels, channelAgents, agentTools, agentGithubRepositories, memoryItems } = schema;
+const { agents, mentionHandles, channels, channelAgents, agentTools, agentGithubRepositories } = schema;
 
 const NAME_MAX = 40;
 /** Uma foto pequena: `data:` URL de imagem com até ~300 KB. */
@@ -185,7 +186,7 @@ export function agentRoutes(deps: {
         : [current];
       const owner = { kind: "agent", id: current.id } as const;
       if (change.name !== undefined && change.name !== current.name) {
-        await tx.delete(mentionHandles).where(eq(mentionHandles.agentId, current.id));
+        await releaseHandle(tx, owner);
         return { ...row!, handle: await claimHandle(tx, owner, agentHandleBase(change.name)) };
       }
       const [{ handle }] = (await tx
@@ -226,7 +227,7 @@ export function agentRoutes(deps: {
     }
     const left = await db.transaction(async (tx) => {
       await tx.update(agents).set({ deletedAt: clock.now() }).where(eq(agents.id, agent.id));
-      await tx.delete(mentionHandles).where(eq(mentionHandles.agentId, agent.id));
+      await releaseHandle(tx, { kind: "agent", id: agent.id });
       await tx.delete(agentTools).where(eq(agentTools.agentId, agent.id));
       await tx.delete(agentGithubRepositories).where(eq(agentGithubRepositories.agentId, agent.id));
       // Sai dos Canais; numa DM, fica (é com quem a DM foi).
@@ -248,7 +249,7 @@ export function agentRoutes(deps: {
     });
     // Depois de cancelada a extração em andamento, nada mais guarda na Memória dele.
     await deps.executions.cancelAgent(agent.id);
-    await db.delete(memoryItems).where(and(eq(memoryItems.scope, "agent"), eq(memoryItems.agentId, agent.id)));
+    await forgetAgent(db, agent.id);
 
     deps.events.publish("everyone", { type: "agent.deleted", agentId: agent.id });
     const changed = left.length

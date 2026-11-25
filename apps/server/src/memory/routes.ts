@@ -1,8 +1,9 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import { type Context, Hono } from "hono";
+import { findAgent } from "../agents";
 import type { Clock } from "../clock";
 import { findVisibleConversation } from "../conversations";
-import { type Db, isUuid, schema } from "../db/client";
+import { type Db, schema } from "../db/client";
 import type { EventHub } from "../events";
 import { adminOnly, type Env } from "../members";
 import { MAX_ITEM_LENGTH } from "./extraction";
@@ -46,14 +47,7 @@ export function memoryRoutes(deps: { db: Db; clock: Clock; events: EventHub }) {
    * quem olha vê, Admin inclusive. Ativos e arquivados, do mais novo ao mais velho.
    */
   routes.get("/agents/:id/memory", async (c) => {
-    const id = c.req.param("id");
-    const { agents } = schema;
-    const [agent] = isUuid(id)
-      ? await db
-          .select({ id: agents.id })
-          .from(agents)
-          .where(and(eq(agents.id, id), isNull(agents.deletedAt)))
-      : [];
+    const [agent] = await findAgent(db, c.req.param("id"));
     if (!agent) return c.json({ error: "not_found" }, 404);
     return c.json(await agentMemory(db, agent.id, c.get("member").id));
   });

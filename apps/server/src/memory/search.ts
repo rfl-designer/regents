@@ -1,11 +1,12 @@
-import { and, desc, eq, ilike, inArray, or, type SQL } from "drizzle-orm";
+import { and, desc, eq, ilike, or } from "drizzle-orm";
 import { schema } from "../db/client";
 import { type AutomaticTool, ToolFailure } from "../tools/port";
 import { reachOf } from "../tools/reach";
 import { likeEscape } from "../tools/workspace-read";
-import { remembers } from "./enabled";
+import { remembersNow } from "./enabled";
+import { inReach } from "./items";
 
-const { agents, memoryItems } = schema;
+const { memoryItems } = schema;
 
 /** Até quantos itens uma busca devolve. */
 const SEARCH_LIMIT = 20;
@@ -40,29 +41,20 @@ export const SEARCH_MEMORY: AutomaticTool = {
     required: ["texto"],
     additionalProperties: false,
   },
-  async presentFor(db, agentId) {
-    const [agent] = await db.select({ memoryEnabled: agents.memoryEnabled }).from(agents).where(eq(agents.id, agentId));
-    return Boolean(agent && remembers(agent));
-  },
+  presentFor: (db, agentId) => remembersNow(db, agentId),
   async run({ db, run }, raw) {
     const args = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
     const text = typeof args.texto === "string" ? args.texto.trim() : "";
     if (!text) throw new ToolFailure("diga o texto a buscar");
     const reach = await reachOf(db, run);
     const labels = new Map(reach.conversations.map((c) => [c.id, c.label]));
-    const inReach = [...labels.keys()];
+    const conversations = [...labels.keys()];
     // A Memória do Workspace vale em toda conversa; as outras, só com a origem no alcance.
-    const scopes: SQL[] = [eq(memoryItems.scope, "workspace")];
-    if (inReach.length) {
-      scopes.push(
-        and(eq(memoryItems.scope, "conversation"), inArray(memoryItems.conversationId, inReach))!,
-        and(
-          eq(memoryItems.scope, "agent"),
-          eq(memoryItems.agentId, run.agentId),
-          inArray(memoryItems.conversationId, inReach),
-        )!,
-      );
-    }
+    const scopes = [
+      eq(memoryItems.scope, "workspace"),
+      inReach(conversations, { scope: "conversation" }),
+      inReach(conversations, { scope: "agent", agentId: run.agentId }),
+    ];
     const found = await db
       .select({ scope: memoryItems.scope, conversationId: memoryItems.conversationId, text: memoryItems.text })
       .from(memoryItems)

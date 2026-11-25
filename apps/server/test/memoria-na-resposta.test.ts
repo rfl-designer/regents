@@ -6,8 +6,6 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { AgentDto, ChannelDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
-import { eq } from "drizzle-orm";
-import { schema } from "../src/db/client";
 import { memoryFromEnv } from "../src/memory/extraction";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 
@@ -150,11 +148,7 @@ describe("o resumo da Memória no contexto", () => {
     const { produto } = await produtoComFaro(t);
     const [velho] = await guardarNaMemoria(t, produto.id, ["O reembolso sai pelo Flouz."]);
     await guardarNaMemoria(t, produto.id, ["A reunião é às terças."]);
-    // Ainda não há o Desfazer (#63): o item é arquivado como o Desfazer faria.
-    await t.db
-      .update(schema.memoryItems)
-      .set({ state: "archived", archivedAt: t.clock.now() })
-      .where(eq(schema.memoryItems.id, velho!.id));
+    expect((await t.as(juliana).post(`/api/memory/${velho!.id}/undo`)).status).toBe(200);
 
     await enviar(t, bruno, produto.id, "@faro como sai o reembolso?");
 

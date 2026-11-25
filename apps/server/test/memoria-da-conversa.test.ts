@@ -209,7 +209,7 @@ describe("só o que uma pessoa disse", () => {
 });
 
 describe("a lista Memória da conversa", () => {
-  test("o item que nasceu numa Thread fica na Memória do Canal, com a mensagem de origem na Thread", async () => {
+  test("o item que nasceu numa Thread fica na Memória da Conversa do Canal, com a mensagem de origem na Thread", async () => {
     const t = await testApp();
     const { produto } = await produtoComFaro(t);
     const raiz = await enviar(t, juliana, produto.id, "Lançamento do plano anual");

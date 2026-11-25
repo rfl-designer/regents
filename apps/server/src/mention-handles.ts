@@ -10,7 +10,8 @@ import { type Db, schema } from "./db/client";
  * linha tem um dono (`member_id` ou `agent_id`, um só). A unicidade entre as duas espécies
  * vem do banco, sem lock. Quem cria um participante pede o identificador aqui, dentro da
  * mesma transação: o Membro na entrada (`members.ts`, `join-requests.ts`); o Agente (#20)
- * ao ser criado, com `claimHandle(tx, { kind: "agent", id }, nome)`.
+ * ao ser criado, com `claimHandle(tx, { kind: "agent", id }, nome)`. O Agente apagado (#65)
+ * devolve o dele com `releaseHandle`.
  */
 export type HandleOwner = { kind: "member"; id: string } | { kind: "agent"; id: string };
 
@@ -85,6 +86,14 @@ export async function changeHandle(
     .onConflictDoNothing()
     .returning({ handle: mentionHandles.handle });
   return claimed ? { ok: true } : { ok: false, reason: "taken" };
+}
+
+/**
+ * Tira o identificador do dono: ele volta a ficar livre (o Agente renomeado, antes de pedir o do
+ * nome novo, e o Agente apagado, #65). Chame dentro da transação que muda o dono.
+ */
+export async function releaseHandle(tx: Executor, owner: HandleOwner): Promise<void> {
+  await tx.delete(mentionHandles).where(ownerIs(owner));
 }
 
 /** De quem é cada identificador pedido (os que não são de ninguém ficam de fora). */

@@ -43,7 +43,7 @@ async function guardado(app: { baseUrl: string }, agente: string, fato: string) 
 }
 
 describe("Memória da Conversa", () => {
-  test('depois da resposta, o Andamento mostra "guardou na Memória" e o item aparece na lista Memória do Canal', {
+  test('depois da resposta, o Andamento mostra "guardou na Memória" e o item aparece na lista Memória da Conversa', {
     timeout: 120_000,
   }, async ({ app, screen }) => {
     const agente = await agenteNoGeral(app);

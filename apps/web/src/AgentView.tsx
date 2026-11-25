@@ -2,8 +2,8 @@ import { type AgentDto, conversationPath, type MeDto, type MemoryItemDto } from 
 import { useCallback, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
 import { api } from "./api";
-import { MemoryArchived, MemoryItem } from "./ChannelView";
 import { useServerEvents } from "./live";
+import { MemoryArchived, MemoryItem, sortMemory } from "./Memory";
 
 /**
  * A tela do Agente (#65), ao lado da conversa (no celular, por cima): só de leitura para todo
@@ -61,9 +61,7 @@ export function AgentPanel({
     }
   });
 
-  const all = Object.values(items).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const active = all.filter((i) => i.state === "active");
-  const archived = all.filter((i) => i.state === "archived");
+  const { all, active, archived } = sortMemory(Object.values(items));
   const changed = (item: MemoryItemDto) => setItems((prev) => ({ ...prev, [item.id]: item }));
 
   return (

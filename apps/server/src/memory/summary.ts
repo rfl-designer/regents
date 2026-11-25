@@ -1,6 +1,7 @@
-import { and, desc, eq, inArray, type SQL } from "drizzle-orm";
+import { and, desc, eq, type SQL } from "drizzle-orm";
 import { type Db, schema } from "../db/client";
 import { reachOf } from "../tools/reach";
+import { inReach } from "./items";
 import { SEARCH_MEMORY_TITLE } from "./search";
 
 const { memoryItems } = schema;
@@ -80,11 +81,7 @@ export async function memorySummary(
       extractable: true,
       newestFirst: await activeNewestFirst(
         db,
-        and(
-          eq(memoryItems.scope, "agent"),
-          eq(memoryItems.agentId, input.agentId),
-          inArray(memoryItems.conversationId, await agentOrigins(db, input)),
-        ),
+        inReach(await agentOrigins(db, input), { scope: "agent", agentId: input.agentId }),
       ),
     },
   ];
@@ -122,7 +119,13 @@ const line = (item: SummaryItem) => `- ${item.text}`;
 
 /** Até quantos caracteres do começo do texto um título tem. */
 const TITLE_CHARS = 60;
-/** Até quantos títulos entram; os outros só pela contagem (a busca os acha). */
+/**
+ * Até quantos títulos entram; os outros só pela contagem (a busca os acha). Os títulos ficam fora
+ * do orçamento, e o bloco entra em toda resposta: sem teto, ele cresceria com a Memória sem limite.
+ * 50 títulos de até `TITLE_CHARS` dão perto de 3.000 caracteres, da ordem de
+ * `DEFAULT_SUMMARY_CHARS`: no pior caso, o resumo fica em torno do dobro do orçamento. O que passa
+ * do teto não some calado ("e mais N itens").
+ */
 const MAX_TITLES = 50;
 
 /**

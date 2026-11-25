@@ -1,6 +1,7 @@
 import { DM_KINDS, type DmDto, type DmKind, type OpenDmInput } from "@shearim/contracts";
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
+import { findAgent } from "./agents";
 import type { Clock } from "./clock";
 import type { ConversationRow } from "./conversations";
 import { type Db, isUuid, schema } from "./db/client";
@@ -10,7 +11,7 @@ import { addAgent, addParticipants, audienceOf, participantsOf } from "./partici
 
 export type Dm = ConversationRow & { kind: DmKind };
 
-const { channels, channelParticipants, channelAgents, members, agents } = schema;
+const { channels, channelParticipants, channelAgents, members } = schema;
 
 /** Numa DM, o N (mensagens recentes no contexto dos Agentes) é fixo: o Admin só edita o de Canais. */
 export const DM_RECENT_MESSAGES = 30;
@@ -59,13 +60,7 @@ export function dmRoutes(deps: { db: Db; clock: Clock; events: EventHub }) {
       if (others.length > 0) {
         return c.json({ error: "invalid_input", message: "A DM com um Agente é só entre você e ele." }, 400);
       }
-      const [agent] =
-        typeof agentId === "string" && isUuid(agentId)
-          ? await db
-              .select({ id: agents.id })
-              .from(agents)
-              .where(and(eq(agents.id, agentId), isNull(agents.deletedAt)))
-          : [];
+      const [agent] = typeof agentId === "string" ? await findAgent(db, agentId) : [];
       if (!agent) return c.json({ error: "invalid_input", message: "Esse Agente não existe no Workspace." }, 400);
     } else if (others.length === 0) {
       return c.json({ error: "invalid_input", message: "Escolha com quem conversar." }, 400);

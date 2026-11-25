@@ -32,7 +32,7 @@ import { buildContext, type Call } from "./context";
 import { type Db, schema, type Tx } from "./db/client";
 import { type EventHub, reaches, without } from "./events";
 import { type KeyLedger, monthOf } from "./key-budget";
-import { remembers } from "./memory/enabled";
+import { remembers, remembersNow } from "./memory/enabled";
 import {
   buildExtraction,
   DEFAULT_MEMORY_MODEL,
@@ -679,11 +679,7 @@ export function createExecutions(deps: {
     if (job.kind === "memory") {
       // O Admin desligou a Memória do Agente com a extração já na fila (#67): ela termina sem ler
       // nada. Relida agora: a linha da passada pela fila pode ser de antes de quem pague liberar.
-      const [now] = await db
-        .select({ memoryEnabled: agents.memoryEnabled })
-        .from(agents)
-        .where(eq(agents.id, agent.id));
-      if (!now || !remembers(now)) {
+      if (!(await remembersNow(db, agent.id))) {
         if (await close(job, "done")) await publish(job.id);
         return;
       }

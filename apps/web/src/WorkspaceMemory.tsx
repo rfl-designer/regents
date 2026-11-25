@@ -1,8 +1,8 @@
 import type { MeDto, MemoryItemDto } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { api } from "./api";
-import { archivedNote, MemoryItem } from "./ChannelView";
 import { useServerEvents } from "./live";
+import { MemoryArchived, MemoryItem, sortMemory } from "./Memory";
 
 /** O tamanho máximo de um item da Memória (o mesmo do servidor). */
 const MAX_ITEM = 500;
@@ -29,18 +29,15 @@ export function WorkspaceMemory({ me }: { me: MeDto }) {
     if (event.type === "memory.updated" && event.item.scope === "workspace") show(event.item);
   });
 
-  const all = Object.values(items ?? {}).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const active = all.filter((i) => i.state === "active");
-  const archived = all.filter((i) => i.state === "archived");
-  const byId = new Map(all.map((i) => [i.id, i]));
+  const { all, active, archived } = sortMemory(Object.values(items ?? {}));
 
   return (
     <main className="settings">
       <h1 className="channel-name">Memória do Workspace</h1>
       <p className="hint">
         O que vale em todo o Workspace: entra primeiro na Memória de toda resposta de Agente, em todo Canal e DM. Quem
-        escreve é um Admin, direto aqui ou promovendo um item da Memória de um Canal público. O Shearim não guarda aqui
-        sozinho.
+        escreve é um Admin, direto aqui ou promovendo um item da Memória da Conversa de um Canal público. O Shearim não
+        guarda aqui sozinho.
       </p>
       {isAdmin && <WriteItem onWritten={show} />}
       {loadError ? (
@@ -58,19 +55,7 @@ export function WorkspaceMemory({ me }: { me: MeDto }) {
           ))}
         </ul>
       )}
-      {archived.length > 0 && (
-        <section className="memory-archived" aria-label="Arquivados">
-          <h2 className="memory-subhead">Arquivados</h2>
-          <ul className="memory-items">
-            {archived.map((i) => (
-              <li key={i.id} className="memory-item archived">
-                <p className="memory-text">{i.text}</p>
-                <p className="micro muted">{archivedNote(i, i.replacedById ? byId.get(i.replacedById) : undefined)}</p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      <MemoryArchived archived={archived} all={all} />
     </main>
   );
 }
