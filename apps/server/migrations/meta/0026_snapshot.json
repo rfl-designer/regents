@@ -1,5 +1,5 @@
 {
-  "id": "34b4a441-fa9f-47fc-9121-5004afd15051",
+  "id": "526c11d2-480b-4ac5-bddc-698d21b610f6",
   "prevId": "d28ddea7-d639-4f06-b8ab-09a48e6a454b",
   "version": "7",
   "dialect": "postgresql",
@@ -1216,24 +1216,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "used": {
-          "name": "used",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "connect_connector_id": {
-          "name": "connect_connector_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "connect_name": {
-          "name": "connect_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "started_at": {
           "name": "started_at",
           "type": "timestamp with time zone",
@@ -1720,6 +1702,121 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.github_app": {
+      "name": "github_app",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "default": 1
+        },
+        "pending_state": {
+          "name": "pending_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "origin": {
+          "name": "origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "app_id": {
+          "name": "app_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "slug": {
+          "name": "slug",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "owner": {
+          "name": "owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "html_url": {
+          "name": "html_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "secrets_ciphertext": {
+          "name": "secrets_ciphertext",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "secrets_iv": {
+          "name": "secrets_iv",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "installation_id": {
+          "name": "installation_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "installation_account": {
+          "name": "installation_account",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "installed_at": {
+          "name": "installed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "failure_reason": {
+          "name": "failure_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "failed_at": {
+          "name": "failed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "github_app_uma_linha": {
+          "name": "github_app_uma_linha",
+          "value": "\"github_app\".\"id\" = 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.installation": {
       "name": "installation",
       "schema": "",
@@ -1972,96 +2069,6 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.member_connector_credentials": {
-      "name": "member_connector_credentials",
-      "schema": "",
-      "columns": {
-        "connector_id": {
-          "name": "connector_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "member_id": {
-          "name": "member_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "token_ciphertext": {
-          "name": "token_ciphertext",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "token_iv": {
-          "name": "token_iv",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "refused_at": {
-          "name": "refused_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "connected_at": {
-          "name": "connected_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "member_connector_credentials_connector_id_connectors_id_fk": {
-          "name": "member_connector_credentials_connector_id_connectors_id_fk",
-          "tableFrom": "member_connector_credentials",
-          "tableTo": "connectors",
-          "columnsFrom": [
-            "connector_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "member_connector_credentials_member_id_members_id_fk": {
-          "name": "member_connector_credentials_member_id_members_id_fk",
-          "tableFrom": "member_connector_credentials",
-          "tableTo": "members",
-          "columnsFrom": [
-            "member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "member_connector_credentials_connector_id_member_id_pk": {
-          "name": "member_connector_credentials_connector_id_member_id_pk",
-          "columns": [
-            "connector_id",
-            "member_id"
-          ]
-        }
-      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},

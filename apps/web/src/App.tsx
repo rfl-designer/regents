@@ -5,6 +5,7 @@ import {
   conversationOfPath,
   conversationPath,
   type DmDto,
+  GITHUB_PATH,
   INSTALLATION_PATH,
   MEMBERS_PATH,
   type MeDto,
@@ -25,6 +26,7 @@ import { type Notice, notice, reachOf, useConnectionNotice, useOnline } from "./
 import { DevicesView } from "./DevicesView";
 import { DmView } from "./DmView";
 import { EntryView } from "./EntryView";
+import { GitHubSettings } from "./GitHubSettings";
 import { InstallationBanner, InstallationSettings, useInstallation } from "./Installation";
 import { JoinRequestsPanel } from "./JoinRequestsPanel";
 import { KeyBanners } from "./KeyBanners";
@@ -92,6 +94,7 @@ const SCREENS: Record<Screen, { path?: string; admin?: true; render(ctx: ScreenC
   agents: { path: AGENTS_PATH, admin: true, render: () => <AgentsSettings /> },
   connectors: { admin: true, render: () => <ConnectorsSettings /> },
   key: { path: WORKSPACE_KEY_PATH, admin: true, render: () => <WorkspaceKeySettings /> },
+  github: { path: GITHUB_PATH, admin: true, render: () => <GitHubSettings /> },
   installation: {
     path: INSTALLATION_PATH,
     admin: true,

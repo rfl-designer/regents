@@ -22,7 +22,15 @@ interface Props {
   onOpenAdmin(view: AdminView): void;
 }
 
-export type AdminView = "members" | "context" | "settings" | "agents" | "connectors" | "key" | "installation";
+export type AdminView =
+  | "members"
+  | "context"
+  | "settings"
+  | "agents"
+  | "connectors"
+  | "key"
+  | "github"
+  | "installation";
 
 const ADMIN_LINKS: [AdminView, string][] = [
   ["members", "Membros"],
@@ -31,6 +39,7 @@ const ADMIN_LINKS: [AdminView, string][] = [
   ["agents", "Agentes"],
   ["connectors", "Conectores"],
   ["key", "Chave do Workspace"],
+  ["github", "GitHub"],
   ["installation", "Instalação"],
 ];
 

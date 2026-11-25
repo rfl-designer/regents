@@ -187,8 +187,15 @@
     {
       "idx": 26,
       "version": "7",
-      "when": 1795570203501,
-      "tag": "0026_credencial-do-membro",
+      "when": 1795569984426,
+      "tag": "0026_github-app",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1795571052731,
+      "tag": "0027_credencial-do-membro",
       "breakpoints": true
     }
   ]
