@@ -182,7 +182,10 @@ describe("a Memória do Workspace no resumo", () => {
     const system = await systemDaChamada(t, 2);
     expect(system).toContain("- Fato do Workspace.");
     expect(system).toContain("- Outro da conversa.");
-    expect(system).not.toContain("- Fato da conversa.");
+    // O que não coube entra só pelo título (#69), fora do grupo da Conversa.
+    const [resumo, titulos] = system.split("Também na Memória, só pelo começo do texto");
+    expect(resumo).not.toContain("- Fato da conversa.");
+    expect(titulos).toContain("- Fato da conversa.");
   });
 
   test("item arquivado do Workspace não entra", async () => {

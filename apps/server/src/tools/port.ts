@@ -146,6 +146,15 @@ export interface BrainTool extends ToolBase {
 /** Uma Ferramenta do catálogo: o que o Admin concede e o que a porta executa. */
 export type ToolDefinition = ReadTool | WriteTool | BrainTool;
 
+/**
+ * Uma Ferramenta que vem sem concessão do Admin ("buscar na Memória", #69): fica fora do catálogo
+ * (o Admin não a concede nem a retira) e o Agente a tem quando `presentFor` diz, conferido a cada
+ * uso, como a concessão. Só de leitura: nunca gera Pedido de aprovação.
+ */
+export interface AutomaticTool extends ReadTool {
+  presentFor(db: Db, agentId: string): Promise<boolean>;
+}
+
 const runsInBrain = (def: ToolDefinition): def is BrainTool => "runsIn" in def;
 
 /** Uma Ferramenta como o cérebro a oferece ao modelo. */
@@ -210,6 +219,8 @@ export function createToolPort(deps: {
    * as Ferramentas dele na hora, também de uma resposta em curso.
    */
   extra?: () => Promise<readonly ToolDefinition[]>;
+  /** As que vêm sem concessão (`AutomaticTool`), depois das concedidas. */
+  automatic?: readonly AutomaticTool[];
   /** O prazo de uma chamada sem prazo próprio (padrão: `TOOL_TIMEOUT_MS`). */
   timeoutMs?: number;
 }) {
@@ -225,6 +236,13 @@ export function createToolPort(deps: {
     const rows = await db.select({ tool: agentTools.tool }).from(agentTools).where(eq(agentTools.agentId, agentId));
     const granted = new Set(rows.map((r) => r.tool));
     return (await catalog()).filter((d) => granted.has(d.id));
+  }
+
+  /** O que o Agente tem agora: as concedidas e as que vêm sem concessão e estão presentes para ele. */
+  async function availableTo(agentId: string): Promise<ToolDefinition[]> {
+    const automatic: ToolDefinition[] = [];
+    for (const def of deps.automatic ?? []) if (await def.presentFor(db, agentId)) automatic.push(def);
+    return [...(await grantedTo(agentId)), ...automatic];
   }
 
   /** Roda `work` com o prazo da definição; devolve o que ele devolveu ou o motivo da falha. */
@@ -419,7 +437,7 @@ export function createToolPort(deps: {
         },
 
         async list() {
-          return (await grantedTo(run.agentId)).map((d) => ({
+          return (await availableTo(run.agentId)).map((d) => ({
             name: d.id,
             title: d.title,
             description: d.description,
@@ -431,7 +449,7 @@ export function createToolPort(deps: {
 
         async call(name, input, signal) {
           // A concessão é conferida na hora: o Admin pode tê-la retirado no meio da resposta.
-          const def = (await grantedTo(run.agentId)).find((d) => d.id === name);
+          const def = (await availableTo(run.agentId)).find((d) => d.id === name);
           // As da web rodam no cérebro: nunca por aqui (nem pelo endpoint MCP).
           if (!def || runsInBrain(def)) {
             return { content: `A Ferramenta ${name} não está disponível para você.`, isError: true };
