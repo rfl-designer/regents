@@ -6,6 +6,7 @@ import {
   type MeDto,
   type MemberSummaryDto,
   type MessageDto,
+  MY_CONNECTORS_PATH,
   mentionPattern,
   normalizeHandle,
   OPEN_STATES,
@@ -866,8 +867,21 @@ function Progress({
           .map((c) => (
             <p key={c.id} className="tool-failed">
               ⚠ {c.title} falhou: {c.reason}
+              {/* Só o autor recebe o atalho: a credencial que falta é a dele. */}
+              {c.connect && (
+                <>
+                  {" · "}
+                  <a href={MY_CONNECTORS_PATH}>Ligar {c.connect.name}</a>
+                </>
+              )}
             </p>
           ))}
+        {/* De quem foi a credencial usada num Conector de cada Membro ("usou o CRM de Ana"), uma vez por linha. */}
+        {[...new Set(e.tools.flatMap((c) => (c.used ? [c.used] : [])))].map((used) => (
+          <p key={used} className="hint">
+            {used}
+          </p>
+        ))}
         {/* O teto de turnos de Ferramenta: o Agente responde com o que tem (#53). */}
         {e.toolLimit && <p className="tool-failed">⚠ parou no limite de Ferramentas</p>}
         <p className="writing">

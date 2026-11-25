@@ -11,6 +11,7 @@ import type { Executions } from "./executions";
 import { type Env, isActiveAdmin, memberById, toMemberDto } from "./members";
 import { audienceOf } from "./participation";
 import type { Push } from "./push";
+import { forgetMemberCredentials } from "./tools/connectors";
 
 const { members, channels, channelParticipants, threadFollows } = schema;
 
@@ -84,6 +85,8 @@ export function memberAdminRoutes(deps: {
       if (check.target.role === "admin" && check.admins <= 1) return { kind: "last_admin" as const };
       // Quem volta, volta como Membro comum.
       await tx.update(members).set({ leftAt: clock.now(), role: "member" }).where(eq(members.id, id));
+      // As credenciais dele nos Conectores vão junto: quem volta liga de novo.
+      await forgetMemberCredentials(tx, id);
       return { kind: "removed" as const, left: await leaveClosedConversations(tx, id) };
     });
     if (result.kind === "not_admin") return c.json({ error: "not_admin" }, 403);

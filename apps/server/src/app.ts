@@ -147,7 +147,7 @@ export function createApp(deps: AppDeps) {
   const reading = createReading({ db, clock, events });
   const ledger = createKeyLedger({ db, clock, events, hooks });
   // Os Conectores trazem as Ferramentas deles ao catálogo, lidas a cada uso.
-  const connectors = createConnectors({ db, clock, secrets });
+  const connectors = createConnectors({ db, clock, secrets, events, notify: push.notify });
   // O GitHub, o Conector embutido (ADR 0010): as Ferramentas dele vêm depois das fixas.
   const github = createGitHub({ db, clock, secrets, config: deps.github });
   const tools = createToolPort({

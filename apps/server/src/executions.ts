@@ -26,7 +26,7 @@ import type { Reading } from "./reading";
 import { buildRouting, parseDecision, ROUTING_SCHEMA } from "./routing";
 import type { SecretBox } from "./secrets";
 import { recordFollows } from "./threads";
-import { type ToolPort, toolCallsOf } from "./tools/port";
+import { type ToolPort, toolCallsOf, withoutConnect } from "./tools/port";
 import { readWorkspaceKey } from "./workspace-key";
 
 const { executions, agents, channels, messages, accounts, approvalRequests } = schema;
@@ -1456,7 +1456,7 @@ async function selectViews(
       waitingTurn: (e.state === "queued" || e.state === "retrying") && waiting.has(e.id),
       yourAccount: null,
       replyMessageId: e.replyMessageId,
-      tools: tools.get(e.id) ?? [],
+      tools: withoutConnect(tools.get(e.id) ?? []),
       toolLimit: e.toolLimit,
     };
     // A Conta explica o que se vê quando outra coisa paga, espera ou não age no lugar dela.
@@ -1465,6 +1465,8 @@ async function selectViews(
       ...everyone,
       reason: reason && (e.authorReason ?? reason),
       yourAccount: explains ? yourAccount(accountStanding(account, now)) : null,
+      // Só o autor vê o atalho "Ligar <Conector>" de uma Ferramenta indisponível por falta da credencial dele.
+      tools: tools.get(e.id) ?? [],
     };
     return { everyone, author, authorId };
   });
