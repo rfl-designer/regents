@@ -281,12 +281,14 @@ export function conversationRoutes(deps: {
     const id = c.req.param("executionId");
     if (!conversation || !isUuid(id)) return c.json({ error: "not_found" }, 404);
     const [execution] = await db
-      .select({ id: schema.executions.id, authorMemberId: messages.authorMemberId })
+      .select({ id: schema.executions.id, kind: schema.executions.kind, authorMemberId: messages.authorMemberId })
       .from(schema.executions)
       .innerJoin(messages, eq(messages.id, schema.executions.originMessageId))
       .where(and(eq(schema.executions.id, id), eq(schema.executions.channelId, conversation.id)));
     if (!execution) return c.json({ error: "not_found" }, 404);
     if (execution.authorMemberId !== c.get("member").id) return c.json({ error: "not_author" }, 403);
+    // A extração da Memória não tem "Tentar de novo": a resposta já foi entregue (ADR 0013).
+    if (execution.kind === "memory") return c.json({ error: "not_retryable" }, 409);
     const queued = await executions.retry(execution.id);
     if (!queued) return c.json({ error: "not_failed" }, 409);
     return c.json(queued);
