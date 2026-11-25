@@ -1,5 +1,5 @@
 import type { ApprovalRequestDto, RejectApprovalInput } from "@shearim/contracts";
-import { and, asc, eq, type SQL } from "drizzle-orm";
+import { and, asc, eq, isNull, type SQL } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import type { Clock } from "./clock";
 import { findVisibleConversation } from "./conversations";
@@ -240,7 +240,8 @@ export function approvalRoutes(deps: {
     await db
       .update(approvalRequests)
       .set(outcome.ok ? { result: outcome.result } : { failure: outcome.reason, uncertain: outcome.uncertain ?? false })
-      .where(eq(approvalRequests.id, row.id));
+      // Se o servidor reiniciou no meio, a subida já deu o resultado como incerto e continuou.
+      .where(and(eq(approvalRequests.id, row.id), isNull(approvalRequests.result), isNull(approvalRequests.failure)));
     const approval = await publishApproval(db, events, row.id, "approval.updated");
     await deps.continueAfter(row.executionId, row.id);
     return c.json(approval);

@@ -764,4 +764,78 @@ describe("a escrita aprovada que não termina", () => {
     },
     LONGO,
   );
+
+  test(
+    "o servidor reinicia no meio da ação aprovada: ao subir, o Pedido fica com resultado incerto e a resposta continua, sem repetir a escrita",
+    async () => {
+      const lenta = escritaLenta();
+      const t = await testApp({ tools: { definitions: [...WORKSPACE_TOOLS, lenta.definition] } });
+      const { faro, geral } = await workspace(t);
+      const { origem, pedido } = await pedidoDaEscritaLenta(t, faro.id, geral.id, "Pode ter saído; confira.");
+      let acoes = 0;
+      const perform = lenta.definition.perform;
+      lenta.definition.perform = (...args) => {
+        acoes++;
+        return perform(...args);
+      };
+
+      // O servidor cai com a ação em curso: a aprovação já foi gravada, o resultado não.
+      void aprovar(t, pedido).catch(() => {});
+      await lenta.comecou;
+      await t.restart();
+
+      const incerto = "o servidor reiniciou durante a ação; pode ter sido feita — confira no GitHub";
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Pode ter saído; confira.");
+      expect((await pedidos(t, geral.id))[0]).toMatchObject({
+        state: "approved",
+        result: null,
+        failure: incerto,
+        uncertain: true,
+      });
+      expect(textoDe(respostas(t)[1]!)).toContain(`Bruno aprovou, mas o resultado é incerto: ${incerto}`);
+      // A escrita não foi repetida na subida.
+      expect(acoes).toBe(1);
+      expect(
+        (await (await t.as(juliana).get(`/api/conversations/${geral.id}/executions`)).json()) as ExecutionDto[],
+      ).toEqual([]);
+    },
+    LONGO,
+  );
+
+  test(
+    "o servidor cai entre a decisão e a continuação: ao subir, a continuação sai (na recusa e na aprovação já feita)",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t);
+      t.anthropic.reply(
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "Um." } }] },
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "Dois." } }] },
+      );
+      const primeira = await enviar(t, geral.id, "@Faro avisa um");
+      const recusado = await pedidoPendente(t, geral.id, 1);
+      const segunda = await enviar(t, geral.id, "@Faro avisa dois");
+      const aprovado = await pedidoPendente(t, geral.id, 2);
+
+      // A queda entre gravar a decisão (e o resultado da ação) e enfileirar a continuação não tem
+      // como ser provocada pela borda: a decisão gravada sem continuação é posta no banco.
+      await t.shutdown();
+      await t.db
+        .update(schema.approvalRequests)
+        .set({ state: "rejected", decidedAt: t.clock.now() })
+        .where(eq(schema.approvalRequests.id, recusado.id));
+      await t.db
+        .update(schema.approvalRequests)
+        .set({ state: "approved", decidedAt: t.clock.now(), result: "mensagem postada em #anuncios" })
+        .where(eq(schema.approvalRequests.id, aprovado.id));
+      t.anthropic.reply({ text: "Tudo bem, não avisei." }, { text: "Avisei." });
+      await t.restart();
+
+      const respostasNoGeral = [await respostaA(t, geral.id, primeira), await respostaA(t, geral.id, segunda)];
+      expect(respostasNoGeral.map((m) => m.body).sort()).toEqual(["Avisei.", "Tudo bem, não avisei."]);
+      const continuacoes = respostas(t).slice(2).map(textoDe).join("\n");
+      expect(continuacoes).toContain("Bruno recusou, sem dar motivo");
+      expect(continuacoes).toContain("Bruno aprovou, e o Shearim fez: mensagem postada em #anuncios");
+    },
+    LONGO,
+  );
 });
