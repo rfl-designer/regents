@@ -197,7 +197,8 @@ function handleSignals(run: FakeRun) {
       type: "result",
       subtype: "error_during_execution",
       is_error: true,
-      terminal_reason: "aborted_streaming",
+      // No meio de uma chamada MCP (o Pedido de aprovação, #51), o 2.1.332 sai com `aborted_tools`.
+      terminal_reason: inTool ? "aborted_tools" : "aborted_streaming",
       api_error_status: null,
       num_turns: 1,
       total_cost_usd: 0,
@@ -288,6 +289,8 @@ async function mcpClient() {
 }
 
 let lastToolResult = "";
+/** Uma chamada MCP está em curso (o `SIGINT` agora a interrompe). */
+let inTool = false;
 
 /**
  * O `tool_use`, a chamada pelo MCP e o `tool_result`, como no `stream-json` do Claude Code
@@ -318,7 +321,10 @@ async function toolStep(step: { name: string; input?: Record<string, unknown> })
   line({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name, input, caller }] } });
   let result: { content: string; isError: boolean };
   try {
-    const called = await conn.client.callTool({ name: step.name, arguments: input });
+    inTool = true;
+    const called = await conn.client.callTool({ name: step.name, arguments: input }).finally(() => {
+      inTool = false;
+    });
     const content = (called.content as { type: string; text?: string }[])
       .map((c) => (c.type === "text" ? (c.text ?? "") : ""))
       .join("");
