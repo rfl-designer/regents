@@ -31,6 +31,7 @@ import { resolve } from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { createApp } from "./app";
+import { approvalTtlFromEnv } from "./approvals";
 import { systemClock } from "./clock";
 import { connect, MEMORY } from "./db/connect";
 import { limitsFromEnv } from "./executions";
@@ -215,10 +216,12 @@ async function main(command: string | undefined) {
   let limits: ReturnType<typeof limitsFromEnv>;
   let toolTimeoutMs: number | undefined;
   let toolMaxTurns: number | undefined;
+  let approvalTtlMs: number | undefined;
   try {
     limits = limitsFromEnv(process.env);
     toolTimeoutMs = toolTimeoutFromEnv(process.env);
     toolMaxTurns = toolMaxTurnsFromEnv(process.env);
+    approvalTtlMs = approvalTtlFromEnv(process.env);
   } catch (err) {
     fail((err as Error).message);
   }
@@ -240,6 +243,8 @@ async function main(command: string | undefined) {
     limits,
     // O prazo padrão de uma chamada de Ferramenta (60 s) e o teto de turnos de Ferramenta (20).
     tools: { timeoutMs: toolTimeoutMs, maxTurns: toolMaxTurns },
+    // O prazo do Pedido de aprovação (24 h).
+    approvals: { ttlMs: approvalTtlMs },
   });
   // O par VAPID nasce na primeira subida (e daí em diante é sempre o mesmo, guardado no banco).
   await shearim.push.ensureKeys();

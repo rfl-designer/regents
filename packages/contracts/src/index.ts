@@ -347,7 +347,10 @@ export interface ConversationUnreadDto {
 export interface UnreadDto {
   /** Só as conversas com alguma não-lida. */
   conversations: ConversationUnreadDto[];
-  /** A soma de todas as não-lidas das conversas do Membro: o badge do ícone. */
+  /**
+   * O badge do ícone: a soma de todas as não-lidas das conversas do Membro e dos Pedidos de
+   * aprovação que esperam a decisão dele.
+   */
   total: number;
   /** Não-lidas que mencionam o Membro, em todas as conversas. */
   mentions: number;
@@ -600,8 +603,11 @@ export type ExecutionState =
    * continuação entra na fila para terminar a resposta.
    */
   | "awaiting_approval";
-/** Os estados em que a execução ainda não terminou: o autor pode cancelar. */
-export const OPEN_STATES: readonly ExecutionState[] = ["queued", "running", "retrying"];
+/**
+ * Os estados em que a execução ainda não terminou: o autor pode cancelar. Esperando aprovação
+ * conta como aberta: cancelar a mensagem cancela o Pedido de aprovação junto.
+ */
+export const OPEN_STATES: readonly ExecutionState[] = ["queued", "running", "retrying", "awaiting_approval"];
 
 /**
  * O passo de uma execução em andamento. `writing` é a bolha "escrevendo"; `deciding` é o

@@ -9,7 +9,7 @@ import { type AnyColumn, and, asc, desc, eq, gt, inArray, lte, min, ne, or, type
 import { alias } from "drizzle-orm/pg-core";
 import { type AccountStanding, accountStanding } from "./accounts";
 import type { Agent } from "./agents";
-import { continuationNote, insertApproval, publishApproval } from "./approvals";
+import { APPROVAL_EXPIRED_REASON, continuationNote, insertApproval, publishApproval } from "./approvals";
 import { ROUTING_MODEL } from "./articuladora";
 import type { Clock } from "./clock";
 import { buildContext, type Call } from "./context";
@@ -29,7 +29,7 @@ import { recordFollows } from "./threads";
 import { type ToolPort, toolCallsOf } from "./tools/port";
 import { readWorkspaceKey } from "./workspace-key";
 
-const { executions, agents, channels, messages, accounts } = schema;
+const { executions, agents, channels, messages, accounts, approvalRequests } = schema;
 type Row = typeof executions.$inferSelect;
 /**
  * O tipo de uma execução: `mention` (Agente mencionado), `dm` (o Agente de uma DM com Agente),
@@ -216,8 +216,8 @@ export function createExecutions(deps: {
   hooks?: ExecutionHooks;
   /** A resposta conta como não-lida para quem participa da conversa. */
   reading: Pick<Reading, "messageCreated">;
-  /** O push da resposta (#32), pelo mesmo caminho da mensagem de pessoa. */
-  push: Pick<Push, "messageCreated">;
+  /** O push da resposta (#32), pelo mesmo caminho da mensagem de pessoa, e o do Pedido de aprovação (#52). */
+  push: Pick<Push, "messageCreated" | "approvalRequested">;
   /** O gasto na Chave por Agente e por mês, o orçamento e os incidentes da Chave (#28). */
   ledger: KeyLedger;
   /** A porta de Ferramentas: as Ferramentas de cada execução, com o passo no Andamento. */
@@ -226,6 +226,8 @@ export function createExecutions(deps: {
   limits?: Partial<ExecutionLimits>;
   /** O teto de turnos de Ferramenta de uma resposta (padrão: `MAX_TOOL_TURNS`, 20; #53). */
   maxToolTurns?: number;
+  /** O prazo do Pedido de aprovação (padrão: 24 h, `APPROVAL_TTL_MS`; `SHEARIM_APPROVAL_TTL_H`). */
+  approvalTtlMs?: number;
 }): Executions {
   const { db, clock, events, model, secrets, hooks, reading, ledger, push } = deps;
   const limits: ExecutionLimits = { ...DEFAULT_LIMITS, ...deps.limits };
@@ -648,16 +650,37 @@ export function createExecutions(deps: {
    * interrompida. `reason` nulo é o cancelamento por quem escreveu; com motivo, foi o Shearim.
    */
   async function cancelWhere(where: SQL, reason: string | null): Promise<ExecutionDto[]> {
-    const cancelled = await db
-      .update(executions)
-      .set({ ...leaving("cancelled", clock.now()), reason, authorReason: null, held: false, heldUntil: null })
-      .where(and(where, inArray(executions.state, [...OPEN_STATES])))
-      .returning({ id: executions.id });
+    const now = clock.now();
+    // A execução esperando aprovação e o Pedido dela juntos: uma decisão que chegou antes ganha.
+    const { cancelled, approvals } = await db.transaction(async (tx) => {
+      const cancelled = await tx
+        .update(executions)
+        .set({ ...leaving("cancelled", now), reason, authorReason: null, held: false, heldUntil: null })
+        .where(and(where, inArray(executions.state, [...OPEN_STATES])))
+        .returning({ id: executions.id });
+      const approvals = cancelled.length
+        ? await tx
+            .update(approvalRequests)
+            .set({ state: "cancelled", decidedAt: now })
+            .where(
+              and(
+                inArray(
+                  approvalRequests.executionId,
+                  cancelled.map((c) => c.id),
+                ),
+                eq(approvalRequests.state, "pending"),
+              ),
+            )
+            .returning({ id: approvalRequests.id })
+        : [];
+      return { cancelled, approvals };
+    });
     for (const { id } of cancelled) {
       waiting.delete(id);
       running.get(id)?.abort("cancelled" satisfies Interruption);
       await publish(id);
     }
+    for (const { id } of approvals) await publishApproval(db, events, id, "approval.updated");
     if (cancelled.length === 0) return [];
     // A que saiu da fila pode ter sido a que segurava a série.
     wake();
@@ -762,7 +785,7 @@ export function createExecutions(deps: {
         },
         async approvalRequested({ tool, action, summary }) {
           // O Pedido e o fim da execução juntos: um cancelamento que chegou antes ganha, e nada fica.
-          const id = await db.transaction(async (tx) => {
+          const created = await db.transaction(async (tx) => {
             if (!(await transition(job.id, "awaiting_approval", {}, { tx }))) return undefined;
             return insertApproval(tx, {
               executionId: job.id,
@@ -774,13 +797,16 @@ export function createExecutions(deps: {
               action,
               summary,
               now: clock.now(),
+              ttlMs: deps.approvalTtlMs,
             });
           });
-          if (!id) return false;
+          if (!created) return false;
+          const { id, expiresAt } = created;
+          armExpiry(expiresAt);
           // Encerra pelo caminho do cancelamento, com o motivo próprio: o texto parcial é descartado.
           running.get(job.id)?.abort("approval" satisfies Interruption);
           await publish(job.id);
-          await publishApproval(db, events, id, "approval.created");
+          push.approvalRequested(await publishApproval(db, events, id, "approval.created"));
           return true;
         },
       },
@@ -1078,7 +1104,61 @@ export function createExecutions(deps: {
     arm();
   }
 
+  /**
+   * A expiração dos Pedidos de aprovação (ADR 0011): um alarme no relógio para o próximo pendente
+   * a vencer. Vencido, o Pedido passa a expirado e a execução que o esperava termina em "a
+   * aprovação expirou", sem continuação. Ao subir, expira o que venceu com o servidor parado.
+   */
+  let expiryAlarm: { at: number; cancel: () => void } | undefined;
+  function armExpiry(at: Date) {
+    if (stopping || (expiryAlarm && expiryAlarm.at <= at.getTime())) return;
+    expiryAlarm?.cancel();
+    const cancel = clock.after(Math.max(0, at.getTime() - clock.now().getTime()), () => {
+      expiryAlarm = undefined;
+      void expireApprovals().catch((err) => console.error("shearim: a expiração dos Pedidos falhou", err));
+    });
+    expiryAlarm = { at: at.getTime(), cancel };
+  }
+
+  async function expireApprovals() {
+    const now = clock.now();
+    // O Pedido e o fim da execução juntos: uma decisão que chegou antes ganha (só sai o pendente).
+    const expired = await db.transaction(async (tx) => {
+      const rows = await tx
+        .update(approvalRequests)
+        .set({ state: "expired", decidedAt: now })
+        .where(and(eq(approvalRequests.state, "pending"), lte(approvalRequests.expiresAt, now)))
+        .returning({ id: approvalRequests.id, executionId: approvalRequests.executionId });
+      if (rows.length > 0) {
+        await tx
+          .update(executions)
+          .set({ ...leaving("cancelled", now), reason: APPROVAL_EXPIRED_REASON, authorReason: null })
+          .where(
+            and(
+              inArray(
+                executions.id,
+                rows.map((r) => r.executionId),
+              ),
+              eq(executions.state, "awaiting_approval"),
+            ),
+          );
+      }
+      return rows;
+    });
+    for (const { id, executionId } of expired) {
+      await publish(executionId);
+      await publishApproval(db, events, id, "approval.updated");
+    }
+    const [next] = await db
+      .select({ at: min(approvalRequests.expiresAt) })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.state, "pending"));
+    if (next?.at) armExpiry(new Date(next.at));
+  }
+
   async function stop() {
+    expiryAlarm?.cancel();
+    expiryAlarm = undefined;
     monthTurn?.();
     monthTurn = undefined;
     stopping = true;
@@ -1150,6 +1230,7 @@ export function createExecutions(deps: {
       if (loop) return;
       stopping = false;
       watchMonthTurn();
+      void expireApprovals().catch((err) => console.error("shearim: a expiração dos Pedidos falhou", err));
       loop = work();
     },
 

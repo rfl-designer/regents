@@ -74,6 +74,8 @@ export interface AppDeps {
    * (padrão: as Ferramentas do Workspace; os testes juntam Ferramentas que travam ou falham).
    */
   tools?: { timeoutMs?: number; maxTurns?: number; definitions?: readonly ToolDefinition[] };
+  /** O Pedido de aprovação: o prazo até expirar (`SHEARIM_APPROVAL_TTL_H`; padrão 24 h). */
+  approvals?: { ttlMs?: number };
 }
 
 export type AppHooks = JoinRequestHooks & ExecutionHooks & KeyHooks & AccountHooks;
@@ -159,6 +161,7 @@ export function createApp(deps: AppDeps) {
     tools,
     limits: deps.limits,
     maxToolTurns: deps.tools?.maxTurns,
+    approvalTtlMs: deps.approvals?.ttlMs,
   });
   // A volta da Conta (ou a troca da Chave, ou do orçamento) solta quem espera por ela na fila.
   const reconsider = (memberId?: string) => void executions.reconsider(memberId).catch(() => {});
