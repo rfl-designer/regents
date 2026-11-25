@@ -29,6 +29,7 @@ import { FAKE_LOGIN_CODE, type FakeClaude, fakeClaude } from "./fake-claude";
 import { startFakeGitHub } from "./fakes/github-api";
 import { startFakeMessagesApi } from "./fakes/messages-api";
 import { type Delivery, type FakeSubscription, type PushCollector, startPushCollector } from "./fakes/push-collector";
+import { type FakeRemoteTool, startRemoteMcp } from "./fakes/remote-mcp";
 
 // ---------- limpeza automática (o preload roda `runCleanups` no afterEach) ----------
 
@@ -363,6 +364,13 @@ export async function fakeGitHub() {
   return github;
 }
 
+/** Um servidor MCP remoto falso (um Conector), que fecha sozinho no fim do teste. */
+export function remoteMcp(opts: { token: string; tools: FakeRemoteTool[] }) {
+  const server = startRemoteMcp(opts);
+  onCleanup(() => server.stop());
+  return server;
+}
+
 /** O coletor de push (o dublê dos push services), que fecha sozinho no fim do teste. */
 export async function pushCollector() {
   const collector = await startPushCollector();
@@ -411,6 +419,8 @@ export async function testApp(
     tools?: AppDeps["tools"];
     /** Onde fica o GitHub (os testes apontam para o falso, `fakeGitHub().config`). */
     github?: AppDeps["github"];
+    /** O prazo do Pedido de aprovação (padrão: 24 h). */
+    approvals?: AppDeps["approvals"];
   } = {},
 ) {
   const db = opts.db ?? (await testDb()).db;
@@ -436,6 +446,7 @@ export async function testApp(
       limits: opts.limits,
       tools: opts.tools,
       github: opts.github,
+      approvals: opts.approvals,
     });
     await built.start();
     return built;

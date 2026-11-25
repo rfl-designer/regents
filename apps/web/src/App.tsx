@@ -20,6 +20,7 @@ import { Avatar } from "./Avatar";
 import { ApiFailure, api } from "./api";
 import { ChannelSettings } from "./ChannelSettings";
 import { ChannelView } from "./ChannelView";
+import { ConnectorsSettings } from "./ConnectorsAdmin";
 import { type Notice, notice, reachOf, useConnectionNotice, useOnline } from "./connection";
 import { DevicesView } from "./DevicesView";
 import { DmView } from "./DmView";
@@ -88,6 +89,7 @@ const SCREENS: Record<Screen, { path?: string; admin?: true; render(ctx: ScreenC
   context: { admin: true, render: () => <WorkspaceContextSettings /> },
   settings: { admin: true, render: () => <ChannelSettings /> },
   agents: { path: AGENTS_PATH, admin: true, render: () => <AgentsSettings /> },
+  connectors: { admin: true, render: () => <ConnectorsSettings /> },
   key: { path: WORKSPACE_KEY_PATH, admin: true, render: () => <WorkspaceKeySettings /> },
   github: { path: GITHUB_PATH, admin: true, render: () => <GitHubSettings /> },
   installation: {

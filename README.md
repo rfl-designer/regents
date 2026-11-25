@@ -50,6 +50,7 @@ deploy/release.sh 1.2.3 dist   # empacota a release (o workflow de release roda;
 | `SHEARIM_MAX_PER_ACCOUNT` | `2` | Respostas ao mesmo tempo pela Conta de um Membro (o roteamento fica fora). No compose, vem do `.env`. |
 | `SHEARIM_MAX_ON_KEY` | `4` | Execuções ao mesmo tempo pela Chave do Workspace (roteamento incluso). |
 | `SHEARIM_TOOL_TIMEOUT_S` | `60` | Prazo de uma chamada de Ferramenta sem prazo próprio (ADR 0003): estourado, vira falha da Ferramenta com motivo e a resposta segue. |
+| `SHEARIM_APPROVAL_TTL_H` | `24` | Horas (aceita fração, ex. `0.5`) até um Pedido de aprovação sem decisão expirar (ADR 0011): o Andamento termina em "a aprovação expirou", sem continuação. |
 | `SHEARIM_MAX_PROCESSES` | `8` | Processos `claude -p` ao mesmo tempo no host: todas as execuções pela Conta, roteamento incluso. Valor que não é inteiro maior que zero impede a subida. |
 
 ## Layout
@@ -439,6 +440,7 @@ Uma Ferramenta de escrita (`WriteTool`, `access: "write"`) não roda durante a r
 - **Escritas do Workspace** (`tools/workspace-writes.ts`): `postar_mensagem { conversa, texto }` e `responder_thread { mensagem, texto }`. Alcance: o Agente participa da conversa e o autor pode escrever nela (conferido no `prepare` e de novo no `perform`). A mensagem sai pelo `createAgentPoster` (`src/agent-posts.ts`): do Agente, sem Desfecho e sem acionar Agente.
 - **Rotas:** `GET /api/conversations/:id/approvals` (quem vê a conversa), `POST .../approvals/:approvalId/approve` e `.../reject` `{ reason? }` (só o autor: `403 not_author`; já decidido: `409 not_pending`). Eventos `approval.created` e `approval.updated` para quem vê a conversa.
 - **No PWA:** o cartão "Pedido de aprovação de <Agente>" sob a mensagem de origem; "Aprovar" e "Recusar" só para o autor. No e2e, `[postar]` no texto faz o Agente com "postar mensagem" pedir para postar no #geral.
+- **Ninguém decide (#52):** um alarme no relógio injetável (`executions.ts`, `expireApprovals`) passa o pendente vencido (`SHEARIM_APPROVAL_TTL_H`, 24 h; no e2e, 45 s) a `expired`, e a execução que esperava a `cancelled` com o motivo "a aprovação expirou", sem continuação; ao subir, expira o que venceu com o servidor parado. `awaiting_approval` está em `OPEN_STATES`: cancelar a mensagem (ou o autor sair do Workspace) cancela o Pedido junto. O autor recebe o push "<Agente> pede sua aprovação" (`push.approvalRequested`, `Urgency: high`, `tag` por Pedido), e o Pedido pendente conta no `UnreadDto.total` dele (o badge) até sair de pendente; `publishApproval` manda o `unread.updated` ao autor.
 
 ### A Articuladora e o Desfecho (#22, ADR 0004)
 

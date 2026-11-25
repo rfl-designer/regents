@@ -4,7 +4,9 @@
  *
  * - O contexto fixo vai em `--system-prompt` (no lugar do prompt de programação do Claude Code);
  *   as mensagens vão pelo stdin, que fecha em seguida.
- * - As tools nativas, os settings e os slash commands ficam desligados. O MCP também, menos o
+ * - As tools nativas, os settings e os slash commands ficam desligados, menos o WebSearch e o
+ *   WebFetch quando o Agente tem as Ferramentas da web (os blocos de tool deles viram passos no
+ *   Andamento, `nativeWebSteps`). O MCP também, menos o
  *   endpoint do próprio Shearim (`tools/mcp.ts`) quando a execução tem Ferramentas: ele vai sozinho
  *   no `--mcp-config` (com `--strict-mcp-config`), e as Ferramentas dele são liberadas sem pergunta
  *   de permissão (`--allowedTools mcp__shearim`). O roteamento nunca tem Ferramentas (ADR 0009).
@@ -18,6 +20,8 @@
  */
 import { ClaudeMissing, type ClaudeProcess, drain, type ProcessTracker, spawnClaude } from "../accounts/claude-cli";
 import { MCP_SERVER_NAME, type McpConfig, type McpEndpoint, type McpSession } from "../tools/mcp";
+import type { ExecutionTools } from "../tools/port";
+import { fetchLabel, WEB_FETCH, WEB_SEARCH } from "../tools/web";
 import {
   type ModelBrain,
   type ModelEvent,
@@ -64,12 +68,19 @@ export function accountBrain(opts: {
         return;
       }
 
-      if (request.tools && !opts.mcp) throw new Error("accountBrain sem endpoint MCP recebeu Ferramentas");
+      const offered = request.tools ? await request.tools.list() : [];
+      // As da web são as tools nativas do Claude Code; as outras vão pelo endpoint MCP do Shearim.
+      const native = offered.flatMap((t) => (t.origin === "web" && NATIVE_WEB[t.name] ? [NATIVE_WEB[t.name]!] : []));
+      const viaMcp = request.tools && offered.some((t) => t.origin !== "web") ? request.tools : undefined;
+      if (viaMcp && !opts.mcp) throw new Error("accountBrain sem endpoint MCP recebeu Ferramentas");
+      if (signal.aborted) return;
       // O token da execução vale enquanto o `claude -p` dela roda.
-      const session: McpSession | undefined = request.tools ? opts.mcp!.open(request.tools, signal) : undefined;
+      const session: McpSession | undefined = viaMcp ? opts.mcp!.open(viaMcp, signal) : undefined;
       let proc: ClaudeProcess;
       try {
-        proc = opts.procs.track(spawnClaude(opts.claudeBin, argsFor(request, session?.config), payer.configDir));
+        proc = opts.procs.track(
+          spawnClaude(opts.claudeBin, argsFor(request, session?.config, native), payer.configDir),
+        );
       } catch (err) {
         session?.close();
         if (!(err instanceof ClaudeMissing)) throw err;
@@ -94,11 +105,19 @@ export function accountBrain(opts: {
       void drain(proc.stderr);
 
       const reading = streamReading(request);
+      const web = nativeWebSteps(request.tools);
       try {
         for await (const raw of lines(proc.stdout)) {
           // Depois do abort, o resto (o `result` do SIGINT) é drenado sem virar evento.
           if (signal.aborted) continue;
-          const event = reading.read(raw);
+          let line: Json;
+          try {
+            line = JSON.parse(raw);
+          } catch {
+            continue;
+          }
+          await web.see(line);
+          const event = reading.read(line);
           if (event) yield event;
           // O `result` é o fim. Um processo que não sai depois dele é encerrado pelo mesmo caminho.
           if (reading.finished()) {
@@ -112,6 +131,7 @@ export function accountBrain(opts: {
         // Quem consome parou de ler antes do fim: encerra pelo mesmo caminho.
         if (proc.exitCode === null && proc.signalCode === null) stop();
         await stopped;
+        await web.close();
         session?.close();
       }
       if (signal.aborted) return;
@@ -120,7 +140,10 @@ export function accountBrain(opts: {
   };
 }
 
-function argsFor(request: ModelRequest, mcp?: McpConfig): string[] {
+/** A tool nativa do Claude Code de cada Ferramenta da web: as únicas nativas que se ligam. */
+const NATIVE_WEB: Record<string, string> = { [WEB_SEARCH]: "WebSearch", [WEB_FETCH]: "WebFetch" };
+
+function argsFor(request: ModelRequest, mcp: McpConfig | undefined, native: string[]): string[] {
   const args = [
     "-p",
     "--output-format",
@@ -129,7 +152,7 @@ function argsFor(request: ModelRequest, mcp?: McpConfig): string[] {
     "--include-partial-messages",
     "--no-session-persistence",
     "--tools",
-    "",
+    native.join(","),
     "--setting-sources",
     "",
     "--strict-mcp-config",
@@ -140,7 +163,10 @@ function argsFor(request: ModelRequest, mcp?: McpConfig): string[] {
     request.system,
   ];
   if (request.output) args.push("--json-schema", JSON.stringify(request.output.schema));
-  if (mcp) args.push("--mcp-config", JSON.stringify(mcp), "--allowedTools", `mcp__${MCP_SERVER_NAME}`);
+  if (mcp) args.push("--mcp-config", JSON.stringify(mcp));
+  // Liberadas sem pergunta de permissão: as do Shearim e as nativas ligadas, nenhuma outra.
+  const allowed = [...(mcp ? [`mcp__${MCP_SERVER_NAME}`] : []), ...native];
+  if (allowed.length) args.push("--allowedTools", allowed.join(","));
   return args;
 }
 
@@ -211,13 +237,7 @@ function streamReading(request: ModelRequest) {
     /** Já chegou o `result`. */
     finished: () => result !== undefined,
 
-    read(raw: string): ModelEvent | undefined {
-      let line: Json;
-      try {
-        line = JSON.parse(raw);
-      } catch {
-        return undefined;
-      }
+    read(line: Json): ModelEvent | undefined {
       if (line.type === "stream_event") {
         const raw = line.event as Json | undefined;
         // Um turno novo do modelo (depois de uma Ferramenta): o texto dele vem depois de uma linha
@@ -287,6 +307,49 @@ function streamReading(request: ModelRequest) {
         return accountFailure("a resposta parou no meio", "o Claude Code parou sem terminar a resposta", true);
       }
       return failure(category, str(result.terminal_reason), num(result.api_error_status));
+    },
+  };
+}
+
+/**
+ * Os passos do WebSearch e do WebFetch no Andamento: o `tool_use` da linha `assistant` (com a
+ * entrada inteira, para o rótulo ter o domínio) começa o passo, e o `tool_result` da linha `user`
+ * o termina. O motivo da falha é neutro: o texto do Claude Code revelaria a Conta a todos.
+ */
+function nativeWebSteps(tools: ExecutionTools | undefined) {
+  const running = new Map<string, { finish: (failure?: string) => Promise<void>; failure: string }>();
+  const blocks = (line: Json) => {
+    const content = (line.message as Json | undefined)?.content;
+    return Array.isArray(content) ? (content as Json[]) : [];
+  };
+  return {
+    async see(line: Json) {
+      if (!tools) return;
+      if (line.type === "assistant") {
+        for (const block of blocks(line)) {
+          if (block.type !== "tool_use" || typeof block.id !== "string") continue;
+          const input = (block.input ?? {}) as Json;
+          if (block.name === "WebSearch") {
+            const finish = await tools.track(WEB_SEARCH, "buscando na web");
+            running.set(block.id, { finish, failure: "a busca não deu certo" });
+          } else if (block.name === "WebFetch") {
+            const finish = await tools.track(WEB_FETCH, fetchLabel(input.url));
+            running.set(block.id, { finish, failure: "a página não abriu" });
+          }
+        }
+      } else if (line.type === "user") {
+        for (const block of blocks(line)) {
+          const step = block.type === "tool_result" ? running.get(String(block.tool_use_id)) : undefined;
+          if (!step) continue;
+          running.delete(String(block.tool_use_id));
+          await step.finish(block.is_error === true ? step.failure : undefined);
+        }
+      }
+    },
+    /** O processo acabou com passos sem resultado: terminam em falha, nunca "rodando" para sempre. */
+    async close() {
+      for (const step of running.values()) await step.finish("a resposta parou no meio");
+      running.clear();
     },
   };
 }

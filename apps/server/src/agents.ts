@@ -211,6 +211,7 @@ export function toAgentDto(
     model: a.model as AgentModel,
     builtin: a.builtin,
     tools: opts.tools,
+    reach: reachLines(opts.tools),
   };
   if (opts.admin) dto.instructions = a.instructions;
   if (opts.admin && opts.keySpendUsd !== undefined) {
@@ -218,4 +219,11 @@ export function toAgentDto(
     Object.assign(dto, { monthlyBudgetUsd, keySpendUsd, overBudget });
   }
   return dto;
+}
+
+/** "acessa CRM com a credencial do Workspace": uma linha por Conector das Ferramentas dele. */
+export function reachLines(tools: readonly AgentToolSummaryDto[]): string[] {
+  const names = new Set<string>();
+  for (const t of tools) if (t.connector?.credential === "workspace") names.add(t.connector.name);
+  return [...names].map((name) => `acessa ${name} com a credencial do Workspace`);
 }

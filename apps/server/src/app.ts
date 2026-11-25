@@ -35,9 +35,11 @@ import { createPush, type PushConfig } from "./push";
 import { createReading, unreadOf } from "./reading";
 import type { SecretBox } from "./secrets";
 import { threadRoutes } from "./threads";
+import { createConnectors } from "./tools/connectors";
 import { createMcpEndpoint } from "./tools/mcp";
 import { createToolPort, type ToolDefinition } from "./tools/port";
 import { agentToolRoutes } from "./tools/routes";
+import { WEB_TOOLS } from "./tools/web";
 import { WORKSPACE_TOOLS } from "./tools/workspace";
 import { workspaceContextRoutes } from "./workspace-context";
 import { workspaceKeyRoutes } from "./workspace-key";
@@ -77,6 +79,8 @@ export interface AppDeps {
   tools?: { timeoutMs?: number; definitions?: readonly ToolDefinition[] };
   /** Onde fica o GitHub (padrão: github.com). Os testes apontam para o falso. */
   github?: Partial<GitHubConfig>;
+  /** O Pedido de aprovação: o prazo até expirar (`SHEARIM_APPROVAL_TTL_H`; padrão 24 h). */
+  approvals?: { ttlMs?: number };
 }
 
 export type AppHooks = JoinRequestHooks & ExecutionHooks & KeyHooks & AccountHooks;
@@ -141,12 +145,15 @@ export function createApp(deps: AppDeps) {
   });
   const reading = createReading({ db, clock, events });
   const ledger = createKeyLedger({ db, clock, events, hooks });
-  // O GitHub, o Conector embutido (ADR 0010): as Ferramentas dele vêm depois das do Workspace.
+  // Os Conectores trazem as Ferramentas deles ao catálogo, lidas a cada uso.
+  const connectors = createConnectors({ db, clock, secrets });
+  // O GitHub, o Conector embutido (ADR 0010): as Ferramentas dele vêm depois das fixas.
   const github = createGitHub({ db, clock, secrets, config: deps.github });
   const tools = createToolPort({
     db,
     clock,
-    definitions: [...(deps.tools?.definitions ?? WORKSPACE_TOOLS), ...githubTools(github)],
+    definitions: [...(deps.tools?.definitions ?? [...WORKSPACE_TOOLS, ...WEB_TOOLS]), ...githubTools(github)],
+    extra: connectors.definitions,
     timeoutMs: deps.tools?.timeoutMs,
   });
   // As mensagens novas (de pessoa e as respostas de Agente) vão ao push pelo mesmo `messageCreated`.
@@ -163,6 +170,7 @@ export function createApp(deps: AppDeps) {
     ledger,
     tools,
     limits: deps.limits,
+    approvalTtlMs: deps.approvals?.ttlMs,
   });
   // A volta da Conta (ou a troca da Chave, ou do orçamento) solta quem espera por ela na fila.
   const reconsider = (memberId?: string) => void executions.reconsider(memberId).catch(() => {});
@@ -231,6 +239,7 @@ export function createApp(deps: AppDeps) {
   app.route("/api", accounts.routes);
   app.route("/api", agentRoutes({ db, clock, ledger, tools, onBudgetChanged: () => reconsider() }));
   app.route("/api", agentToolRoutes({ db, tools }));
+  app.route("/api", connectors.routes);
   app.route(
     "/api",
     approvalRoutes({

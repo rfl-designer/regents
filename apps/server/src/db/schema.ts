@@ -641,9 +641,57 @@ export const installationAlerts = pgTable(
 // ---------- Ferramentas (Spec #44) ----------
 
 /**
- * As Ferramentas concedidas a cada Agente, pelo Admin. `tool` é o id da Ferramenta no catálogo
- * (`tools/catalog.ts`); as de um Conector ganham, quando existirem, a coluna do Conector (com a
- * remoção em cascata: remover o Conector tira as concessões dele).
+ * Os Conectores (Spec #44): servidores MCP remotos que o Admin liga ao Workspace. `key` é o prefixo
+ * dos ids das Ferramentas dele (`crm__buscar_cliente`), tirado do nome. No modo do Workspace, o
+ * token vai cifrado com a chave mestra, como a Chave; `credentialState` vira `refused` quando o
+ * servidor o recusa (401), até o Admin colar outro.
+ */
+export const connectors = pgTable(
+  "connectors",
+  {
+    id: uuid().primaryKey(),
+    name: text().notNull(),
+    key: text().notNull().unique(),
+    /** `mcp`: um servidor MCP remoto. */
+    kind: text().notNull(),
+    url: text().notNull(),
+    /** `workspace`: uma credencial só, a do Workspace. */
+    credentialMode: text().notNull(),
+    tokenCiphertext: text(),
+    tokenIv: text(),
+    /** `ok` ou `refused`. */
+    credentialState: text().notNull(),
+    refusedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [uniqueIndex("connectors_name_lower").on(sql`lower(${t.name})`)],
+);
+
+/**
+ * O catálogo de cada Conector, como o `tools/list` dele o devolveu da última vez (relido quando o
+ * Admin abre o Conector). `tool` é o id no Shearim; `name`, o do servidor. Só `readOnly` é leitura.
+ */
+export const connectorTools = pgTable(
+  "connector_tools",
+  {
+    tool: text().primaryKey(),
+    connectorId: uuid()
+      .notNull()
+      .references(() => connectors.id, { onDelete: "cascade" }),
+    position: integer().notNull(),
+    name: text().notNull(),
+    title: text().notNull(),
+    description: text().notNull(),
+    inputSchema: jsonb().$type<Record<string, unknown>>().notNull(),
+    readOnly: boolean().notNull(),
+  },
+  (t) => [index().on(t.connectorId, t.position)],
+);
+
+/**
+ * As Ferramentas concedidas a cada Agente, pelo Admin. `tool` é o id da Ferramenta no catálogo;
+ * as de um Conector levam a coluna do Conector, com a remoção em cascata: remover o Conector tira
+ * as concessões dele de todos os Agentes.
  */
 export const agentTools = pgTable(
   "agent_tools",
@@ -652,6 +700,7 @@ export const agentTools = pgTable(
       .notNull()
       .references(() => agents.id, { onDelete: "cascade" }),
     tool: text().notNull(),
+    connectorId: uuid().references(() => connectors.id, { onDelete: "cascade" }),
     grantedAt: timestamp({ withTimezone: true }).notNull(),
   },
   (t) => [primaryKey({ columns: [t.agentId, t.tool] })],

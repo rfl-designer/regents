@@ -82,6 +82,7 @@ services:
       SHEARIM_MAX_ON_KEY: ${SHEARIM_MAX_ON_KEY:-}
       SHEARIM_MAX_PROCESSES: ${SHEARIM_MAX_PROCESSES:-}
       SHEARIM_TOOL_TIMEOUT_S: ${SHEARIM_TOOL_TIMEOUT_S:-}
+      SHEARIM_APPROVAL_TTL_H: ${SHEARIM_APPROVAL_TTL_H:-}
     secrets:
       - postgres_password
       - master_key

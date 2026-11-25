@@ -97,7 +97,8 @@ export function createMcpEndpoint(): McpEndpoint {
       case "ping":
         return { jsonrpc: "2.0", id, result: {} };
       case "tools/list": {
-        const specs = await session.tools.list();
+        // As da web rodam no próprio Claude Code (WebSearch, WebFetch), não por aqui.
+        const specs = (await session.tools.list()).filter((s) => s.origin !== "web");
         return {
           jsonrpc: "2.0",
           id,

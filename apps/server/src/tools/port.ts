@@ -1,4 +1,11 @@
-import type { AgentToolSummaryDto, MessageDto, ToolAccess, ToolCallDto, ToolOrigin } from "@shearim/contracts";
+import type {
+  AgentToolSummaryDto,
+  MessageDto,
+  ToolAccess,
+  ToolCallDto,
+  ToolConnectorDto,
+  ToolOrigin,
+} from "@shearim/contracts";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
@@ -66,6 +73,8 @@ interface ToolBase {
   /** Para o modelo e para o Admin. */
   description: string;
   origin: ToolOrigin;
+  /** Só nas de um Conector: qual, e de quem é a credencial (a concessão aponta para ele). */
+  connector?: ToolConnectorDto;
   /** O JSON Schema da entrada. */
   inputSchema: Record<string, unknown>;
   /** O prazo desta Ferramenta (padrão: o da Instalação). */
@@ -99,8 +108,20 @@ export interface WriteTool extends ToolBase {
   perform(ctx: WriteContext, action: Record<string, unknown>, signal: AbortSignal): Promise<string>;
 }
 
+/**
+ * Uma Ferramenta que roda no próprio cérebro, não na porta (as da web): pela Chave, uma server tool
+ * da Messages API; pela Conta, uma tool nativa do Claude Code. A porta só a concede, a lista e grava
+ * os passos que o cérebro avisa (`ExecutionTools.track`).
+ */
+export interface BrainTool extends ToolBase {
+  access: "read";
+  runsIn: "brain";
+}
+
 /** Uma Ferramenta do catálogo: o que o Admin concede e o que a porta executa. */
-export type ToolDefinition = ReadTool | WriteTool;
+export type ToolDefinition = ReadTool | WriteTool | BrainTool;
+
+const runsInBrain = (def: ToolDefinition): def is BrainTool => "runsIn" in def;
 
 /** Uma Ferramenta como o cérebro a oferece ao modelo. */
 export interface ToolSpec {
@@ -127,6 +148,12 @@ export interface ExecutionTools {
    * voltam como `isError` com o motivo, e a resposta segue. `signal` é o da execução.
    */
   call(name: string, input: unknown, signal: AbortSignal): Promise<ToolResult>;
+  /**
+   * Um uso de Ferramenta que roda no cérebro (as da web): grava o começo com o rótulo ("abrindo
+   * exemplo.com"), avisa o Andamento e devolve como terminar (`failure`: o motivo). Vale o prazo da
+   * Ferramenta: se o cérebro não avisar o fim a tempo, o uso termina em falha com o motivo.
+   */
+  track(name: string, label: string): Promise<(failure?: string) => Promise<void>>;
 }
 
 /** Quem acompanha os usos de Ferramenta de uma execução (o Andamento e a vigia, em `executions.ts`). */
@@ -151,19 +178,28 @@ export interface ToolObserver {
 export function createToolPort(deps: {
   db: Db;
   clock: Clock;
-  /** O catálogo (padrão: as Ferramentas do Workspace). */
+  /** O catálogo fixo (padrão: as Ferramentas do Workspace). */
   definitions: readonly ToolDefinition[];
+  /**
+   * O catálogo que muda (as Ferramentas dos Conectores), lido a cada uso: remover um Conector tira
+   * as Ferramentas dele na hora, também de uma resposta em curso.
+   */
+  extra?: () => Promise<readonly ToolDefinition[]>;
   /** O prazo de uma chamada sem prazo próprio (padrão: `TOOL_TIMEOUT_MS`). */
   timeoutMs?: number;
 }) {
   const { db, clock, definitions } = deps;
-  const byId = new Map(definitions.map((d) => [d.id, d]));
   const defaultTimeout = deps.timeoutMs ?? TOOL_TIMEOUT_MS;
+
+  /** O catálogo de agora: o fixo e o dos Conectores. */
+  async function catalog(): Promise<ToolDefinition[]> {
+    return [...definitions, ...((await deps.extra?.()) ?? [])];
+  }
 
   async function grantedTo(agentId: string): Promise<ToolDefinition[]> {
     const rows = await db.select({ tool: agentTools.tool }).from(agentTools).where(eq(agentTools.agentId, agentId));
     const granted = new Set(rows.map((r) => r.tool));
-    return definitions.filter((d) => granted.has(d.id));
+    return (await catalog()).filter((d) => granted.has(d.id));
   }
 
   /** Roda `work` com o prazo da definição; devolve o que ele devolveu ou o motivo da falha. */
@@ -204,18 +240,19 @@ export function createToolPort(deps: {
   }
 
   return {
-    definitions,
+    catalog,
 
-    /** As Ferramentas do Workspace, com a marca de concedida ao Agente (a tela do Agente, só Admin). */
+    /** O catálogo, com a marca de concedida ao Agente (a tela do Agente, só Admin). */
     async forAgent(agentId: string) {
       const granted = new Set((await grantedTo(agentId)).map((d) => d.id));
-      return definitions.map((d) => ({
+      return (await catalog()).map((d) => ({
         id: d.id,
         title: d.title,
         description: d.description,
         origin: d.origin,
         access: d.access,
         granted: granted.has(d.id),
+        ...(d.connector ? { connector: d.connector } : {}),
       }));
     },
 
@@ -231,18 +268,23 @@ export function createToolPort(deps: {
         .select()
         .from(agentTools)
         .where(agentIds ? inArray(agentTools.agentId, [...agentIds]) : undefined);
-      for (const def of definitions) {
+      for (const def of await catalog()) {
         for (const row of rows) {
           if (row.tool !== def.id) continue;
           const list = out.get(row.agentId) ?? [];
-          list.push({ id: def.id, title: def.title, origin: def.origin });
+          list.push({
+            id: def.id,
+            title: def.title,
+            origin: def.origin,
+            ...(def.connector ? { connector: def.connector } : {}),
+          });
           out.set(row.agentId, list);
         }
       }
       return out;
     },
 
-    exists: (toolId: string) => byId.has(toolId),
+    exists: async (toolId: string) => (await catalog()).some((d) => d.id === toolId),
 
     /**
      * Executa a ação de um Pedido aprovado (ADR 0011), sem passar pelo modelo: a Ferramenta ainda
@@ -265,7 +307,12 @@ export function createToolPort(deps: {
     },
 
     async grant(agentId: string, toolId: string) {
-      await db.insert(agentTools).values({ agentId, tool: toolId, grantedAt: clock.now() }).onConflictDoNothing();
+      const def = (await catalog()).find((d) => d.id === toolId);
+      if (!def) return;
+      await db
+        .insert(agentTools)
+        .values({ agentId, tool: toolId, connectorId: def.connector?.id ?? null, grantedAt: clock.now() })
+        .onConflictDoNothing();
     },
 
     async revoke(agentId: string, toolId: string) {
@@ -274,7 +321,49 @@ export function createToolPort(deps: {
 
     /** As Ferramentas de uma execução, com cada uso gravado e avisado a `observer`. */
     forExecution(run: ToolRun, observer: ToolObserver): ExecutionTools {
+      /** Grava o começo de um uso e avisa o Andamento. */
+      async function begin(def: ToolDefinition, label: string) {
+        const id = crypto.randomUUID();
+        await db.insert(executionToolCalls).values({
+          id,
+          executionId: run.executionId,
+          attempt: run.attempt,
+          tool: def.id,
+          title: def.title,
+          label,
+          state: "running",
+          startedAt: clock.now(),
+        });
+        await observer.started();
+        return id;
+      }
+      /** Grava o fim (com o motivo, se falhou) e avisa o Andamento. */
+      async function end(id: string, failure?: string) {
+        await db
+          .update(executionToolCalls)
+          .set({ state: failure ? "failed" : "done", reason: failure ?? null, finishedAt: clock.now() })
+          .where(eq(executionToolCalls.id, id));
+        await observer.finished();
+      }
+
       return {
+        async track(name, label) {
+          const def = (await catalog()).find((d) => d.id === name);
+          if (!def) return async () => {};
+          const id = await begin(def, label);
+          let ended: Promise<void> | undefined;
+          const finish = (failure?: string) => {
+            cancelTimer();
+            ended ??= end(id, failure);
+            return ended;
+          };
+          const timeout = def.timeoutMs ?? defaultTimeout;
+          const cancelTimer = clock.after(timeout, () => {
+            void finish(`não terminou em ${Math.round(timeout / 1000)} s`);
+          });
+          return finish;
+        },
+
         async list() {
           return (await grantedTo(run.agentId)).map((d) => ({
             name: d.id,
@@ -289,33 +378,17 @@ export function createToolPort(deps: {
         async call(name, input, signal) {
           // A concessão é conferida na hora: o Admin pode tê-la retirado no meio da resposta.
           const def = (await grantedTo(run.agentId)).find((d) => d.id === name);
-          if (!def) return { content: `A Ferramenta ${name} não está disponível para você.`, isError: true };
-          const id = crypto.randomUUID();
-          await db.insert(executionToolCalls).values({
-            id,
-            executionId: run.executionId,
-            attempt: run.attempt,
-            tool: def.id,
-            title: def.title,
-            label: def.label,
-            state: "running",
-            startedAt: clock.now(),
-          });
-          await observer.started();
+          // As da web rodam no cérebro: nunca por aqui (nem pelo endpoint MCP).
+          if (!def || runsInBrain(def)) {
+            return { content: `A Ferramenta ${name} não está disponível para você.`, isError: true };
+          }
+          const id = await begin(def, def.label);
           // A escrita não roda aqui: só a conferência e a ação exata, que vira o Pedido de aprovação.
           const outcome =
             def.access === "read"
               ? await execute(def, (s) => def.run({ db, run }, input, s), signal)
               : await execute(def, (s) => def.prepare({ db, run }, input, s), signal);
-          await db
-            .update(executionToolCalls)
-            .set({
-              state: outcome.ok ? "done" : "failed",
-              reason: outcome.ok ? null : outcome.reason,
-              finishedAt: clock.now(),
-            })
-            .where(eq(executionToolCalls.id, id));
-          await observer.finished();
+          await end(id, outcome.ok ? undefined : outcome.reason);
           if (!outcome.ok) return { content: `A Ferramenta ${def.title} falhou: ${outcome.reason}.`, isError: true };
           if (def.access === "read") return { content: outcome.value as string, isError: false };
           const prepared = outcome.value as { action: Record<string, unknown>; summary: string };

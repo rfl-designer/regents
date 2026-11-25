@@ -8,7 +8,7 @@ import {
 } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
-import { agentToolsText } from "./agent-tools";
+import { agentToolsText, withGranted } from "./agent-tools";
 import { ApiFailure, api } from "./api";
 import { dateTimeShort } from "./format";
 import { INCIDENT_TEXT, usd } from "./KeyBanners";
@@ -183,15 +183,7 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
                 setEditing(false);
               }}
             />
-            <AgentTools
-              agent={a}
-              onChanged={(tools) =>
-                onChanged({
-                  ...a,
-                  tools: tools.filter((t) => t.granted).map(({ id, title, origin }) => ({ id, title, origin })),
-                })
-              }
-            />
+            <AgentTools agent={a} onChanged={(tools) => onChanged(withGranted(a, tools))} />
           </>
         )}
       </div>
@@ -277,7 +269,18 @@ function EditAgent({ agent, onSaved }: { agent: AgentDto; onSaved(agent: AgentDt
   );
 }
 
-const ORIGIN_LABEL: Record<ToolOrigin, string> = { workspace: "Do Workspace", web: "Da web", github: "Do GitHub" };
+const ORIGIN_LABEL: Record<Exclude<ToolOrigin, "connector">, string> = {
+  workspace: "Do Workspace",
+  web: "Da web",
+  github: "Do GitHub",
+};
+
+/** O grupo de uma Ferramenta na tela do Agente: a origem, e cada Conector no seu. */
+const groupOf = (t: AgentToolDto) => (t.connector ? `connector:${t.connector.id}` : t.origin);
+function groupLabel(t: AgentToolDto) {
+  if (!t.connector) return ORIGIN_LABEL[t.origin as Exclude<ToolOrigin, "connector">];
+  return `Do Conector ${t.connector.name} (credencial do Workspace)`;
+}
 
 /**
  * As Ferramentas do Agente, agrupadas por origem, cada uma marcada como leitura ou escrita (toda
@@ -308,16 +311,16 @@ function AgentTools({ agent, onChanged }: { agent: AgentDto; onChanged(tools: Ag
     }
   }
 
-  const origins = [...new Set(tools?.map((t) => t.origin))];
+  const groups = [...new Map(tools?.map((t) => [groupOf(t), t])).entries()];
   return (
     <fieldset className="settings-row" aria-label={`Ferramentas de ${agent.name}`}>
       <legend>Ferramentas</legend>
       {tools === null && !error && <p className="hint">Carregando…</p>}
-      {origins.map((origin) => (
-        <div key={origin}>
-          <p className="hint">{ORIGIN_LABEL[origin]}</p>
+      {groups.map(([group, first]) => (
+        <div key={group}>
+          <p className="hint">{groupLabel(first)}</p>
           {tools
-            ?.filter((t) => t.origin === origin)
+            ?.filter((t) => groupOf(t) === group)
             .map((t) => (
               <label key={t.id} className="hint">
                 <input type="checkbox" checked={t.granted} disabled={busy !== null} onChange={() => toggle(t)} />{" "}

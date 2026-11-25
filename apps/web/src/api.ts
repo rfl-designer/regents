@@ -7,8 +7,10 @@ import type {
   ApproveJoinRequestDto,
   ChannelDto,
   ChannelSettingsDto,
+  ConnectorDto,
   CreateAgentInput,
   CreateChannelInput,
+  CreateConnectorInput,
   DeviceDto,
   DmDto,
   ExecutionDto,
@@ -165,6 +167,13 @@ export const api = {
   workspaceContext: () => call<WorkspaceContextDto>("/api/workspace-context"),
   setWorkspaceContext: (context: string) =>
     call<WorkspaceContextDto>("/api/workspace-context", json("PUT", { context })),
+  connectors: () => call<ConnectorDto[]>("/api/connectors"),
+  /** Abrir o Conector relê o catálogo do servidor. */
+  connector: (id: string) => call<ConnectorDto>(`/api/connectors/${id}`),
+  createConnector: (input: CreateConnectorInput) => call<ConnectorDto>("/api/connectors", json("POST", input)),
+  setConnectorToken: (id: string, token: string) =>
+    call<ConnectorDto>(`/api/connectors/${id}/credential`, json("PUT", { token })),
+  removeConnector: (id: string) => call<void>(`/api/connectors/${id}`, { method: "DELETE" }),
   workspaceKey: () => call<WorkspaceKeyDto>("/api/workspace-key"),
   setWorkspaceKey: (apiKey: string) => call<WorkspaceKeyDto>("/api/workspace-key", json("PUT", { apiKey })),
   github: () => call<GitHubDto>("/api/github"),

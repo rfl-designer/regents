@@ -45,6 +45,13 @@ export type FakeStep =
    * vai para `fake.mcp()`.
    */
   | { tool: { name: string; input?: Record<string, unknown> } }
+  /**
+   * Usa uma tool nativa do Claude Code (`WebSearch`, `WebFetch`): o `tool_use` com o nome dela no
+   * `stream-json`, o `tool_result` (com `is_error` e o texto de `error`, se veio) e um turno novo.
+   * Fora do `--tools`, o resultado é o erro "No such tool available", como no real. `hang`: depois
+   * do `tool_use`, fica mudo para sempre (a tool travou), até levar sinal.
+   */
+  | { native: { name: "WebSearch" | "WebFetch"; input?: Record<string, unknown>; error?: string; hang?: true } }
   /** Um bloco de pensamento (`thinking` vazio, como nos modelos atuais). */
   | { thinking: true }
   /** Fica mudo por um tempo (de verdade: é um processo). */
