@@ -7,13 +7,28 @@ import { type Db, isUuid, schema, type Tx } from "./db/client";
 import type { EventHub } from "./events";
 import type { Env } from "./members";
 import { audienceOf } from "./participation";
+import { unreadOf } from "./reading";
 import type { PostAsAgent, ToolPort } from "./tools/port";
 
 const { approvalRequests, agents, members, channels, executions } = schema;
 type Row = typeof approvalRequests.$inferSelect;
 
-/** Um Pedido pendente expira 24 h depois de criado (ADR 0011). */
+/** Um Pedido pendente expira 24 h depois de criado (ADR 0011), se a Instalação não ajustou. */
 export const APPROVAL_TTL_MS = 24 * 60 * 60_000;
+/** O motivo do Andamento quando o Pedido expira: a resposta termina sem continuar. */
+export const APPROVAL_EXPIRED_REASON = "a aprovação expirou";
+
+/**
+ * O prazo do Pedido que o `.env` ajusta (`SHEARIM_APPROVAL_TTL_H`, em horas; aceita fração, ex.
+ * `0.5`). Valor que não é número maior que zero é erro (o servidor não sobe).
+ */
+export function approvalTtlFromEnv(env: Record<string, string | undefined>): number | undefined {
+  const raw = env.SHEARIM_APPROVAL_TTL_H?.trim();
+  if (!raw) return undefined;
+  const h = Number(raw);
+  if (!Number.isFinite(h) || h <= 0) throw new Error(`SHEARIM_APPROVAL_TTL_H=${raw} não é um número maior que zero.`);
+  return Math.round(h * 60 * 60_000);
+}
 const REASON_MAX = 500;
 
 /** O hash da ação guardada: o JSON com as chaves em ordem, em SHA-256. */
@@ -33,7 +48,7 @@ export function actionHash(action: Record<string, unknown>) {
 
 /**
  * Grava o Pedido de aprovação de uma escrita (na mesma transação que encerra a execução em
- * "esperando aprovação"). O autor é o da mensagem de origem. Devolve o id.
+ * "esperando aprovação"). O autor é o da mensagem de origem. Devolve o id e quando ele expira.
  */
 export async function insertApproval(
   tx: Db | Tx,
@@ -47,6 +62,8 @@ export async function insertApproval(
     action: Record<string, unknown>;
     summary: string;
     now: Date;
+    /** O prazo do Pedido (padrão: `APPROVAL_TTL_MS`). */
+    ttlMs?: number;
   },
 ) {
   const [origin] = await tx
@@ -54,7 +71,7 @@ export async function insertApproval(
     .from(schema.messages)
     .where(eq(schema.messages.id, values.originMessageId));
   const id = crypto.randomUUID();
-  const { now, ...rest } = values;
+  const { now, ttlMs = APPROVAL_TTL_MS, ...rest } = values;
   await tx.insert(approvalRequests).values({
     ...rest,
     id,
@@ -62,9 +79,9 @@ export async function insertApproval(
     actionHash: actionHash(values.action),
     state: "pending",
     createdAt: now,
-    expiresAt: new Date(now.getTime() + APPROVAL_TTL_MS),
+    expiresAt: new Date(now.getTime() + ttlMs),
   });
-  return id;
+  return { id, expiresAt: new Date(now.getTime() + ttlMs) };
 }
 
 async function views(db: Db, where: SQL | undefined): Promise<ApprovalRequestDto[]> {
@@ -95,7 +112,10 @@ async function views(db: Db, where: SQL | undefined): Promise<ApprovalRequestDto
   }));
 }
 
-/** Anuncia o Pedido a quem vê a conversa (criado, ou com o estado novo). Devolve o DTO. */
+/**
+ * Anuncia o Pedido a quem vê a conversa (criado, ou com o estado novo) e o badge novo ao autor
+ * (o Pedido pendente conta nele). Devolve o DTO.
+ */
 export async function publishApproval(
   db: Db,
   events: EventHub,
@@ -105,6 +125,8 @@ export async function publishApproval(
   const [approval] = await views(db, eq(approvalRequests.id, id));
   const [conversation] = await db.select().from(channels).where(eq(channels.id, approval!.channelId));
   events.publish(await audienceOf(db, conversation!), { type, approval: approval! });
+  const authorId = approval!.author.id;
+  events.publish({ members: [authorId] }, { type: "unread.updated", unread: await unreadOf(db, authorId) });
   return approval!;
 }
 
