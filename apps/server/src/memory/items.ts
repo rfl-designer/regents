@@ -1,9 +1,10 @@
 import type { MemoryItemDto } from "@shearim/contracts";
 import { and, desc, eq, inArray, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { type Db, schema, type Tx } from "../db/client";
+import { type Db, isUuid, schema, type Tx } from "../db/client";
 import type { EventHub } from "../events";
-import { audienceOf } from "../participation";
+import type { Member } from "../members";
+import { audienceOf, canSee } from "../participation";
 
 const { memoryItems, messages, members, agents, channels } = schema;
 
@@ -38,6 +39,101 @@ export async function insertExtracted(
   }));
   await tx.insert(memoryItems).values(rows);
   return rows.map((r) => r.id);
+}
+
+type Item = typeof memoryItems.$inferSelect;
+
+/**
+ * O item `id`, se `who` pode desfazê-lo ou corrigi-lo: quem vê a conversa de origem (ADR 0012) e,
+ * na Memória do Workspace, só o Admin. Vale para os três escopos: a Memória do Agente segue a
+ * origem como a da Conversa. Quem não vê a origem recebe `not_found`, como se o item não existisse.
+ */
+export async function editableItem(
+  db: Db | Tx,
+  who: Pick<Member, "id" | "role">,
+  id: string,
+): Promise<Item | "not_found" | "not_admin"> {
+  if (!isUuid(id)) return "not_found";
+  const [item] = await db.select().from(memoryItems).where(eq(memoryItems.id, id));
+  if (!item) return "not_found";
+  if (item.scope === "workspace") return who.role === "admin" ? item : "not_admin";
+  const [origin] = await db.select().from(channels).where(eq(channels.id, item.conversationId!));
+  return origin && (await canSee(db, who.id, origin)) ? item : "not_found";
+}
+
+/** O item `id` travado para mudar na transação `tx`, se ainda ativo (senão, nada a mudar). */
+export async function lockActiveItem(tx: Tx, id: string) {
+  const [item] = await tx.select().from(memoryItems).where(eq(memoryItems.id, id)).for("update");
+  return item?.state === "active" ? item : undefined;
+}
+
+/** Desfaz o item `id`: arquiva sem versão nova. `archived` se ele já não estava ativo. */
+export function undoItem(db: Db, input: { id: string; now: Date }): Promise<"ok" | "archived"> {
+  return db.transaction(async (tx) => {
+    if (!(await lockActiveItem(tx, input.id))) return "archived";
+    await tx.update(memoryItems).set({ state: "archived", archivedAt: input.now }).where(eq(memoryItems.id, input.id));
+    return "ok";
+  });
+}
+
+/**
+ * Corrige o item `id` pela mão de `by`: a versão nova, com a mesma origem e o mesmo escopo,
+ * substitui a anterior. Devolve o id da nova, ou `archived` se o item já não estava ativo.
+ */
+export function correctItem(
+  db: Db,
+  input: { id: string; text: string; by: Pick<Member, "id" | "role">; now: Date },
+): Promise<string | "archived"> {
+  return db.transaction(async (tx) => {
+    const old = await lockActiveItem(tx, input.id);
+    if (!old) return "archived";
+    return replaceItem(tx, old, {
+      text: input.text,
+      originMessageId: old.originMessageId,
+      createdBy: input.by.role === "admin" ? "admin" : "member",
+      createdByMemberId: input.by.id,
+      now: input.now,
+    });
+  });
+}
+
+/**
+ * Substitui o item ativo `old` (já travado em `tx`) por uma versão nova com o mesmo escopo, a
+ * mesma conversa e o mesmo Agente, e arquiva o anterior, que aponta para ela (nada é apagado).
+ * A origem é a de `next`: a correção de gente mantém a do item; a extração põe a mensagem em que
+ * a pessoa mudou o fato. Devolve o id da nova.
+ */
+export async function replaceItem(
+  tx: Tx,
+  old: Item,
+  next: {
+    text: string;
+    originMessageId: string | null;
+    createdBy: Item["createdBy"];
+    createdByMemberId?: string;
+    executionId?: string;
+    now: Date;
+  },
+): Promise<string> {
+  const id = crypto.randomUUID();
+  await tx.insert(memoryItems).values({
+    id,
+    scope: old.scope,
+    conversationId: old.conversationId,
+    originMessageId: next.originMessageId,
+    agentId: old.agentId,
+    text: next.text,
+    createdBy: next.createdBy,
+    createdByMemberId: next.createdByMemberId ?? null,
+    executionId: next.executionId ?? null,
+    state: "active",
+    createdAt: next.now,
+  });
+  await tx
+    .update(memoryItems)
+    .set({ state: "archived", replacedById: id, archivedAt: next.now })
+    .where(eq(memoryItems.id, old.id));
+  return id;
 }
 
 const originAgent = alias(agents, "origin_agent");
