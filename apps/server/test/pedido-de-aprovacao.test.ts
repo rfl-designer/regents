@@ -546,6 +546,46 @@ describe("o Pedido que ninguém decide", () => {
   );
 
   test(
+    "se a expiração de um Pedido falha no meio, o alarme se rearma e o próximo Pedido ainda expira",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t);
+      t.anthropic.reply(
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "Um." } }] },
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "Dois." } }] },
+      );
+      await enviar(t, geral.id, "@Faro avisa um");
+      await pedidoPendente(t, geral.id, 1);
+      t.clock.advance(HORA);
+      await enviar(t, geral.id, "@Faro avisa dois");
+      await pedidoPendente(t, geral.id, 2);
+
+      // O anúncio da primeira expiração falha (uma vez): a volta da expiração para no meio.
+      const publish = t.events.publish;
+      let falhou = false;
+      t.events.publish = (to, event) => {
+        if (!falhou && event.type === "execution.updated" && event.execution.reason === "a aprovação expirou") {
+          falhou = true;
+          throw new Error("o anúncio caiu");
+        }
+        publish.call(t.events, to, event);
+      };
+      t.clock.advance(23 * HORA);
+      await eventually("o anúncio da expiração falhar", async () => falhou);
+      expect((await pedidos(t, geral.id)).map((p) => p.state)).toEqual(["expired", "pending"]);
+
+      // A nova tentativa, um minuto depois, arma o alarme do segundo.
+      t.clock.advance(60_000);
+      t.clock.advance(HORA - 60_000);
+      await eventually("o segundo Pedido expirar", async () => {
+        t.clock.advance(1);
+        return (await pedidos(t, geral.id))[1]!.state === "expired";
+      });
+    },
+    LONGO,
+  );
+
+  test(
     "o prazo é o da Instalação (SHEARIM_APPROVAL_TTL_H), e o Pedido vencido com o servidor parado expira ao subir",
     async () => {
       expect(approvalTtlFromEnv({})).toBeUndefined();

@@ -89,6 +89,8 @@ const STALL_REASON: Record<ExecutionStep, string> = {
   tool: "ficou 2 minutos sem escrever nada",
 };
 const RESTART_REASON = "o servidor reiniciou";
+/** Quando a expiração dos Pedidos falha, a nova tentativa sai depois disso. */
+const EXPIRY_RETRY_MS = 60_000;
 /** A causa do resultado incerto de uma ação aprovada que o servidor deixou no meio. */
 const RESTART_DURING_ACTION = "o servidor reiniciou durante a ação";
 
@@ -1137,9 +1139,22 @@ export function createExecutions(deps: {
     expiryAlarm?.cancel();
     const cancel = clock.after(Math.max(0, at.getTime() - clock.now().getTime()), () => {
       expiryAlarm = undefined;
-      void expireApprovals().catch((err) => console.error("shearim: a expiração dos Pedidos falhou", err));
+      void expireOrRetry();
     });
     expiryAlarm = { at: at.getTime(), cancel };
+  }
+
+  /**
+   * Expira o que venceu; se falhar no meio (o próximo alarme não chegou a ser armado), tenta de novo
+   * em `EXPIRY_RETRY_MS`: nenhum Pedido fica pendente depois do prazo.
+   */
+  async function expireOrRetry() {
+    try {
+      await expireApprovals();
+    } catch (err) {
+      console.error("shearim: a expiração dos Pedidos falhou; tenta de novo em 1 min", err);
+      armExpiry(new Date(clock.now().getTime() + EXPIRY_RETRY_MS));
+    }
   }
 
   async function expireApprovals() {
@@ -1254,7 +1269,7 @@ export function createExecutions(deps: {
       if (loop) return;
       stopping = false;
       watchMonthTurn();
-      void expireApprovals().catch((err) => console.error("shearim: a expiração dos Pedidos falhou", err));
+      void expireOrRetry();
       loop = work();
     },
 
