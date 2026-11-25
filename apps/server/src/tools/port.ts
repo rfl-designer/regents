@@ -229,11 +229,11 @@ export function createToolPort(deps: {
     signal.addEventListener("abort", abort, { once: true });
     const timeout = def.timeoutMs ?? defaultTimeout;
     let cancelTimer = () => {};
-    type Failed = { ok: false; reason: string; connect?: { connectorId: string; name: string } };
+    type Failed = { ok: false; reason: string; connect?: { connectorId: string; name: string }; timedOut?: true };
     const deadline = new Promise<Failed>((resolve) => {
       cancelTimer = clock.after(timeout, () => {
         // Resolve antes de interromper: o motivo é o prazo, não a interrupção que ele causa.
-        resolve({ ok: false, reason: `não terminou em ${Math.round(timeout / 1000)} s` });
+        resolve({ ok: false, reason: `não terminou em ${Math.round(timeout / 1000)} s`, timedOut: true });
         own.abort();
       });
     });
@@ -310,14 +310,16 @@ export function createToolPort(deps: {
 
     /**
      * Executa a ação de um Pedido aprovado (ADR 0011), sem passar pelo modelo: a Ferramenta ainda
-     * tem de estar concedida ao Agente, e ela confere o alcance de novo. Nunca lança.
+     * tem de estar concedida ao Agente, e ela confere o alcance de novo. Nunca lança. A que estoura
+     * o prazo pode ter sido feita lá fora: o resultado é incerto (`uncertain`), e o motivo diz onde
+     * conferir.
      */
     async perform(
       tool: string,
       run: ToolRun,
       action: Record<string, unknown>,
       post: PostAsAgent,
-    ): Promise<{ ok: true; result: string } | { ok: false; reason: string }> {
+    ): Promise<{ ok: true; result: string } | { ok: false; reason: string; uncertain?: true }> {
       const def = (await grantedTo(run.agentId)).find((d) => d.id === tool);
       if (def?.access !== "write") return { ok: false, reason: "a Ferramenta não está mais disponível para o Agente" };
       const outcome = await execute(
@@ -325,7 +327,20 @@ export function createToolPort(deps: {
         (s) => def.perform({ db, run, post }, action, s),
         new AbortController().signal,
       );
-      return outcome.ok ? { ok: true, result: outcome.value } : { ok: false, reason: outcome.reason };
+      if (outcome.ok) return { ok: true, result: outcome.value };
+      if ("timedOut" in outcome) return { ok: false, reason: uncertainReason(def, outcome.reason), uncertain: true };
+      return { ok: false, reason: outcome.reason };
+    },
+
+    /**
+     * O motivo de uma escrita que pode ter sido feita sem o Shearim saber ("o servidor reiniciou
+     * durante a ação"): a causa e onde conferir.
+     */
+    async uncertainReason(tool: string, cause: string) {
+      return uncertainReason(
+        (await catalog()).find((d) => d.id === tool),
+        cause,
+      );
     },
 
     async grant(agentId: string, toolId: string) {
@@ -435,6 +450,17 @@ export function createToolPort(deps: {
 }
 
 export type ToolPort = ReturnType<typeof createToolPort>;
+
+/** "<causa>; pode ter sido feita — confira no GitHub": a escrita de resultado incerto. */
+function uncertainReason(def: ToolDefinition | undefined, cause: string) {
+  const where =
+    def?.origin === "github"
+      ? "no GitHub"
+      : def?.origin === "connector" && def.connector
+        ? `em ${def.connector.name}`
+        : "na conversa";
+  return `${cause}; pode ter sido feita — confira ${where}`;
+}
 
 /**
  * Os usos de Ferramenta de cada execução, na tentativa atual dela, na ordem (para o Andamento).

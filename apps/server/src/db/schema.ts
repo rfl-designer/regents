@@ -846,6 +846,11 @@ export const approvalRequests = pgTable(
     /** Na aprovação: o resultado da ação, ou o motivo da falha dela (`failure`). */
     result: text(),
     failure: text(),
+    /**
+     * A ação aprovada pode ter sido feita lá fora sem o Shearim saber (estourou o prazo, o servidor
+     * reiniciou no meio): `failure` diz por quê e onde conferir.
+     */
+    uncertain: boolean().notNull().default(false),
     createdAt: timestamp({ withTimezone: true }).notNull(),
     expiresAt: timestamp({ withTimezone: true }).notNull(),
     decidedAt: timestamp({ withTimezone: true }),

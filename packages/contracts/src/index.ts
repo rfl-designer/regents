@@ -921,6 +921,11 @@ export interface ApprovalRequestDto {
   result: string | null;
   /** Na aprovação: o motivo de a ação ter falhado (ex. o autor perdeu o acesso), ou nulo. */
   failure: string | null;
+  /**
+   * Na aprovação: a ação pode ter sido feita sem o Shearim saber (não terminou no prazo, o servidor
+   * reiniciou no meio). `failure` diz por quê e onde conferir; o cartão diz "resultado incerto".
+   */
+  uncertain: boolean;
   createdAt: string;
   expiresAt: string;
   decidedAt: string | null;

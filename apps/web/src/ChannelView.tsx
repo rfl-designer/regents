@@ -942,9 +942,11 @@ function ApprovalCard({
         ? "pede a sua aprovação"
         : `esperando a aprovação de ${a.author.displayName}`
       : a.state === "approved"
-        ? a.failure
-          ? `aprovado por ${a.author.displayName}, mas falhou: ${a.failure}`
-          : `aprovado por ${a.author.displayName}: ${a.result}`
+        ? a.uncertain
+          ? `aprovado por ${a.author.displayName}, resultado incerto: ${a.failure}`
+          : a.failure
+            ? `aprovado por ${a.author.displayName}, mas falhou: ${a.failure}`
+            : `aprovado por ${a.author.displayName}: ${a.result}`
         : a.state === "rejected"
           ? `recusado por ${a.author.displayName}${a.rejectReason ? `: ${a.rejectReason}` : ""}`
           : a.state === "expired"

@@ -15,6 +15,8 @@ import type { AgentDto, ApprovalRequestDto, ChannelDto, ExecutionDto, MessageDto
 import { and, eq } from "drizzle-orm";
 import { approvalTtlFromEnv } from "../src/approvals";
 import { schema } from "../src/db/client";
+import type { WriteTool } from "../src/tools/port";
+import { WORKSPACE_TOOLS } from "../src/tools/workspace";
 import { toolResults } from "./fakes/messages-api";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
 
@@ -695,6 +697,70 @@ describe("o Pedido que ninguém decide", () => {
       t.clock.advance(24 * HORA);
       await eventually("o Pedido expirar", async () => (await pedidos(t, geral.id))[1]!.state === "expired", 10_000);
       expect(await badge()).toBe(0);
+    },
+    LONGO,
+  );
+});
+
+/**
+ * Uma escrita de teste (do GitHub, para o "confira no GitHub") cujo `perform` não termina sozinho:
+ * `comecou` resolve quando o Shearim começa a ação, e `soltar` a termina.
+ */
+function escritaLenta() {
+  let comecar = () => {};
+  const comecou = new Promise<void>((r) => {
+    comecar = r;
+  });
+  let soltar = (_: string) => {};
+  const definition: WriteTool = {
+    id: "registrar_pedido",
+    title: "registrar o pedido",
+    label: "registrando o pedido",
+    description: "Registra o pedido no sistema de fora.",
+    origin: "github",
+    access: "write",
+    inputSchema: { type: "object", properties: {} },
+    prepare: async () => ({ action: { pedido: 1 }, summary: "Registrar o pedido 1" }),
+    perform: () => {
+      comecar();
+      return new Promise<string>((resolve) => {
+        soltar = resolve;
+      });
+    },
+  };
+  return { definition, comecou, soltar: (texto: string) => soltar(texto) };
+}
+
+/** O Workspace com a escrita lenta concedida ao Faro, e o Pedido dela pendente no #geral. */
+async function pedidoDaEscritaLenta(t: TestApp, faroId: string, geralId: string, continuacao: string) {
+  expect((await t.as(juliana).put(`/api/agents/${faroId}/tools/registrar_pedido`)).status).toBe(200);
+  t.anthropic.reply({ toolUse: [{ name: "registrar_pedido", input: {} }] }, { text: continuacao });
+  const origem = await enviar(t, geralId, "@Faro registra o pedido 1");
+  return { origem, pedido: await pedidoPendente(t, geralId) };
+}
+
+describe("a escrita aprovada que não termina", () => {
+  test(
+    "a escrita que estoura o prazo tem resultado incerto, no Pedido e na continuação, nunca uma falha seca",
+    async () => {
+      const lenta = escritaLenta();
+      const t = await testApp({ tools: { definitions: [...WORKSPACE_TOOLS, lenta.definition] } });
+      const { faro, geral } = await workspace(t);
+      const { origem, pedido } = await pedidoDaEscritaLenta(t, faro.id, geral.id, "Pode ter saído; confira.");
+
+      const aprovado = aprovar(t, pedido);
+      await lenta.comecou;
+      t.clock.advance(60_000);
+      const res = await aprovado;
+      expect(res.status).toBe(200);
+      const incerto = "não terminou em 60 s; pode ter sido feita — confira no GitHub";
+      expect(await res.json()).toMatchObject({ state: "approved", result: null, failure: incerto, uncertain: true });
+      expect((await pedidos(t, geral.id))[0]).toMatchObject({ failure: incerto, uncertain: true });
+
+      expect((await respostaA(t, geral.id, origem)).body).toBe("Pode ter saído; confira.");
+      const continuacao = textoDe(respostas(t)[1]!);
+      expect(continuacao).toContain(`Bruno aprovou, mas o resultado é incerto: ${incerto}`);
+      expect(continuacao).not.toContain("a ação falhou");
     },
     LONGO,
   );
