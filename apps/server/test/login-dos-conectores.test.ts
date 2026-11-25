@@ -291,13 +291,16 @@ describe("renovação", () => {
       await t.as(juliana).put(`/api/agents/${faro.id}/tools/${id("buscar cliente")}`);
       const primeiro = crm.oauth.tokenOf("time-no-crm")!;
 
-      // Longe do vencimento, nada se renova.
+      // Longe do vencimento, nada se renova. O reinício é o ponto de sincronização: parar espera a
+      // volta da vigia que o relógio disparou terminar (e a da subida também não renova).
       t.clock.advance(30 * MIN);
-      await Bun.sleep(50);
+      await t.restart();
       expect(crm.oauth.renewals()).toBe(0);
 
-      // A 5 min de vencer, a vigia renova, sem ninguém usar.
+      // A 5 min de vencer, a vigia renova, sem ninguém usar: a volta que o relógio dispara ou, se ela
+      // ainda não se rearmou, a da subida (o reinício espera a volta em curso e faz uma).
       t.clock.advance(25 * MIN);
+      await t.restart();
       await eventually("a credencial ser renovada", async () => crm.oauth.renewals() === 1);
       const novo = crm.oauth.tokenOf("time-no-crm")!;
       expect(novo).not.toBe(primeiro);
@@ -424,7 +427,8 @@ describe("sem login no servidor", () => {
 
       // O token colado não vence: o tempo passa e nada tenta renová-lo.
       t.clock.advance(24 * 60 * MIN);
-      await Bun.sleep(50);
+      // Parar espera a volta da vigia que o relógio disparou terminar.
+      await t.restart();
       const relido = (await (await t.as(juliana).get(`/api/connectors/${conector.id}`)).json()) as ConnectorDto;
       expect(relido).toMatchObject({
         catalogError: null,
