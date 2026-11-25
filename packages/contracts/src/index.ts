@@ -400,10 +400,13 @@ export interface AgentDto {
   tools: AgentToolSummaryDto[];
   /**
    * As linhas geradas da descrição pública, sobre o que ele alcança fora do Workspace (uma por
-   * Conector com credencial do Workspace): "acessa CRM com a credencial do Workspace".
+   * Conector com credencial do Workspace, e uma pelo GitHub, com os repositórios da lista dele):
+   * "acessa CRM com a credencial do Workspace".
    */
   reach: string[];
   instructions?: string;
+  /** Só para o Admin: os repositórios do GitHub a que o Agente está restrito (nulo: todos os da instalação). */
+  githubRepositories?: string[] | null;
   /**
    * Só para o Admin: o orçamento mensal na Chave, em dólares (nulo: sem teto). Conta só o que a
    * Chave pagou; a Conta de cada Membro não entra.
@@ -472,6 +475,22 @@ export interface GitHubManifestDto {
 /** `POST /api/github/installation`: a página do GitHub onde o Admin instala o App e escolhe os repositórios. */
 export interface GitHubInstallDto {
   url: string;
+}
+
+/**
+ * `GET /api/agents/:id/github` (só Admin): os repositórios do Agente na tela dele. `repositories`
+ * é a lista dele (nula: alcança tudo o que a instalação alcança); `available`, os que a instalação
+ * alcança agora (`dono/nome`), para escolher; `failure`, por que não deu para perguntar ao GitHub.
+ */
+export interface AgentGitHubDto {
+  repositories: string[] | null;
+  available: string[];
+  failure: string | null;
+}
+
+/** Corpo de `PUT /api/agents/:id/github`: a lista nova (nula: sem lista, todos os da instalação). */
+export interface SetAgentGitHubInput {
+  repositories: string[] | null;
 }
 
 // ---------- Ferramentas (Spec #44) ----------

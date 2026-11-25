@@ -1,5 +1,5 @@
 {
-  "id": "3b8e3c78-0bb1-4a33-ac42-286da35d6ad8",
+  "id": "535dfdbe-7a8e-4d61-bd01-a08c9aebe712",
   "prevId": "526c11d2-480b-4ac5-bddc-698d21b610f6",
   "version": "7",
   "dialect": "postgresql",
@@ -118,6 +118,53 @@
         }
       },
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.agent_github_repositories": {
+      "name": "agent_github_repositories",
+      "schema": "",
+      "columns": {
+        "agent_id": {
+          "name": "agent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "repository": {
+          "name": "repository",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "agent_github_repositories_agent_id_agents_id_fk": {
+          "name": "agent_github_repositories_agent_id_agents_id_fk",
+          "tableFrom": "agent_github_repositories",
+          "tableTo": "agents",
+          "columnsFrom": [
+            "agent_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "agent_github_repositories_agent_id_repository_pk": {
+          "name": "agent_github_repositories_agent_id_repository_pk",
+          "columns": [
+            "agent_id",
+            "repository"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -1216,24 +1263,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "used": {
-          "name": "used",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "connect_connector_id": {
-          "name": "connect_connector_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "connect_name": {
-          "name": "connect_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "started_at": {
           "name": "started_at",
           "type": "timestamp with time zone",
@@ -2087,96 +2116,6 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.member_connector_credentials": {
-      "name": "member_connector_credentials",
-      "schema": "",
-      "columns": {
-        "connector_id": {
-          "name": "connector_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "member_id": {
-          "name": "member_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "token_ciphertext": {
-          "name": "token_ciphertext",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "token_iv": {
-          "name": "token_iv",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "refused_at": {
-          "name": "refused_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "connected_at": {
-          "name": "connected_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "member_connector_credentials_connector_id_connectors_id_fk": {
-          "name": "member_connector_credentials_connector_id_connectors_id_fk",
-          "tableFrom": "member_connector_credentials",
-          "tableTo": "connectors",
-          "columnsFrom": [
-            "connector_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "member_connector_credentials_member_id_members_id_fk": {
-          "name": "member_connector_credentials_member_id_members_id_fk",
-          "tableFrom": "member_connector_credentials",
-          "tableTo": "members",
-          "columnsFrom": [
-            "member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "member_connector_credentials_connector_id_member_id_pk": {
-          "name": "member_connector_credentials_connector_id_member_id_pk",
-          "columns": [
-            "connector_id",
-            "member_id"
-          ]
-        }
-      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},

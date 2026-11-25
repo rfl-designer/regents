@@ -11,6 +11,7 @@ import { Hono } from "hono";
 import { withBuiltinText } from "./articuladora";
 import type { Clock } from "./clock";
 import { type Db, isUuid, schema } from "./db/client";
+import type { GitHub } from "./github/connector";
 import { budgetOf, type KeyLedger, keySpend, monthOf, parseBudget } from "./key-budget";
 import type { Env } from "./members";
 import { claimHandle, handleBase } from "./mention-handles";
@@ -35,11 +36,14 @@ export function agentRoutes(deps: {
   ledger: KeyLedger;
   /** As Ferramentas concedidas a cada Agente (a porta de Ferramentas). */
   tools: Pick<ToolPort, "grantsOf">;
+  /** As listas de repositórios do GitHub de cada Agente (#58): a descrição diz quais ele alcança. */
+  github?: Pick<GitHub, "agentRepositories">;
   /** O Admin mudou o orçamento de um Agente: quem espera na fila por quem pague decide de novo. */
   onBudgetChanged?: () => void;
 }) {
   const { db, clock, ledger } = deps;
   const toolsOf = async (id: string) => (await deps.tools.grantsOf([id])).get(id) ?? [];
+  const reposOf = async (ids?: readonly string[]) => (await deps.github?.agentRepositories(ids)) ?? new Map();
   const routes = new Hono<Env>();
 
   routes.get("/agents", async (c) => {
@@ -50,10 +54,11 @@ export function agentRoutes(deps: {
       .innerJoin(mentionHandles, eq(mentionHandles.agentId, agents.id))
       .orderBy(desc(agents.builtin), asc(agents.createdAt), asc(agents.name));
     const grants = await deps.tools.grantsOf();
-    const tools = (id: string) => grants.get(id) ?? [];
-    if (!admin) return c.json(all.map((a) => toAgentDto(a, { admin, tools: tools(a.id) })));
+    const repos = await reposOf();
+    const of = (id: string) => ({ tools: grants.get(id) ?? [], githubRepositories: repos.get(id) ?? null });
+    if (!admin) return c.json(all.map((a) => toAgentDto(a, { admin, ...of(a.id) })));
     const spend = await keySpend(db, monthOf(clock.now()));
-    return c.json(all.map((a) => toAgentDto(a, { admin, tools: tools(a.id), keySpendUsd: spend.get(a.id) ?? 0 })));
+    return c.json(all.map((a) => toAgentDto(a, { admin, ...of(a.id), keySpendUsd: spend.get(a.id) ?? 0 })));
   });
 
   routes.post("/agents", async (c) => {
@@ -97,7 +102,7 @@ export function agentRoutes(deps: {
       return { ...agent, handle };
     });
     if (!created) return c.json({ error: "name_taken", message: `Já existe um Agente chamado ${name}.` }, 409);
-    return c.json(toAgentDto(created, { admin: true, tools: [], keySpendUsd: 0 }), 201);
+    return c.json(toAgentDto(created, { admin: true, tools: [], githubRepositories: null, keySpendUsd: 0 }), 201);
   });
 
   /**
@@ -177,7 +182,12 @@ export function agentRoutes(deps: {
     const budget = budgetChanged ? await ledger.budgetChanged(updated.id) : await ledger.budgetNow(updated.id);
     if (budgetChanged) deps.onBudgetChanged?.();
     return c.json(
-      toAgentDto(updated, { admin: true, tools: await toolsOf(updated.id), keySpendUsd: budget.keySpendUsd }),
+      toAgentDto(updated, {
+        admin: true,
+        tools: await toolsOf(updated.id),
+        githubRepositories: (await reposOf([updated.id])).get(updated.id) ?? null,
+        keySpendUsd: budget.keySpendUsd,
+      }),
     );
   });
 
@@ -195,11 +205,18 @@ export function agentHandleBase(name: string) {
 
 /**
  * O Agente como `GET /api/agents` o devolve, com as Ferramentas concedidas a ele. Para o Admin,
- * também as instruções e, com `keySpendUsd` (o gasto do mês na Chave), o orçamento.
+ * também as instruções, a lista de repositórios do GitHub e, com `keySpendUsd` (o gasto do mês na
+ * Chave), o orçamento.
  */
 export function toAgentDto(
   row: AgentWithHandle,
-  opts: { admin: boolean; tools: AgentToolSummaryDto[]; keySpendUsd?: number },
+  opts: {
+    admin: boolean;
+    tools: AgentToolSummaryDto[];
+    /** Os repositórios do GitHub a que o Agente está restrito (nulo ou ausente: todos os da instalação). */
+    githubRepositories?: string[] | null;
+    keySpendUsd?: number;
+  },
 ): AgentDto {
   const a = withBuiltinText(row);
   const dto: AgentDto = {
@@ -211,9 +228,12 @@ export function toAgentDto(
     model: a.model as AgentModel,
     builtin: a.builtin,
     tools: opts.tools,
-    reach: reachLines(opts.tools),
+    reach: reachLines(opts.tools, opts.githubRepositories ?? null),
   };
-  if (opts.admin) dto.instructions = a.instructions;
+  if (opts.admin) {
+    dto.instructions = a.instructions;
+    dto.githubRepositories = opts.githubRepositories ?? null;
+  }
   if (opts.admin && opts.keySpendUsd !== undefined) {
     const { monthlyBudgetUsd, keySpendUsd, overBudget } = budgetOf(row, opts.keySpendUsd);
     Object.assign(dto, { monthlyBudgetUsd, keySpendUsd, overBudget });
@@ -221,9 +241,25 @@ export function toAgentDto(
   return dto;
 }
 
-/** "acessa CRM com a credencial do Workspace": uma linha por Conector das Ferramentas dele. */
-export function reachLines(tools: readonly AgentToolSummaryDto[]): string[] {
+/**
+ * "acessa CRM com a credencial do Workspace": uma linha por Conector das Ferramentas dele, e uma
+ * pelo GitHub (sempre com a credencial do Workspace, ADR 0010), com os repositórios da lista dele.
+ */
+export function reachLines(
+  tools: readonly AgentToolSummaryDto[],
+  githubRepositories: readonly string[] | null = null,
+): string[] {
   const names = new Set<string>();
   for (const t of tools) if (t.connector?.credential === "workspace") names.add(t.connector.name);
-  return [...names].map((name) => `acessa ${name} com a credencial do Workspace`);
+  const lines = [...names].map((name) => `acessa ${name} com a credencial do Workspace`);
+  if (tools.some((t) => t.origin === "github")) lines.push(githubReachLine(githubRepositories));
+  return lines;
+}
+
+/** "acessa o GitHub com a credencial do Workspace, só nos repositórios time/docs e time/site". */
+export function githubReachLine(repositories: readonly string[] | null): string {
+  const line = "acessa o GitHub com a credencial do Workspace";
+  if (!repositories?.length) return line;
+  if (repositories.length === 1) return `${line}, só no repositório ${repositories[0]}`;
+  return `${line}, só nos repositórios ${repositories.slice(0, -1).join(", ")} e ${repositories.at(-1)}`;
 }

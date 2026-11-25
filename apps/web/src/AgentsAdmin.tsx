@@ -1,6 +1,7 @@
 import {
   AGENT_MODELS,
   type AgentDto,
+  type AgentGitHubDto,
   type AgentModel,
   type AgentToolDto,
   type ToolOrigin,
@@ -8,7 +9,7 @@ import {
 } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
-import { agentToolsText, withGranted } from "./agent-tools";
+import { agentToolsText, withGitHubRepositories, withGranted } from "./agent-tools";
 import { ApiFailure, api } from "./api";
 import { dateTimeShort } from "./format";
 import { INCIDENT_TEXT, usd } from "./KeyBanners";
@@ -184,6 +185,7 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
               }}
             />
             <AgentTools agent={a} onChanged={(tools) => onChanged(withGranted(a, tools))} />
+            <AgentGitHub agent={a} onChanged={(repos) => onChanged(withGitHubRepositories(a, repos))} />
           </>
         )}
       </div>
@@ -331,6 +333,110 @@ function AgentTools({ agent, onChanged }: { agent: AgentDto; onChanged(tools: Ag
             ))}
         </div>
       ))}
+      {error && (
+        <span className="error" role="alert">
+          {error}
+        </span>
+      )}
+    </fieldset>
+  );
+}
+
+/**
+ * Os repositórios do GitHub do Agente (#58): todos os que a instalação alcança (sem lista) ou só
+ * os escolhidos entre eles. Vale a partir do "Salvar"; uma lista vazia não existe.
+ */
+function AgentGitHub({ agent, onChanged }: { agent: AgentDto; onChanged(repositories: string[] | null): void }) {
+  const [state, setState] = useState<AgentGitHubDto | null>(null);
+  const [draft, setDraft] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    api.agentGitHub(agent.id).then(
+      (got) => {
+        setState(got);
+        setDraft(got.repositories);
+      },
+      () => setError("Não foi possível carregar os repositórios do GitHub."),
+    );
+  }, [agent.id]);
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const got = await api.setAgentGitHub(agent.id, draft);
+      setState(got);
+      setDraft(got.repositories);
+      setSaved(true);
+      onChanged(got.repositories);
+    } catch (err) {
+      setError(messageOf(err, "A lista de repositórios não foi salva. Tente de novo."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const toggle = (repo: string) =>
+    setDraft((d) => (d?.includes(repo) ? d.filter((r) => r !== repo) : [...(d ?? []), repo]));
+  // Os da lista que a instalação não alcança mais continuam à vista, para o Admin tirá-los.
+  const options = state ? [...new Set([...state.available, ...(state.repositories ?? [])])] : [];
+  const choosable = state !== null && (state.available.length > 0 || state.repositories !== null);
+  const unchanged = JSON.stringify(draft) === JSON.stringify(state?.repositories ?? null);
+
+  return (
+    <fieldset className="settings-row" aria-label={`Repositórios do GitHub de ${agent.name}`}>
+      <legend>Repositórios do GitHub</legend>
+      {state === null && !error && <p className="hint">Carregando…</p>}
+      {state?.failure && (
+        <p className="notice" role="status">
+          Não deu para ver os repositórios que a instalação do GitHub alcança: {state.failure}.
+        </p>
+      )}
+      {choosable && (
+        <>
+          <label className="hint">
+            <input
+              type="radio"
+              name={`github-${agent.id}`}
+              checked={draft === null}
+              disabled={busy}
+              onChange={() => setDraft(null)}
+            />{" "}
+            Todos os que a instalação do GitHub alcança
+          </label>
+          <label className="hint">
+            <input
+              type="radio"
+              name={`github-${agent.id}`}
+              checked={draft !== null}
+              disabled={busy}
+              onChange={() => setDraft(state?.repositories ?? [])}
+            />{" "}
+            Só estes:
+          </label>
+          {draft !== null &&
+            options.map((repo) => (
+              <label key={repo} className="hint">
+                <input type="checkbox" checked={draft.includes(repo)} disabled={busy} onChange={() => toggle(repo)} />{" "}
+                {repo}
+                {!state?.available.includes(repo) && <span className="tag">fora da instalação</span>}
+              </label>
+            ))}
+          {draft !== null && draft.length === 0 && (
+            <p className="hint">Escolha ao menos um repositório, ou deixe o Agente alcançar todos.</p>
+          )}
+          <div className="row">
+            <button type="button" disabled={busy || unchanged || (draft !== null && draft.length === 0)} onClick={save}>
+              Salvar repositórios
+            </button>
+            {saved && unchanged && <span className="hint">Salvo.</span>}
+          </div>
+        </>
+      )}
       {error && (
         <span className="error" role="alert">
           {error}

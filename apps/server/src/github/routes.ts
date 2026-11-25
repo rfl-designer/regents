@@ -1,11 +1,15 @@
 import {
+  type AgentGitHubDto,
   GITHUB_PATH,
   type GitHubInstallDto,
   type GitHubManifestDto,
   type StartGitHubManifestInput,
 } from "@shearim/contracts";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { type Db, isUuid, schema } from "../db/client";
 import type { Env } from "../members";
+import { ToolFailure } from "../tools/port";
 import { APP_PERMISSIONS, type GitHub } from "./connector";
 
 /** Volta o navegador do Admin à tela do GitHub no PWA, com o desfecho do retorno. */
@@ -17,9 +21,70 @@ const backToPwa = (outcome: { ok: string } | { error: string }) =>
  * instalá-lo na conta do time. Quem redireciona é o navegador do Admin: os retornos chegam aqui
  * com a identidade dele, e o `state` do fluxo em andamento é conferido.
  */
-export function githubRoutes(deps: { github: GitHub }) {
-  const { github } = deps;
+export function githubRoutes(deps: { db: Db; github: GitHub }) {
+  const { db, github } = deps;
   const routes = new Hono<Env>();
+
+  async function agentExists(id: string) {
+    if (!isUuid(id)) return false;
+    const [row] = await db.select({ id: schema.agents.id }).from(schema.agents).where(eq(schema.agents.id, id));
+    return Boolean(row);
+  }
+
+  /** Os repositórios que a instalação alcança, ou o motivo de não saber (sem instalação, instalação removida). */
+  async function available(): Promise<{ list: string[]; failure: string | null }> {
+    try {
+      return { list: await github.installationRepositories(), failure: null };
+    } catch (err) {
+      if (!(err instanceof ToolFailure)) throw err;
+      return { list: [], failure: err.reason };
+    }
+  }
+
+  async function agentGitHub(agentId: string): Promise<AgentGitHubDto> {
+    const { list, failure } = await available();
+    return { repositories: await github.repositoriesOf(agentId), available: list, failure };
+  }
+
+  /**
+   * Os repositórios de um Agente, na tela dele (só Admin): os que a instalação alcança, para
+   * escolher, e a lista dele. Sem lista, o Agente alcança tudo o que a instalação alcança.
+   */
+  routes.get("/agents/:id/github", async (c) => {
+    if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
+    const id = c.req.param("id");
+    if (!(await agentExists(id))) return c.json({ error: "not_found" }, 404);
+    return c.json(await agentGitHub(id));
+  });
+
+  routes.put("/agents/:id/github", async (c) => {
+    if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
+    const id = c.req.param("id");
+    if (!(await agentExists(id))) return c.json({ error: "not_found" }, 404);
+    const input = (await c.req.json().catch(() => null)) as { repositories?: unknown } | null;
+    const invalid = (message: string) => c.json({ error: "invalid_input", message }, 400);
+    const raw = input?.repositories;
+    if (raw === null) {
+      await github.restrict(id, null);
+      return c.json(await agentGitHub(id));
+    }
+    if (!Array.isArray(raw) || raw.some((r) => typeof r !== "string"))
+      return invalid("Os repositórios são uma lista de dono/nome, ou nula para todos os da instalação.");
+    if (!raw.length)
+      return invalid("Escolha ao menos um repositório, ou deixe o Agente alcançar todos os da instalação.");
+    const { list, failure } = await available();
+    if (failure)
+      return c.json({ error: "github_unavailable", message: `Não deu para conferir no GitHub: ${failure}.` }, 409);
+    // Guarda como a instalação escreve (`Time/Site` vira `time/site` se é assim que ela o chama).
+    const chosen: string[] = [];
+    for (const r of raw as string[]) {
+      const found = list.find((a) => a.toLowerCase() === r.trim().toLowerCase());
+      if (!found) return invalid(`O repositório ${r} não está entre os que a instalação do GitHub alcança.`);
+      if (!chosen.includes(found)) chosen.push(found);
+    }
+    await github.restrict(id, chosen);
+    return c.json({ repositories: [...chosen].sort((a, b) => a.localeCompare(b)), available: list, failure: null });
+  });
 
   routes.use("/github/*", async (c, next) => {
     if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
