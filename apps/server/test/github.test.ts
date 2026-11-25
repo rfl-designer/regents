@@ -405,7 +405,11 @@ describe("pela Conta e no Andamento", () => {
         expect.objectContaining({
           step: "tool",
           tools: [
-            expect.objectContaining({ tool: "github_ler_issue", label: "lendo uma issue do GitHub", state: "running" }),
+            expect.objectContaining({
+              tool: "github_ler_issue",
+              label: "lendo a issue 214 de time/site",
+              state: "running",
+            }),
           ],
         }),
       );

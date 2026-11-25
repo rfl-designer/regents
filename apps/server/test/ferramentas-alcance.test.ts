@@ -152,6 +152,35 @@ describe("buscar mensagens", () => {
   );
 });
 
+describe("o rótulo no Andamento", () => {
+  test(
+    "o Andamento diz onde a Ferramenta busca ou lê quando a conversa está no alcance; fora dele, o rótulo é genérico",
+    async () => {
+      const t = await testApp();
+      const { faro, geral } = await workspace(t);
+      const raiz = await enviar(t, bruno, geral.id, "Quem leva o estande?");
+      await comFaro(t, geral.id, faro);
+      const rotulo = (andamento: string) =>
+        JSON.parse(andamento).flatMap((e: { tools: { label: string }[] }) => e.tools.map((f) => f.label));
+
+      const busca = await usar(t, ana, geral.id, "buscar_mensagens", { texto: "estande", conversa: "#geral" });
+      expect(rotulo(busca.andamento)).toContain("buscando em #geral");
+      const leitura = await usar(t, ana, geral.id, "abrir_conversa", { conversa: "geral" });
+      expect(rotulo(leitura.andamento)).toContain("lendo #geral");
+      const thread = await usar(t, ana, geral.id, "abrir_conversa", { thread: raiz.id });
+      expect(rotulo(thread.andamento)).toContain("lendo uma Thread em #geral");
+
+      // #diretoria existe, mas está fora do alcance de quem vê o #geral: nem o nome aparece.
+      const fora = await usar(t, ana, geral.id, "buscar_mensagens", { texto: "orçamento", conversa: "#diretoria" });
+      expect(rotulo(fora.andamento)).toContain("buscando mensagens");
+      const aberta = await usar(t, ana, geral.id, "abrir_conversa", { conversa: "#diretoria" });
+      expect(rotulo(aberta.andamento)).toContain("lendo a conversa");
+      expect(fora.andamento + aberta.andamento).not.toContain("diretoria");
+    },
+    LONGO,
+  );
+});
+
 describe("o alcance pela conversa", () => {
   test(
     "numa DM só entre Ana e o Agente, a busca alcança tudo o que Ana vê",

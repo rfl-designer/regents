@@ -51,6 +51,14 @@ const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0
 /** `%` e `_` do texto pedido valem como eles mesmos no `ilike`. */
 const likeEscape = (text: string) => text.replace(/[\\%_]/g, (c) => `\\${c}`);
 
+/**
+ * Onde a Ferramenta busca ou lê, para o rótulo do Andamento ("em #produto", "na DM com Ana, Bruno"):
+ * só uma conversa do alcance, que todos que veem o Andamento também veem.
+ */
+const where = (c: ReachableConversation) =>
+  c.name !== null ? { at: `em #${c.name}`, it: `#${c.name}` } : { at: `na ${dmName(c)}`, it: `a ${dmName(c)}` };
+const dmName = (c: ReachableConversation) => c.label.replace(/ \[id [^\]]+\]$/, "");
+
 const input = (raw: unknown): Record<string, unknown> =>
   raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
 
@@ -72,6 +80,11 @@ const searchMessages: ToolDefinition = {
   id: "buscar_mensagens",
   title: "buscar mensagens",
   label: "buscando mensagens",
+  async describe({ db, run }, raw) {
+    const { conversa } = input(raw);
+    const one = conversa ? (await reachOf(db, run)).find(conversa) : undefined;
+    return one ? { label: `buscando ${where(one).at}` } : {};
+  },
   description:
     "Busca mensagens do Workspace por texto, nas conversas que esta resposta alcança. Opcionalmente numa conversa (#canal ou o id de uma DM), de um autor (nome) ou num período (desde/ate, AAAA-MM-DD). Devolve as mais recentes primeiro.",
   origin: "workspace",
@@ -148,6 +161,20 @@ const openConversation: ToolDefinition = {
   id: "abrir_conversa",
   title: "abrir conversa",
   label: "lendo a conversa",
+  async describe({ db, run }, raw) {
+    const { conversa, thread } = input(raw);
+    const reach = await reachOf(db, run);
+    if (typeof thread === "string" && isUuid(thread.trim())) {
+      const [picked] = await db
+        .select({ channelId: messages.channelId })
+        .from(messages)
+        .where(eq(messages.id, thread.trim()));
+      const one = picked ? reach.find(picked.channelId) : undefined;
+      return one ? { label: `lendo uma Thread ${where(one).at}` } : {};
+    }
+    const one = conversa ? reach.find(conversa) : undefined;
+    return one ? { label: `lendo ${where(one).it}` } : {};
+  },
   description: `Abre uma conversa (#canal ou o id de uma DM) ou uma Thread (o id da mensagem que a abriu) e devolve até ${OPEN_PAGE} mensagens, da mais antiga para a mais nova. Na conversa em que você foi chamado, começa antes das mensagens recentes que você já recebeu. Para voltar mais, passe antes_de com o id da mensagem mais antiga que você tem.`,
   origin: "workspace",
   access: "read",

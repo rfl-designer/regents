@@ -13,6 +13,8 @@ const REPO = {
   type: "string",
   description: "O repositório, como dono/nome (ex.: time/site). Veja os que existem em listar repositórios.",
 };
+/** Um nome de repositório do GitHub (`dono/nome`), o único texto do modelo que o rótulo repete. */
+const REPO_NAME = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const NUMBER = { type: "integer", minimum: 1, description: "O número da issue ou do pull request." };
 const STATE = {
   type: "string",
@@ -75,6 +77,13 @@ const comments = (list: Comment[]) =>
     ? ["", "Comentários:", ...list.map((c) => `- ${c.user?.login ?? "?"}: ${c.body}`)]
     : ["", "Sem comentários."];
 
+/** "lendo a issue 214 de time/site"; sem número válido, "lendo uma issue de time/site". */
+function numbered(what: "a issue" | "o pull request", repository: string, input: unknown) {
+  const n = (input as Record<string, unknown> | null)?.numero;
+  if (typeof n === "number" && Number.isInteger(n) && n > 0) return `lendo ${what} ${n} de ${repository}`;
+  return `lendo ${what === "a issue" ? "uma issue" : "um pull request"} de ${repository}`;
+}
+
 function text(input: unknown, key: string, label: string, max: number, optional = false): string {
   const v = (input as Record<string, unknown> | null)?.[key];
   if ((v === undefined || v === null || v === "") && optional) return "";
@@ -102,7 +111,11 @@ export function githubTools(github: GitHub): ToolDefinition[] {
     return allowed;
   }
 
-  /** Uma leitura do GitHub com as permissões dela, num repositório (ou em todos, `repository: false`). */
+  /**
+   * Uma leitura do GitHub com as permissões dela, num repositório (ou em todos, `repository: false`).
+   * `named` é o rótulo com o repositório ("lendo a issue 214 de time/site"), quando o repositório é
+   * um nome do GitHub que o Agente alcança; senão, vale o genérico.
+   */
   const read = (
     def: Omit<ReadTool, "origin" | "access" | "run">,
     permissions: GitHubPermissions,
@@ -111,11 +124,21 @@ export function githubTools(github: GitHub): ToolDefinition[] {
       input: unknown,
       repository: string | undefined,
     ) => Promise<string>,
-    opts: { repository?: boolean } = {},
+    opts: { repository?: boolean; named?: (repository: string, input: unknown) => string } = {},
   ): ReadTool => ({
     ...def,
     origin: "github",
     access: "read",
+    ...(opts.named
+      ? {
+          async describe(ctx, input) {
+            const repository = (input as Record<string, unknown> | null)?.repositorio;
+            if (typeof repository !== "string" || !REPO_NAME.test(repository.trim())) return {};
+            await withinAgent(ctx.run.agentId, repository.trim());
+            return { label: opts.named!(repository.trim(), input) };
+          },
+        }
+      : {}),
     async run(ctx, input, signal) {
       const repository = opts.repository === false ? undefined : str(input, "repositorio", "o repositório");
       if (repository) repoPath(repository);
@@ -206,6 +229,7 @@ export function githubTools(github: GitHub): ToolDefinition[] {
           ...(cut ? ["", `(cortado em ${MAX_FILE_CHARS} caracteres)`] : []),
         ].join("\n");
       },
+      { named: (repo) => `lendo um arquivo de ${repo}` },
     ),
 
     read(
@@ -231,6 +255,7 @@ export function githubTools(github: GitHub): ToolDefinition[] {
           .map((i) => `- #${i.number} [${stateText(i.state, true)}] ${i.title} (por ${i.user?.login ?? "?"})`)
           .join("\n");
       },
+      { named: (repo) => `listando as issues de ${repo}` },
     ),
 
     read(
@@ -261,6 +286,7 @@ export function githubTools(github: GitHub): ToolDefinition[] {
           ...comments(list),
         ].join("\n");
       },
+      { named: (repo, input) => numbered("a issue", repo, input) },
     ),
 
     read(
@@ -288,6 +314,7 @@ export function githubTools(github: GitHub): ToolDefinition[] {
           )
           .join("\n");
       },
+      { named: (repo) => `listando os pull requests de ${repo}` },
     ),
 
     read(
@@ -318,6 +345,7 @@ export function githubTools(github: GitHub): ToolDefinition[] {
           ...comments(list),
         ].join("\n");
       },
+      { named: (repo, input) => numbered("o pull request", repo, input) },
     ),
 
     {

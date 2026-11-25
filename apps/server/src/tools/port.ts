@@ -85,11 +85,12 @@ interface ToolBase {
   /** O passo no Andamento enquanto roda ("listando os Agentes"). */
   label: string;
   /**
-   * O rótulo desta execução, quando depende dela (a credencial do autor num Conector: "usando
-   * buscar cliente no CRM de Ana"), e o que o Andamento mostra a todos se terminar bem ("usou o CRM
-   * de Ana"). Sem ele, vale `label`.
+   * O rótulo desta chamada, quando depende dela (a credencial do autor num Conector: "usando
+   * buscar cliente no CRM de Ana"; a entrada: "buscando em #produto", "lendo a issue 214 de
+   * time/site"), e o que o Andamento mostra a todos se terminar bem ("usou o CRM de Ana"). Sem ele,
+   * vale `label`. O Andamento é visto por todos da conversa: só nomeie o que está no alcance.
    */
-  describe?(ctx: ToolContext): Promise<{ label?: string; used?: string }>;
+  describe?(ctx: ToolContext, input: unknown): Promise<{ label?: string; used?: string }>;
   /** Para o modelo e para o Admin. */
   description: string;
   origin: ToolOrigin;
@@ -359,10 +360,10 @@ export function createToolPort(deps: {
     /** As Ferramentas de uma execução, com cada uso gravado e avisado a `observer`. */
     forExecution(run: ToolRun, observer: ToolObserver): ExecutionTools {
       /** Grava o começo de um uso e avisa o Andamento. */
-      async function begin(def: ToolDefinition, label: string) {
+      async function begin(def: ToolDefinition, label: string, input?: unknown) {
         const id = crypto.randomUUID();
         const own: { label?: string; used?: string } = def.describe
-          ? await def.describe({ db, run }).catch(() => ({}))
+          ? await def.describe({ db, run }, input).catch(() => ({}))
           : {};
         await db.insert(executionToolCalls).values({
           id,
@@ -429,7 +430,7 @@ export function createToolPort(deps: {
           if (!def || runsInBrain(def)) {
             return { content: `A Ferramenta ${name} não está disponível para você.`, isError: true };
           }
-          const id = await begin(def, def.label);
+          const id = await begin(def, def.label, input);
           // A escrita não roda aqui: só a conferência e a ação exata, que vira o Pedido de aprovação.
           const outcome =
             def.access === "read"
