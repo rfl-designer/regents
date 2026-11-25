@@ -49,7 +49,7 @@ import {
 import { migrationState, NewerDatabaseError } from "./installation/migrations";
 import { localApiNodeKey, type NodeKeyPort, noNodeKey } from "./installation/node-key";
 import { loadMasterKey, secretBox } from "./secrets";
-import { toolTimeoutFromEnv } from "./tools/port";
+import { toolMaxTurnsFromEnv, toolTimeoutFromEnv } from "./tools/port";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 
@@ -215,10 +215,12 @@ async function main(command: string | undefined) {
   if (!/^(mailto:|https:)/.test(vapidContact)) fail(`SHEARIM_VAPID_CONTACT=${vapidContact} não é mailto: nem https:.`);
   let limits: ReturnType<typeof limitsFromEnv>;
   let toolTimeoutMs: number | undefined;
+  let toolMaxTurns: number | undefined;
   let approvalTtlMs: number | undefined;
   try {
     limits = limitsFromEnv(process.env);
     toolTimeoutMs = toolTimeoutFromEnv(process.env);
+    toolMaxTurns = toolMaxTurnsFromEnv(process.env);
     approvalTtlMs = approvalTtlFromEnv(process.env);
   } catch (err) {
     fail((err as Error).message);
@@ -239,8 +241,8 @@ async function main(command: string | undefined) {
     installation: { version: process.env.SHEARIM_VERSION || "dev", watch: true, nodeKey: who.nodeKey },
     // Os tetos de concorrência das execuções (2 por Conta, 4 na Chave, 8 processos no host).
     limits,
-    // O prazo padrão de uma chamada de Ferramenta (60 s).
-    tools: { timeoutMs: toolTimeoutMs },
+    // O prazo padrão de uma chamada de Ferramenta (60 s) e o teto de turnos de Ferramenta (20).
+    tools: { timeoutMs: toolTimeoutMs, maxTurns: toolMaxTurns },
     // O prazo do Pedido de aprovação (24 h).
     approvals: { ttlMs: approvalTtlMs },
   });

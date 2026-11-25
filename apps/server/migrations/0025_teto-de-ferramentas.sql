@@ -1,0 +1,1 @@
+ALTER TABLE "executions" ADD COLUMN "tool_limit" boolean DEFAULT false NOT NULL;

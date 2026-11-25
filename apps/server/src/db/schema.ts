@@ -300,6 +300,11 @@ export const executions = pgTable(
     replyMessageId: uuid().references(() => messages.id),
     finishedAt: timestamp({ withTimezone: true }),
     /**
+     * A tentativa atual chegou ao teto de turnos de Ferramenta ("parou no limite de Ferramentas"):
+     * o Agente responde com o que tem, numa última chamada sem Ferramentas (#53).
+     */
+    toolLimit: boolean().notNull().default(false),
+    /**
      * Na continuação (ADR 0011): o Pedido de aprovação depois de cuja decisão ela segue a resposta.
      * Nulo na execução que a mensagem disparou.
      */

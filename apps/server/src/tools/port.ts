@@ -25,6 +25,16 @@ export function toolTimeoutFromEnv(env: Record<string, string | undefined>): num
   return n * 1000;
 }
 
+/** O teto de turnos de Ferramenta de uma resposta que o `.env` ajusta (`SHEARIM_TOOL_MAX_TURNS`). */
+export function toolMaxTurnsFromEnv(env: Record<string, string | undefined>): number | undefined {
+  const raw = env.SHEARIM_TOOL_MAX_TURNS?.trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1)
+    throw new Error(`SHEARIM_TOOL_MAX_TURNS=${raw} não é um número inteiro maior que zero.`);
+  return n;
+}
+
 /** A execução em que uma Ferramenta roda: de onde saem o alcance e o catálogo efetivo. */
 export interface ToolRun {
   executionId: string;

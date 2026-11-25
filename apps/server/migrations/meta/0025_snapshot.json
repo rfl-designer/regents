@@ -1,5 +1,5 @@
 {
-  "id": "feef3e1d-229c-4283-9cef-4fad0166437a",
+  "id": "d28ddea7-d639-4f06-b8ab-09a48e6a454b",
   "prevId": "0b0d1f9e-b046-424f-bf54-989a1880da6e",
   "version": "7",
   "dialect": "postgresql",
@@ -1552,6 +1552,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "tool_limit": {
+          "name": "tool_limit",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "approval_request_id": {
           "name": "approval_request_id",
           "type": "uuid",
@@ -1693,121 +1700,6 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.github_app": {
-      "name": "github_app",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "default": 1
-        },
-        "pending_state": {
-          "name": "pending_state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "origin": {
-          "name": "origin",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "app_id": {
-          "name": "app_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "slug": {
-          "name": "slug",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "owner": {
-          "name": "owner",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "html_url": {
-          "name": "html_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "secrets_ciphertext": {
-          "name": "secrets_ciphertext",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "secrets_iv": {
-          "name": "secrets_iv",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "installation_id": {
-          "name": "installation_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "installation_account": {
-          "name": "installation_account",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "installed_at": {
-          "name": "installed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "failure_reason": {
-          "name": "failure_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "failed_at": {
-          "name": "failed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "github_app_uma_linha": {
-          "name": "github_app_uma_linha",
-          "value": "\"github_app\".\"id\" = 1"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.installation": {

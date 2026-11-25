@@ -781,6 +781,11 @@ export interface ExecutionDto {
    * à vista (a resposta segue sem a Ferramenta que falhou). Vazio sem Ferramentas.
    */
   tools: ToolCallDto[];
+  /**
+   * "parou no limite de Ferramentas": a tentativa atual chegou ao teto de turnos de Ferramenta e o
+   * Agente responde com o que tem, numa última chamada sem Ferramentas (#53).
+   */
+  toolLimit: boolean;
 }
 
 /**
