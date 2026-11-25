@@ -75,7 +75,7 @@ O resultado visível que a Articuladora dá a uma mensagem de pessoa num Canal c
 _Avoid_: roteamento, decisão, triagem
 
 **Ferramenta**:
-Uma ação que um Agente pode usar durante uma resposta: ler o Workspace, ler a web, ou ler e agir num sistema de fora por um Conector. O Admin escolhe as Ferramentas de cada Agente, inclusive as da Articuladora. No Workspace, uma Ferramenta alcança só o que o autor da mensagem e todos os participantes da conversa podem ver. Toda escrita passa por um Pedido de aprovação; leitura não. Um Agente só escreve em conversas de que participa e em que o autor pode escrever. O uso de uma Ferramenta aparece no Andamento, e o que ela gasta conta no orçamento do Agente. Uma resposta usa Ferramentas até um teto; ao chegar nele, o Agente responde com o que tem. O Desfecho nunca usa Ferramentas.
+Uma ação que um Agente pode usar durante uma resposta: ler o Workspace, ler a web, ou ler e agir num sistema de fora por um Conector. O Admin escolhe as Ferramentas de cada Agente, inclusive as da Articuladora. No Workspace, uma Ferramenta alcança só o que o autor da mensagem e todos os participantes da conversa podem ver. Toda escrita passa por um Pedido de aprovação; leitura não. Um Agente só escreve em conversas que a resposta alcança, de que ele participa e em que o autor pode escrever. O uso de uma Ferramenta aparece no Andamento, e o que ela gasta conta no orçamento do Agente. Uma resposta usa Ferramentas até um teto; ao chegar nele, o Agente responde com o que tem. O Desfecho nunca usa Ferramentas.
 _Avoid_: tool, skill, capacidade, função
 
 **Conector**:
