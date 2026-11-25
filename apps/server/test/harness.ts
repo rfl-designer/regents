@@ -401,6 +401,8 @@ export async function testApp(
     limits?: AppDeps["limits"];
     /** A porta de Ferramentas: prazo e catálogo (ex.: uma Ferramenta que trava). */
     tools?: AppDeps["tools"];
+    /** O prazo do Pedido de aprovação (padrão: 24 h). */
+    approvals?: AppDeps["approvals"];
   } = {},
 ) {
   const db = opts.db ?? (await testDb()).db;
@@ -425,6 +427,7 @@ export async function testApp(
       installation: opts.installation,
       limits: opts.limits,
       tools: opts.tools,
+      approvals: opts.approvals,
     });
     await built.start();
     return built;

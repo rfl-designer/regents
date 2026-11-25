@@ -27,6 +27,8 @@ export default {
             SHEARIM_PGLITE_DIR: "memory://",
             // As pastas das Contas ficam com os resultados do e2e, não em .data/.
             SHEARIM_ACCOUNTS_DIR: ".e2e/contas",
+            // O Pedido de aprovação expira em 45 s (0,0125 h), para o e2e ver a expiração.
+            SHEARIM_APPROVAL_TTL_H: "0.0125",
           },
           log: ".e2e/logs/app.log",
         },

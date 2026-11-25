@@ -5,7 +5,7 @@ import {
   type UnreadDto,
   type UnreadMessagesDto,
 } from "@shearim/contracts";
-import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, count, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { type Context, Hono } from "hono";
 import type { Clock } from "./clock";
@@ -14,7 +14,8 @@ import { type Db, isUuid, schema } from "./db/client";
 import type { EventHub } from "./events";
 import type { Env } from "./members";
 
-const { messages, messageReads, messageMentions, channelParticipants, channels, threadFollows } = schema;
+const { messages, messageReads, messageMentions, channelParticipants, channels, threadFollows, approvalRequests } =
+  schema;
 const origins = alias(messages, "origins");
 const roots = alias(messages, "roots");
 const rootOrigins = alias(messages, "root_origins");
@@ -29,7 +30,8 @@ const MARK_MAX = 500;
  * a resposta ancorada inclusive.
  *
  * Expõe a contagem por conversa, a de Menções e DMs, a primeira não-lida na ordem de exibição
- * e o total do badge. O `setAppBadge` e o push (#32) leem o `total` daqui.
+ * e o total do badge (com os Pedidos de aprovação que esperam o Membro). O `setAppBadge` e o push
+ * (#32) leem o `total` daqui.
  */
 export function createReading(deps: { db: Db; clock: Clock; events: EventHub }) {
   const { db, clock, events } = deps;
@@ -170,10 +172,18 @@ async function unreadRows(db: Db, memberId: string, conversationId?: string) {
   });
 }
 
+/**
+ * As não-lidas do Membro. O `total` (o badge) conta também os Pedidos de aprovação que esperam a
+ * decisão dele (o autor), até serem decididos, expirarem ou serem cancelados.
+ */
 export async function unreadOf(db: Db, memberId: string): Promise<UnreadDto> {
   const rows = await unreadRows(db, memberId);
+  const [asked] = await db
+    .select({ n: count() })
+    .from(approvalRequests)
+    .where(and(eq(approvalRequests.authorMemberId, memberId), eq(approvalRequests.state, "pending")));
   const byConversation = new Map<string, UnreadDto["conversations"][number]>();
-  const unread: UnreadDto = { conversations: [], total: 0, mentions: 0, dms: 0 };
+  const unread: UnreadDto = { conversations: [], total: asked?.n ?? 0, mentions: 0, dms: 0 };
   for (const r of rows) {
     let c = byConversation.get(r.conversationId);
     if (!c) {

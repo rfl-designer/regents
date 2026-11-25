@@ -11,7 +11,10 @@
  *   aprovação.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ApprovalRequestDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ApprovalRequestDto, ChannelDto, ExecutionDto, MessageDto, UnreadDto } from "@shearim/contracts";
+import { and, eq } from "drizzle-orm";
+import { approvalTtlFromEnv } from "../src/approvals";
+import { schema } from "../src/db/client";
 import { toolResults } from "./fakes/messages-api";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
 
@@ -357,9 +360,17 @@ describe("o alcance da escrita", () => {
       const pedido = await pedidoPendente(t, geral.id);
       expect(pedido.summary).toBe("Postar em #diretoria: “Fechamos o contrato.”");
 
-      // Bruno sai do Workspace e volta: quem volta não herda o Canal privado.
-      expect((await t.as(juliana).delete(`/api/members/${brunoMe.id}`)).status).toBe(204);
-      await t.addMember(bruno, { by: juliana });
+      // Bruno deixa de participar do #diretoria durante a espera. Não há rota para tirar alguém de
+      // um Canal privado, e sair do Workspace cancela o Pedido (teste abaixo): a perda do acesso
+      // é simulada no banco, para provar que a aprovação confere o alcance de novo na hora de agir.
+      await t.db
+        .delete(schema.channelParticipants)
+        .where(
+          and(
+            eq(schema.channelParticipants.channelId, diretoria.id),
+            eq(schema.channelParticipants.memberId, brunoMe.id),
+          ),
+        );
 
       const aprovado = await aprovar(t, pedido);
       expect(aprovado.status).toBe(200);
@@ -440,6 +451,203 @@ describe("responder em Thread e duas escritas", () => {
         author: { kind: "agent", id: faro.id },
       });
       expect((await respostaA(t, geral.id, origem)).body).toBe("Respondi na Thread.");
+    },
+    LONGO,
+  );
+});
+
+const HORA = 60 * 60_000;
+
+describe("o Pedido que ninguém decide", () => {
+  test(
+    "pendente há 24 h, o Pedido expira: o Andamento termina em “a aprovação expirou”, sem continuação, e não se decide mais",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t);
+      const abaDaJuliana = await t.socket(juliana);
+
+      t.anthropic.reply({
+        toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "A reunião mudou." } }],
+      });
+      const origem = await enviar(t, geral.id, "@Faro avisa no #anuncios");
+      const pedido = await pedidoPendente(t, geral.id);
+      expect(new Date(pedido.expiresAt).getTime() - new Date(pedido.createdAt).getTime()).toBe(24 * HORA);
+
+      // Um minuto antes, nada muda.
+      t.clock.advance(24 * HORA - 60_000);
+      expect((await pedidos(t, geral.id))[0]!.state).toBe("pending");
+
+      t.clock.advance(60_000);
+      const { approval } = await andamentoDoPedido(abaDaJuliana, pedido.id);
+      expect(approval).toMatchObject({ state: "expired", decidedAt: t.clock.now().toISOString() });
+      const fim = await andamento(abaDaJuliana, origem, (e) => e.state === "cancelled");
+      expect(fim).toMatchObject({ id: pedido.executionId, state: "cancelled", reason: "a aprovação expirou" });
+
+      expect((await aprovar(t, pedido)).status).toBe(409);
+      expect((await recusar(t, pedido)).status).toBe(409);
+      // Sem continuação: só o pedido de resposta que pediu a escrita, e nenhuma resposta.
+      expect(respostas(t)).toHaveLength(1);
+      expect((await mensagens(t, geral.id)).some((m) => m.originMessageId === origem.id)).toBe(false);
+      const [aberta] = (await (
+        await t.as(juliana).get(`/api/conversations/${geral.id}/executions`)
+      ).json()) as ExecutionDto[];
+      expect(aberta).toMatchObject({ state: "cancelled", reason: "a aprovação expirou" });
+    },
+    LONGO,
+  );
+
+  test(
+    "o prazo é o da Instalação (SHEARIM_APPROVAL_TTL_H), e o Pedido vencido com o servidor parado expira ao subir",
+    async () => {
+      expect(approvalTtlFromEnv({})).toBeUndefined();
+      expect(approvalTtlFromEnv({ SHEARIM_APPROVAL_TTL_H: "2" })).toBe(2 * HORA);
+      expect(approvalTtlFromEnv({ SHEARIM_APPROVAL_TTL_H: "0.5" })).toBe(HORA / 2);
+      expect(() => approvalTtlFromEnv({ SHEARIM_APPROVAL_TTL_H: "0" })).toThrow(
+        "SHEARIM_APPROVAL_TTL_H=0 não é um número maior que zero.",
+      );
+      expect(() => approvalTtlFromEnv({ SHEARIM_APPROVAL_TTL_H: "um dia" })).toThrow();
+
+      const t = await testApp({ approvals: { ttlMs: 2 * HORA } });
+      const { geral } = await workspace(t);
+      t.anthropic.reply({ toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "Oi." } }] });
+      await enviar(t, geral.id, "@Faro avisa no #anuncios");
+      const pedido = await pedidoPendente(t, geral.id);
+      expect(new Date(pedido.expiresAt).getTime() - new Date(pedido.createdAt).getTime()).toBe(2 * HORA);
+
+      // O servidor para antes de vencer e volta depois.
+      await t.shutdown();
+      t.clock.advance(3 * HORA);
+      await t.restart();
+      await eventually("o Pedido expirar", async () => (await pedidos(t, geral.id))[0]!.state === "expired", 10_000);
+      const [execucao] = (await (
+        await t.as(juliana).get(`/api/conversations/${geral.id}/executions`)
+      ).json()) as ExecutionDto[];
+      expect(execucao).toMatchObject({ id: pedido.executionId, state: "cancelled", reason: "a aprovação expirou" });
+    },
+    LONGO,
+  );
+
+  test(
+    "cancelar a mensagem enquanto ela espera aprovação cancela o Pedido, que todos veem cancelado, sem continuação",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t);
+      const abaDaJuliana = await t.socket(juliana);
+
+      t.anthropic.reply({ toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "Oi." } }] });
+      const origem = await enviar(t, geral.id, "@Faro avisa no #anuncios");
+      const pedido = await pedidoPendente(t, geral.id);
+
+      // Só o autor cancela (como antes); esperando aprovação, há o que cancelar.
+      const cancelar = (who = bruno) => t.as(who).post(`/api/conversations/${geral.id}/messages/${origem.id}/cancel`);
+      expect((await cancelar(juliana)).status).toBe(403);
+      const cancelada = await cancelar();
+      expect(cancelada.status).toBe(200);
+      expect(await cancelada.json()).toMatchObject([{ id: pedido.executionId, state: "cancelled", reason: null }]);
+
+      const { approval } = await andamentoDoPedido(abaDaJuliana, pedido.id);
+      expect(approval).toMatchObject({ state: "cancelled", decidedAt: t.clock.now().toISOString() });
+      expect((await pedidos(t, geral.id)).map((p) => p.state)).toEqual(["cancelled"]);
+      expect((await aprovar(t, pedido)).status).toBe(409);
+      expect((await cancelar()).status).toBe(409);
+      // Cancelado não expira depois: o prazo passa e nada muda.
+      t.clock.advance(25 * HORA);
+      expect((await pedidos(t, geral.id))[0]!.state).toBe("cancelled");
+      expect(respostas(t)).toHaveLength(1);
+    },
+    LONGO,
+  );
+
+  test(
+    "o autor removido do Workspace: o Pedido dele é cancelado junto com a resposta",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t);
+      t.anthropic.reply({ toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "Oi." } }] });
+      await enviar(t, geral.id, "@Faro avisa no #anuncios");
+      const pedido = await pedidoPendente(t, geral.id);
+
+      const brunoMe = (await (await t.as(bruno).get("/api/me")).json()) as { id: string };
+      expect((await t.as(juliana).delete(`/api/members/${brunoMe.id}`)).status).toBe(204);
+
+      expect((await pedidos(t, geral.id))[0]!.state).toBe("cancelled");
+      const [execucao] = (await (
+        await t.as(juliana).get(`/api/conversations/${geral.id}/executions`)
+      ).json()) as ExecutionDto[];
+      expect(execucao).toMatchObject({
+        id: pedido.executionId,
+        state: "cancelled",
+        reason: "quem escreveu saiu do Workspace",
+      });
+    },
+    LONGO,
+  );
+
+  test(
+    "o autor recebe o push “<Agente> pede sua aprovação”, e o Pedido conta no badge até ser decidido",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t);
+      const doBruno = await t.pushDevice(bruno);
+      const abaDoBruno = await t.socket(bruno);
+      const badge = async () => ((await (await t.as(bruno).get("/api/unread")).json()) as UnreadDto).total;
+      expect(await badge()).toBe(0);
+
+      t.anthropic.reply(
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "A reunião mudou." } }] },
+        { text: "Tudo bem, não avisei." },
+      );
+      const origem = await enviar(t, geral.id, "@Faro avisa no #anuncios");
+      const pedido = await pedidoPendente(t, geral.id);
+
+      const push = await doBruno.next({ timeoutMs: 10_000 });
+      expect(push.payload).toEqual({
+        web_push: 8030,
+        notification: {
+          title: "#geral · Faro pede sua aprovação",
+          body: "Postar em #anuncios: “A reunião mudou.”",
+          navigate: expect.stringMatching(new RegExp(`/c/${geral.id}\\?m=${origem.id}$`)),
+          tag: `aprovacao-${pedido.id}`,
+          lang: "pt-BR",
+        },
+        app_badge: 1,
+      });
+      expect(push.urgency).toBe("high");
+      expect(await badge()).toBe(1);
+      expect((await abaDoBruno.next("unread.updated", { timeoutMs: 10_000 })).unread.total).toBe(1);
+
+      // Decidido, sai do badge (antes de a resposta da continuação chegar e contar como não-lida).
+      // A recusa não posta nada no #anuncios, que também contaria para o Bruno.
+      expect((await recusar(t, pedido)).status).toBe(200);
+      expect((await abaDoBruno.next("unread.updated", { timeoutMs: 10_000 })).unread.total).toBe(0);
+      await respostaA(t, geral.id, origem);
+      // Ninguém mais recebeu o push do Pedido: só o autor decide.
+      expect(t.push.deliveries.filter((d) => d.tag === `aprovacao-${pedido.id}`)).toHaveLength(1);
+    },
+    LONGO,
+  );
+
+  test(
+    "o Pedido expirado ou cancelado sai do badge do autor",
+    async () => {
+      const t = await testApp();
+      const { geral } = await workspace(t);
+      const badge = async () => ((await (await t.as(bruno).get("/api/unread")).json()) as UnreadDto).total;
+      t.anthropic.reply(
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "Um." } }] },
+        { toolUse: [{ name: "postar_mensagem", input: { conversa: "#anuncios", texto: "Dois." } }] },
+      );
+      const primeira = await enviar(t, geral.id, "@Faro avisa um");
+      await pedidoPendente(t, geral.id, 1);
+      await enviar(t, geral.id, "@Faro avisa dois");
+      await pedidoPendente(t, geral.id, 2);
+      expect(await badge()).toBe(2);
+
+      await t.as(bruno).post(`/api/conversations/${geral.id}/messages/${primeira.id}/cancel`);
+      expect(await badge()).toBe(1);
+      t.clock.advance(24 * HORA);
+      await eventually("o Pedido expirar", async () => (await pedidos(t, geral.id))[1]!.state === "expired", 10_000);
+      expect(await badge()).toBe(0);
     },
     LONGO,
   );
