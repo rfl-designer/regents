@@ -27,6 +27,7 @@ import type {
   MeDto,
   MemberRole,
   MemberSummaryDto,
+  MemoryItemDto,
   MessageDto,
   MyConnectorDto,
   MyJoinRequestDto,
@@ -163,6 +164,8 @@ export const api = {
       `/api/conversations/${conversationId}/approvals/${approvalId}/reject`,
       json("POST", reason.trim() ? { reason } : {}),
     ),
+  /** A Memória da Conversa (com as Threads): ativos e arquivados, do mais novo ao mais velho. */
+  memory: (conversationId: string) => call<MemoryItemDto[]>(`/api/conversations/${conversationId}/memory`),
   /** Os Desfechos da Articuladora numa conversa (uma DM não tem). */
   outcomes: (conversationId: string) => call<OutcomeDto[]>(`/api/conversations/${conversationId}/outcomes`),
   updateAgent: (agentId: string, input: UpdateAgentInput) =>

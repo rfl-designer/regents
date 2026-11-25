@@ -1,4 +1,5 @@
 import type { DmDto, MeDto } from "@shearim/contracts";
+import { useState } from "react";
 import { Conversation } from "./ChannelView";
 
 /** Como a DM se chama para quem a vê: os nomes das outras pessoas. */
@@ -15,15 +16,26 @@ function dmHint(dm: DmDto) {
 
 export function DmView({ dm, me, focus }: { dm: DmDto; me: MeDto; focus?: string }) {
   const title = dmTitle(dm, me);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   return (
     <main className="channel">
       <header className="channel-header">
         <div className="row">
           <h1 className="channel-name">{title}</h1>
           <span className="hint">{dmHint(dm)}</span>
+          <button type="button" className="link" onClick={() => setMemoryOpen((v) => !v)}>
+            Memória
+          </button>
         </div>
       </header>
-      <Conversation conversationId={dm.id} label={title} me={me} focus={focus} />
+      <Conversation
+        conversationId={dm.id}
+        label={title}
+        me={me}
+        focus={focus}
+        memoryOpen={memoryOpen}
+        onCloseMemory={() => setMemoryOpen(false)}
+      />
     </main>
   );
 }

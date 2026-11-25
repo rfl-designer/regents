@@ -421,6 +421,8 @@ export async function testApp(
     github?: AppDeps["github"];
     /** O prazo do Pedido de aprovação (padrão: 24 h). */
     approvals?: AppDeps["approvals"];
+    /** A Memória: o modelo da extração (padrão: o da Instalação, `claude-haiku-5-5`). */
+    memory?: AppDeps["memory"];
   } = {},
 ) {
   const db = opts.db ?? (await testDb()).db;
@@ -447,6 +449,7 @@ export async function testApp(
       tools: opts.tools,
       github: opts.github,
       approvals: opts.approvals,
+      memory: opts.memory,
     });
     await built.start();
     return built;

@@ -234,9 +234,10 @@ export const executionState = pgEnum("execution_state", [
 /**
  * `mention`: um Agente mencionado. `dm`: o Agente de uma DM com Agente, a cada mensagem.
  * `route`: o roteamento da Articuladora (o passo "decidindo"), que dá o Desfecho. `reply`: a
- * Articuladora responde ela mesma. `delegated`: um Agente do Canal a quem ela delegou.
+ * Articuladora responde ela mesma. `delegated`: um Agente do Canal a quem ela delegou. `memory`:
+ * a extração da Memória (ADR 0013), que lê a troca depois que a resposta foi entregue.
  */
-export const executionKind = pgEnum("execution_kind", ["mention", "dm", "route", "reply", "delegated"]);
+export const executionKind = pgEnum("execution_kind", ["mention", "dm", "route", "reply", "delegated", "memory"]);
 
 /**
  * A fila de execuções (Spec, módulo 6): cada chamada a modelo por causa de uma mensagem.
@@ -309,6 +310,11 @@ export const executions = pgTable(
      * Nulo na execução que a mensagem disparou.
      */
     approvalRequestId: uuid().references((): AnyPgColumn => approvalRequests.id),
+    /**
+     * Na extração da Memória (`memory`): a execução da resposta cuja troca ela lê (a resposta já
+     * entregue, `reply_message_id` dela). Nulo nas outras.
+     */
+    sourceExecutionId: uuid().references((): AnyPgColumn => executions.id),
   },
   (t) => [index().on(t.state, t.arrivedAt, t.seq), index().on(t.channelId, t.state)],
 );
@@ -902,4 +908,58 @@ export const agentGithubRepositories = pgTable(
     repository: text().notNull(),
   },
   (t) => [primaryKey({ columns: [t.agentId, t.repository] })],
+);
+
+export const memoryScope = pgEnum("memory_scope", ["workspace", "conversation", "agent"]);
+export const memoryAuthor = pgEnum("memory_author", ["extraction", "member", "admin"]);
+export const memoryState = pgEnum("memory_state", ["active", "archived"]);
+
+/**
+ * A Memória (spec #60): o que fica de uma conversa para os Agentes usarem em respostas futuras.
+ * Cada item guarda a conversa e a mensagem de origem (vazias só no item que um Admin escreve
+ * direto na Memória do Workspace); o alcance não é guardado, é calculado na hora de ler (ADR 0012).
+ *
+ * - Escopo: `conversation` (os fatos e as decisões de um Canal ou DM, com as Threads), `agent`
+ *   (o jeito de trabalhar de um Agente: `agent_id`, que sai junto com o Agente) e `workspace`.
+ * - Quem criou: a extração (`execution_id`, ADR 0013), um Membro ou um Admin (`created_by_member_id`).
+ * - Nada é apagado: uma correção cria a versão nova e arquiva a anterior, que aponta para ela
+ *   (`replaced_by_id`); desfazer arquiva.
+ */
+export const memoryItems = pgTable(
+  "memory_items",
+  {
+    id: uuid().primaryKey(),
+    /** Ordem de gravação: desempata itens com a mesma hora. */
+    seq: bigint({ mode: "number" }).generatedAlwaysAsIdentity(),
+    scope: memoryScope().notNull(),
+    /** A conversa de origem (o Canal ou a DM; a Thread fica na mensagem). */
+    conversationId: uuid().references(() => channels.id),
+    /** A mensagem de origem: a mensagem de pessoa da troca que gerou o item. */
+    originMessageId: uuid().references(() => messages.id),
+    /** Só no escopo `agent`: de quem é a lição. Apagar o Agente leva a Memória dele junto. */
+    agentId: uuid().references(() => agents.id, { onDelete: "cascade" }),
+    text: text().notNull(),
+    createdBy: memoryAuthor().notNull(),
+    /** Quem escreveu, quando foi gente (`member` ou `admin`). */
+    createdByMemberId: uuid().references(() => members.id),
+    /**
+     * Quando foi a extração: a execução que guardou (o Andamento da mensagem de origem mostra o
+     * "guardou na Memória"). Sem bloquear a limpeza das execuções de um Agente apagado.
+     */
+    executionId: uuid().references(() => executions.id, { onDelete: "set null" }),
+    state: memoryState().notNull(),
+    /** No item arquivado por uma correção: a versão que o substituiu. */
+    replacedById: uuid().references((): AnyPgColumn => memoryItems.id),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+    archivedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    index().on(t.conversationId, t.state, t.seq),
+    index().on(t.agentId, t.state, t.seq),
+    check("memory_items_agente_so_no_escopo_agente", sql`(${t.scope} = 'agent') = (${t.agentId} is not null)`),
+    check(
+      "memory_items_conversa_com_origem",
+      sql`${t.scope} = 'workspace' or (${t.conversationId} is not null and ${t.originMessageId} is not null)`,
+    ),
+  ],
 );

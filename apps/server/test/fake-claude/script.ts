@@ -138,6 +138,13 @@ export interface FakeClaudeScript {
    * Para "a 1ª tentativa trava, a 2ª responde".
    */
   runs?: FakeRun[];
+  /**
+   * A extração da Memória (ADR 0013), reconhecida pelo `--json-schema` que pede `operacoes`: fila
+   * própria, um por start, que não come `runs`. Vazia, vale `memoryRun`, e sem ele a extração não
+   * guarda nada (`structuredOutput: { operacoes: [] }`).
+   */
+  memoryRuns?: FakeRun[];
+  memoryRun?: FakeRun;
 }
 
 export const FAKE_LOGIN_CODE = "codigo-da-pagina-da-anthropic";

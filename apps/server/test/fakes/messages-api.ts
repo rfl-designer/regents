@@ -8,6 +8,11 @@
  *
  * Nos testes: `t.anthropic` (ou `fakeMessagesApi()` do arnês) e `api.reply({...})` para roteirizar
  * a próxima resposta. No e2e, `e2e/serve.ts` sobe este falso ao lado do servidor.
+ *
+ * A extração da Memória (ADR 0013) é reconhecida pelo schema da saída estruturada
+ * (`isExtraction`) e tem fila e registro próprios: `api.remember({...})` roteiriza a próxima,
+ * `api.extractions` guarda as que chegaram, e sem roteiro ela não guarda nada (`operacoes: []`).
+ * Assim, o roteiro e as contagens das respostas (`reply`, `requests`) não mudam por causa dela.
  */
 
 /** O que o falso responde a uma chamada. Sem nada, responde um texto curto. */
@@ -67,8 +72,17 @@ export interface RecordedRequest {
 export interface FakeMessagesApi {
   /** Base para o `baseURL` do SDK (sem `/v1`). */
   url: string;
-  /** Roteiriza as próximas respostas, na ordem; acabado o roteiro, vale o padrão. */
+  /** Roteiriza as próximas respostas (e roteamentos), na ordem; acabado o roteiro, vale o padrão. */
   reply(...replies: FakeReply[]): void;
+  /**
+   * Roteiriza as próximas extrações da Memória, na ordem (ex. `{ json: { operacoes: [...] } }`);
+   * acabado o roteiro, a extração não guarda nada.
+   */
+  remember(...replies: FakeReply[]): void;
+  /** As extrações da Memória que chegaram (fora de `requests`). */
+  extractions: RecordedRequest[];
+  /** Espera até `n` extrações terem chegado. */
+  waitForExtractions(n: number, timeoutMs?: number): Promise<RecordedRequest[]>;
   /** Só estas credenciais passam; as outras recebem 401 `authentication_error`. Vazio: qualquer uma. */
   acceptKeys(...keys: string[]): void;
   requests: RecordedRequest[];
@@ -122,6 +136,21 @@ export function toolResults(body: RecordedRequest["body"]): RecordedToolResult[]
 }
 
 /**
+ * A extração da Memória (ADR 0013), pelo schema da saída estruturada: ele pede `operacoes`. O
+ * roteamento da Articuladora pede `decisao`.
+ */
+export function isExtraction(body: RecordedRequest["body"]) {
+  const format = (body.output_config as { format?: { schema?: { properties?: object } } } | undefined)?.format;
+  return Boolean(format?.schema?.properties && "operacoes" in format.schema.properties);
+}
+
+/**
+ * A extração que não guarda nada: o padrão quando o teste não a roteiriza. De graça (sem tokens),
+ * para não mexer no gasto na Chave de quem não está testando a Memória.
+ */
+export const NOTHING_TO_REMEMBER: FakeReply = { json: { operacoes: [] }, usage: { input_tokens: 0, output_tokens: 0 } };
+
+/**
  * O padrão: um texto curto; ao roteamento da Articuladora (com `output_config`), o Desfecho
  * "nenhum", para um teste que não roteiriza o roteamento não ver resposta a mais.
  */
@@ -133,10 +162,17 @@ export function defaultFakeReply(req: RecordedRequest): FakeReply {
 }
 
 export async function startFakeMessagesApi(
-  opts: { port?: number; defaultReply?: (req: RecordedRequest) => FakeReply } = {},
+  opts: {
+    port?: number;
+    defaultReply?: (req: RecordedRequest) => FakeReply;
+    /** O padrão da extração da Memória sem roteiro (padrão: `NOTHING_TO_REMEMBER`). */
+    defaultExtraction?: (req: RecordedRequest) => FakeReply;
+  } = {},
 ): Promise<FakeMessagesApi> {
   const script: FakeReply[] = [];
+  const memoryScript: FakeReply[] = [];
   const requests: RecordedRequest[] = [];
+  const extractions: RecordedRequest[] = [];
   const accepted = new Set<string>();
   const arrivals: (() => void)[] = [];
   let pings = 0;
@@ -328,14 +364,17 @@ export async function startFakeMessagesApi(
         anthropicBeta: req.headers.get("anthropic-beta"),
         body,
       };
-      requests.push(recorded);
+      const extraction = isExtraction(body);
+      (extraction ? extractions : requests).push(recorded);
       for (const wake of arrivals.splice(0)) wake();
 
       if (!recorded.apiKey) return errorResponse(401, "authentication_error", "x-api-key header is required");
       if (accepted.size && !accepted.has(recorded.apiKey)) {
         return errorResponse(401, "authentication_error", "invalid x-api-key");
       }
-      const reply = script.shift() ?? defaultReply(recorded);
+      const reply = extraction
+        ? (memoryScript.shift() ?? opts.defaultExtraction?.(recorded) ?? NOTHING_TO_REMEMBER)
+        : (script.shift() ?? defaultReply(recorded));
       if (reply.status) {
         return errorResponse(reply.status, reply.errorType ?? "api_error", reply.errorMessage ?? "Erro do falso");
       }
@@ -351,6 +390,8 @@ export async function startFakeMessagesApi(
   return {
     url: `http://127.0.0.1:${server.port}`,
     reply: (...replies) => script.push(...replies),
+    remember: (...replies) => memoryScript.push(...replies),
+    extractions,
     acceptKeys: (...keys) => {
       accepted.clear();
       for (const k of keys) accepted.add(k);
@@ -364,6 +405,16 @@ export async function startFakeMessagesApi(
         await Promise.race([new Promise<void>((r) => arrivals.push(r)), sleep(left)]);
       }
       return requests.slice(0, n);
+    },
+    async waitForExtractions(n, timeoutMs = 2_000) {
+      const deadline = Date.now() + timeoutMs;
+      while (extractions.length < n) {
+        const left = deadline - Date.now();
+        if (left <= 0)
+          throw new Error(`Messages API falsa: esperava ${n} extração(ões), chegaram ${extractions.length}`);
+        await Promise.race([new Promise<void>((r) => arrivals.push(r)), sleep(left)]);
+      }
+      return extractions.slice(0, n);
     },
     async waitForPings(n, timeoutMs = 2_000) {
       const deadline = Date.now() + timeoutMs;

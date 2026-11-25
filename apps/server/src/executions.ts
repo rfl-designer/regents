@@ -32,6 +32,8 @@ import { buildContext, type Call } from "./context";
 import { type Db, schema, type Tx } from "./db/client";
 import { type EventHub, reaches, without } from "./events";
 import { type KeyLedger, monthOf } from "./key-budget";
+import { buildExtraction, DEFAULT_MEMORY_MODEL, MEMORY_SCHEMA, parseOperations } from "./memory/extraction";
+import { insertExtracted, publishMemory } from "./memory/items";
 import { recordMentions } from "./mentions";
 import { findMessage } from "./messages";
 import type { ModelEvent, ModelPort, ModelRequest, ModelUsage, Payer, TerminalModelEvent } from "./model/port";
@@ -49,7 +51,8 @@ const { executions, agents, channels, messages, accounts, approvalRequests, exec
 type Row = typeof executions.$inferSelect;
 /**
  * O tipo de uma execução: `mention` (Agente mencionado), `dm` (o Agente de uma DM com Agente),
- * `route` (o roteamento da Articuladora), `reply` (ela responde) ou `delegated` (um delegado dela).
+ * `route` (o roteamento da Articuladora), `reply` (ela responde), `delegated` (um delegado dela)
+ * ou `memory` (a extração da Memória, depois de entregue uma resposta: ADR 0013).
  */
 export type ExecutionKind = Row["kind"];
 
@@ -103,7 +106,16 @@ const STALL_REASON: Record<ExecutionStep, string> = {
   writing: "ficou 2 minutos sem escrever nada",
   // Enquanto a Ferramenta roda, vale o prazo dela (a vigia espera); este só aparece se nada a encerra.
   tool: "ficou 2 minutos sem escrever nada",
+  remembering: "ficou 2 minutos sem responder",
 };
+
+/**
+ * A extração da Memória só aparece no Andamento quando não guardou (ADR 0013): o que ela guardou
+ * chega como item de Memória, e sem nada a guardar não há linha. Enquanto roda, fica fora da vista.
+ */
+const SHOWN_EXTRACTION: readonly ExecutionState[] = ["failed", "not_acting"];
+const hiddenExtraction = (e: Pick<ExecutionDto, "kind" | "state">) =>
+  e.kind === "memory" && !SHOWN_EXTRACTION.includes(e.state);
 const RESTART_REASON = "o servidor reiniciou";
 /** Quando a expiração dos Pedidos falha, a nova tentativa sai depois disso. */
 const EXPIRY_RETRY_MS = 60_000;
@@ -170,6 +182,12 @@ export interface ExecutionHooks {
  * `byPayer` avisa cada chamada que a Chave pagou e cada recusa dela; `keyUsableFor` confere o orçamento.
  *
  * A falha de vez sai pelo gancho `hooks.executionFailed` (é dali que sai o push ao autor, #32).
+ *
+ * A extração da Memória (`memory`, ADR 0013) entra na fila na mesma transação que entrega uma
+ * resposta de Agente (nunca depois de um roteamento) e herda tudo isto: a vigia, a nova
+ * tentativa, quem paga a cada tentativa e o orçamento do Agente que respondeu. Na Prioridade,
+ * fica abaixo das respostas; não segura a série do Agente, e as extrações de uma conversa (com
+ * as Threads) saem uma de cada vez.
  */
 export interface Executions {
   /**
@@ -248,6 +266,8 @@ export function createExecutions(deps: {
   maxToolTurns?: number;
   /** O prazo do Pedido de aprovação (padrão: 24 h, `APPROVAL_TTL_MS`; `SHEARIM_APPROVAL_TTL_H`). */
   approvalTtlMs?: number;
+  /** O modelo pequeno da extração da Memória (padrão: `DEFAULT_MEMORY_MODEL`; `SHEARIM_MEMORY_MODEL`). */
+  memoryModel?: string;
 }): Executions {
   const { db, clock, events, model, secrets, hooks, reading, ledger, push } = deps;
   const limits: ExecutionLimits = { ...DEFAULT_LIMITS, ...deps.limits };
@@ -278,6 +298,7 @@ export function createExecutions(deps: {
   async function announce(id: string) {
     const [view] = await views(eq(executions.id, id));
     const { everyone, author, authorId } = view!;
+    if (hiddenExtraction(everyone)) return author;
     const { audience } = await conversationOf(everyone.channelId);
     if (authorId) {
       events.publish(without(audience, authorId), { type: "execution.updated", execution: everyone });
@@ -361,14 +382,18 @@ export function createExecutions(deps: {
 
   /**
    * As que podem sair agora (prontas e na vez da sua série), na ordem da Prioridade: o roteamento
-   * na frente, depois a ordem de chegada.
+   * na frente, a extração da Memória atrás das respostas e, dentro de cada um, a ordem de chegada.
    */
   function candidates(now: Date) {
     return db
       .select()
       .from(executions)
       .where(and(readyAt(now), onTurn(now)))
-      .orderBy(desc(sql`${executions.kind} = 'route'`), ...arrivalOrder(executions).map((c) => asc(c)));
+      .orderBy(
+        desc(sql`${executions.kind} = 'route'`),
+        asc(sql`${executions.kind} = 'memory'`),
+        ...arrivalOrder(executions).map((c) => asc(c)),
+      );
   }
 
   /**
@@ -377,15 +402,19 @@ export function createExecutions(deps: {
    * da conversa faz duas pegas da mesma conversa se verem (a série nunca anda em dobro).
    */
   async function claim(candidate: Row, now: Date): Promise<Row | undefined> {
-    const conversation = `${candidate.channelId}:${candidate.threadRootId ?? ""}`;
+    // A série das extrações é a da conversa inteira (com as Threads); a das respostas, a de cada fluxo.
+    const conversation =
+      candidate.kind === "memory"
+        ? `memory:${candidate.channelId}`
+        : `${candidate.channelId}:${candidate.threadRootId ?? ""}`;
     return db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${conversation}, 0))`);
       const [claimed] = await tx
         .update(executions)
         .set({
           state: "running",
-          // O roteamento é o passo "decidindo"; o resto, "escrevendo".
-          step: sql`case when ${executions.kind} = 'route' then 'deciding' else 'writing' end`,
+          // O roteamento é o passo "decidindo"; a extração, "lembrando"; o resto, "escrevendo".
+          step: sql`case ${executions.kind} when 'route' then 'deciding' when 'memory' then 'remembering' else 'writing' end`,
           since: now,
           retryAt: null,
           held: false,
@@ -608,6 +637,7 @@ export function createExecutions(deps: {
 
   async function run(job: Row, agent: Agent, payer: Choice, controller: AbortController) {
     if (job.kind === "route") return route(job, payer, controller, agent);
+    if (job.kind === "memory") return extract(job, payer, controller);
     const result = await byPayer(job, payer, controller, async (payer) => {
       const tools = toolsOf(job);
       const offered = await tools.list();
@@ -670,7 +700,9 @@ export function createExecutions(deps: {
             createdAt: reply.createdAt,
           })
         : [];
-      return (await close(job, "done", { replyMessageId: reply.id }, tx)) ? { followed } : undefined;
+      if (!(await close(job, "done", { replyMessageId: reply.id }, tx))) return undefined;
+      // A extração da Memória entra na fila junto com a entrega: as duas nunca se separam (ADR 0003).
+      return { followed, extraction: await enqueueExtraction(tx, job) };
     });
     if (!delivered) return;
     // Todos recebem a resposta; o autor da origem, a cópia com o porquê ligado à Conta dele.
@@ -691,6 +723,69 @@ export function createExecutions(deps: {
     }
     await reading.messageCreated(replyDto);
     push.messageCreated(replyDto, channel);
+    await publish(job.id);
+    await publish(delivered.extraction);
+    wake();
+  }
+
+  /**
+   * Põe na fila a extração da Memória da resposta `job`, que acaba de ser entregue: o mesmo Agente
+   * (o orçamento é dele) e a mesma mensagem de origem (quem paga sai da mesma tabela), chegando agora.
+   */
+  async function enqueueExtraction(tx: Tx, job: Row) {
+    const id = crypto.randomUUID();
+    const now = clock.now();
+    await tx.insert(executions).values({
+      id,
+      kind: "memory",
+      channelId: job.channelId,
+      originMessageId: job.originMessageId,
+      threadRootId: job.threadRootId,
+      agentId: job.agentId,
+      state: "queued",
+      since: now,
+      arrivedAt: now,
+      sourceExecutionId: job.id,
+    });
+    return id;
+  }
+
+  /**
+   * A extração da Memória (ADR 0013): lê a troca da resposta entregue com o modelo pequeno da
+   * Instalação, em saída estruturada, paga como qualquer execução, e guarda o que ela devolver na
+   * Memória da Conversa, com a mensagem de origem. Os itens e o fim juntos: um cancelamento que
+   * chegou antes ganha, e nada fica guardado.
+   */
+  async function extract(job: Row, payer: Choice, controller: AbortController) {
+    const result = await byPayer(job, payer, controller, async (payer) => {
+      const context = await buildExtraction(db, job.sourceExecutionId!);
+      if (!context) throw new Error(`a extração ${job.id} não achou a resposta ${job.sourceExecutionId}`);
+      return { model: deps.memoryModel ?? DEFAULT_MEMORY_MODEL, ...context, output: { schema: MEMORY_SCHEMA }, payer };
+    });
+    if (!result) return;
+    const { text, end } = result;
+    if (end?.type !== "done") return fail(job, failureReason(end), failureOpts(end));
+    const operations = parseOperations(text);
+    if (!operations) return fail(job, "a extração não devolveu a Memória no formato pedido");
+
+    const saved = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({ state: executions.state })
+        .from(executions)
+        .where(eq(executions.id, job.id))
+        .for("update");
+      if (row?.state !== "running") return undefined;
+      const ids = await insertExtracted(tx, {
+        conversationId: job.channelId,
+        originMessageId: job.originMessageId,
+        executionId: job.id,
+        texts: operations.map((o) => o.text),
+        now: clock.now(),
+      });
+      return (await close(job, "done", {}, tx)) ? ids : undefined;
+    });
+    if (!saved) return;
+    await publishMemory(db, events, saved);
     await publish(job.id);
   }
 
@@ -1011,8 +1106,10 @@ export function createExecutions(deps: {
   function slotsOf(job: Row, payer: Choice): Slots {
     if (payer.kind === "key") return { key: true };
     if (payer.kind !== "account") return {};
-    // O roteamento fica fora da conta de respostas da Conta, mas é um processo no host.
-    return job.kind === "route" ? { process: true } : { process: true, account: payer.memberId };
+    // O roteamento e a extração ficam fora da conta de respostas da Conta, mas são processos no host.
+    return job.kind === "route" || job.kind === "memory"
+      ? { process: true }
+      : { process: true, account: payer.memberId };
   }
 
   function fits(slots: Slots) {
@@ -1035,6 +1132,9 @@ export function createExecutions(deps: {
   /** Roda uma execução ao lado das outras; ao terminar, solta o lugar e acorda o trabalhador. */
   function launch(job: Row, agent: Agent, payer: Choice, slots: Slots) {
     const controller = new AbortController();
+    // Pega no meio de uma passada pela fila quando a parada chegou: sai já interrompida (fica em
+    // andamento até a próxima subida, como as outras).
+    if (stopping) controller.abort("shutdown" satisfies Interruption);
     running.set(job.id, controller);
     occupy(slots, 1);
     const task = (async () => {
@@ -1263,11 +1363,13 @@ export function createExecutions(deps: {
     continueAfter,
 
     openIn: async (channelId, viewerId) =>
-      (await views(and(eq(executions.channelId, channelId), ne(executions.state, "done")))).map((v) =>
-        v.authorId === viewerId ? v.author : v.everyone,
-      ),
+      (await views(and(eq(executions.channelId, channelId), ne(executions.state, "done"))))
+        .filter((v) => !hiddenExtraction(v.everyone))
+        .map((v) => (v.authorId === viewerId ? v.author : v.everyone)),
 
-    cancel: (originMessageId) => cancelWhere(eq(executions.originMessageId, originMessageId), null),
+    // O cancelamento de quem escreveu é das respostas: a extração de uma resposta já entregue segue.
+    cancel: (originMessageId) =>
+      cancelWhere(and(eq(executions.originMessageId, originMessageId), ne(executions.kind, "memory"))!, null),
 
     cancelAuthoredBy: (memberId, reason) =>
       cancelWhere(
@@ -1377,9 +1479,12 @@ function arrivalOrder(e: Record<"arrivedAt" | "originMessageId" | "seq", AnyColu
  * Na vez da sua série (Spec, módulo 6, Ordem). O roteamento não é resposta e sai sempre. Uma
  * resposta espera, na mesma conversa (`channel_id`, `thread_root_id`: o fluxo principal e cada
  * Thread à parte):
- * - a do mesmo Agente que está rodando, ou que chegou antes e ainda vai sair;
+ * - a do mesmo Agente que está rodando, ou que chegou antes e ainda vai sair (a extração da
+ *   Memória não conta: ela não segura a série);
  * - o roteamento de uma mensagem anterior que ainda vai sair ou está rodando, porque ele pode
  *   pôr na fila uma resposta que chegou antes dela.
+ * A extração da Memória espera só a extração que está rodando, ou que chegou antes e ainda vai
+ * sair, na mesma conversa com as Threads (a Memória da Conversa é uma só para elas).
  * Quem espera a própria Conta (`held`) não segura ninguém; a nova tentativa marcada, sim.
  */
 function onTurn(now: Date) {
@@ -1388,22 +1493,28 @@ function onTurn(now: Date) {
     eq(other.state, "retrying"),
   );
   const earlier = sql`(${sql.join(arrivalOrder(other), sql`, `)}) < (${sql.join(arrivalOrder(executions), sql`, `)})`;
+  const runningOrBefore = or(eq(other.state, "running"), and(stillToGo, earlier));
   const ahead = and(
     ne(other.id, executions.id),
     eq(other.channelId, executions.channelId),
     sql`${other.threadRootId} is not distinct from ${executions.threadRootId}`,
     or(
-      and(
-        ne(other.kind, "route"),
-        eq(other.agentId, executions.agentId),
-        or(eq(other.state, "running"), and(stillToGo, earlier)),
-      ),
+      and(ne(other.kind, "route"), ne(other.kind, "memory"), eq(other.agentId, executions.agentId), runningOrBefore),
       and(eq(other.kind, "route"), earlier, or(eq(other.state, "running"), stillToGo)),
     ),
   );
+  const extractionAhead = and(
+    ne(other.id, executions.id),
+    eq(other.channelId, executions.channelId),
+    eq(other.kind, "memory"),
+    runningOrBefore,
+  );
+  const none = (where: SQL | undefined) =>
+    sql`not exists (select 1 from ${executions} as ${sql.identifier("other")} where ${where})`;
   return or(
     eq(executions.kind, "route"),
-    sql`not exists (select 1 from ${executions} as ${sql.identifier("other")} where ${ahead})`,
+    and(eq(executions.kind, "memory"), none(extractionAhead)),
+    and(ne(executions.kind, "memory"), none(ahead)),
   )!;
 }
 

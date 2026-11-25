@@ -218,6 +218,13 @@
       "when": 1795575526104,
       "tag": "0030_resultado-incerto",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1795613412809,
+      "tag": "0031_memoria-da-conversa",
+      "breakpoints": true
     }
   ]
 }

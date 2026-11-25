@@ -25,6 +25,7 @@ import { type JoinRequestHooks, joinRequestAdminRoutes, myJoinRequestRoutes } fr
 import { createKeyLedger, type KeyHooks } from "./key-budget";
 import { memberAdminRoutes } from "./member-admin";
 import { type Env, listMembers, memberFor } from "./members";
+import { memoryRoutes } from "./memory/routes";
 import { accountBrain } from "./model/account";
 import { keyBrain } from "./model/key";
 import { createModelPort, type ModelBrain } from "./model/port";
@@ -82,6 +83,8 @@ export interface AppDeps {
   github?: Partial<GitHubConfig>;
   /** O Pedido de aprovação: o prazo até expirar (`SHEARIM_APPROVAL_TTL_H`; padrão 24 h). */
   approvals?: { ttlMs?: number };
+  /** A Memória: o modelo pequeno da extração (`SHEARIM_MEMORY_MODEL`; padrão `claude-haiku-5-5`). */
+  memory?: { model?: string };
 }
 
 export type AppHooks = JoinRequestHooks & ExecutionHooks & KeyHooks & AccountHooks;
@@ -173,6 +176,7 @@ export function createApp(deps: AppDeps) {
     limits: deps.limits,
     maxToolTurns: deps.tools?.maxTurns,
     approvalTtlMs: deps.approvals?.ttlMs,
+    memoryModel: deps.memory?.model,
   });
   // A volta da Conta (ou a troca da Chave, ou do orçamento) solta quem espera por ela na fila.
   const reconsider = (memberId?: string) => void executions.reconsider(memberId).catch(() => {});
@@ -256,6 +260,7 @@ export function createApp(deps: AppDeps) {
   );
   app.route("/api", workspaceKeyRoutes({ db, clock, secrets, onChanged: () => reconsider() }));
   app.route("/api", workspaceContextRoutes({ db }));
+  app.route("/api", memoryRoutes({ db }));
   app.route("/api", githubRoutes({ db, github }));
   app.route("/api", installation.routes);
 
