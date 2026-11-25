@@ -106,8 +106,8 @@ export function agentRoutes(deps: {
   });
 
   /**
-   * O Admin edita um Agente; campo ausente fica. Da Articuladora, só o nome, a foto e o modelo:
-   * a descrição e as instruções dela são do Shearim (`403 builtin_locked`). Trocar o nome troca
+   * O Admin edita um Agente; campo ausente fica. Da Articuladora, tudo menos a descrição e as
+   * instruções, que são do Shearim (`403 builtin_locked`): o Admin desliga a Memória dela também. Trocar o nome troca
    * o identificador de Menção, pelo mesmo critério da criação.
    */
   routes.patch("/agents/:id", async (c) => {
@@ -125,8 +125,12 @@ export function agentRoutes(deps: {
       );
     }
     const change: Partial<
-      Pick<Agent, "name" | "photo" | "model" | "description" | "instructions" | "monthlyBudgetUsd">
+      Pick<Agent, "name" | "photo" | "model" | "description" | "instructions" | "monthlyBudgetUsd" | "memoryEnabled">
     > = {};
+    if (input.memoryEnabled !== undefined) {
+      if (typeof input.memoryEnabled !== "boolean") return invalid("A Memória fica ligada ou desligada.");
+      change.memoryEnabled = input.memoryEnabled;
+    }
     if (input.name !== undefined) {
       const name = typeof input.name === "string" ? input.name.trim().replace(/^@+/, "").trim() : "";
       if (!name) return invalid("Dê um nome ao Agente.");
@@ -229,6 +233,7 @@ export function toAgentDto(
     builtin: a.builtin,
     tools: opts.tools,
     reach: reachLines(opts.tools),
+    memoryEnabled: a.memoryEnabled,
   };
   if (opts.admin) {
     dto.instructions = a.instructions;

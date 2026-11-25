@@ -135,6 +135,11 @@ export const agents = pgTable(
      * Nulo: sem teto.
      */
     monthlyBudgetUsd: doublePrecision(),
+    /**
+     * A Memória do Agente ligada (spec #60, #67): desligada, as respostas dele não põem extração
+     * na fila e não recebem o resumo nem a busca na Memória. Só o Admin muda; vem ligada.
+     */
+    memoryEnabled: boolean().notNull().default(true),
   },
   (t) => [
     uniqueIndex("agents_name_lower_unique").on(sql`lower(${t.name})`),
