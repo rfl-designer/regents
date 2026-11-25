@@ -5,7 +5,7 @@ import type { ToolDefinition } from "./port";
 import { WORKSPACE_READ_TOOLS } from "./workspace-read";
 import { WORKSPACE_WRITES } from "./workspace-writes";
 
-const { agents, agentTools, mentionHandles } = schema;
+const { agents, agentTools, connectors, connectorTools, mentionHandles } = schema;
 
 /**
  * Listar Agentes: todo Membro vê os Agentes do Workspace (`GET /api/agents`), então não há alcance
@@ -35,12 +35,23 @@ const listAgents: ToolDefinition = {
       .orderBy(desc(agents.builtin), asc(agents.createdAt), asc(agents.name));
     const grants = await db.select().from(agentTools);
     const titles = new Map(WORKSPACE_TOOLS.map((t) => [t.id, t.title]));
+    // As dos Conectores, com o Conector: a linha de alcance da descrição pública sai delas.
+    const fromConnectors = await db
+      .select({ tool: connectorTools.tool, title: connectorTools.title, connector: connectors.name })
+      .from(connectorTools)
+      .innerJoin(connectors, eq(connectors.id, connectorTools.connectorId));
+    for (const c of fromConnectors) titles.set(c.tool, c.title);
+    const connectorOf = new Map(fromConnectors.map((c) => [c.tool, c.connector]));
     return rows
       .map((row) => {
         const a = withBuiltinText({ ...row, instructions: "" });
-        const tools = grants.filter((g) => g.agentId === a.id).flatMap((g) => titles.get(g.tool) ?? []);
+        const mine = grants.filter((g) => g.agentId === a.id);
+        const tools = mine.flatMap((g) => titles.get(g.tool) ?? []);
+        const reach = [...new Set(mine.flatMap((g) => connectorOf.get(g.tool) ?? []))].map(
+          (name) => ` Acessa ${name} com a credencial do Workspace.`,
+        );
         return [
-          `- ${a.name} (@${a.handle})${a.builtin ? ", a Articuladora" : ""}: ${a.description || "sem descrição"}`,
+          `- ${a.name} (@${a.handle})${a.builtin ? ", a Articuladora" : ""}: ${a.description || "sem descrição"}${reach.join("")}`,
           `  Ferramentas: ${tools.length ? tools.join(", ") : "nenhuma"}`,
         ].join("\n");
       })

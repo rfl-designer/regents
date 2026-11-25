@@ -30,7 +30,7 @@ export function agentToolRoutes(deps: { db: Db; tools: ToolPort }) {
       if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
       const id = c.req.param("id");
       const tool = c.req.param("tool");
-      if (!(await agentExists(id)) || !tools.exists(tool)) return c.json({ error: "not_found" }, 404);
+      if (!(await agentExists(id)) || !(await tools.exists(tool))) return c.json({ error: "not_found" }, 404);
       if (method === "put") await tools.grant(id, tool);
       else await tools.revoke(id, tool);
       return c.json(await tools.forAgent(id));

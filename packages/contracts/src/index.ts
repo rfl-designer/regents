@@ -395,6 +395,11 @@ export interface AgentDto {
   builtin: boolean;
   /** As Ferramentas concedidas a ele, na ordem do catálogo, para todo Membro (Spec #44). */
   tools: AgentToolSummaryDto[];
+  /**
+   * As linhas geradas da descrição pública, sobre o que ele alcança fora do Workspace (uma por
+   * Conector com credencial do Workspace): "acessa CRM com a credencial do Workspace".
+   */
+  reach: string[];
   instructions?: string;
   /**
    * Só para o Admin: o orçamento mensal na Chave, em dólares (nulo: sem teto). Conta só o que a
@@ -431,10 +436,10 @@ export type UpdateAgentInput = Partial<CreateAgentInput>;
 // ---------- Ferramentas (Spec #44) ----------
 
 /**
- * De onde vem uma Ferramenta: o próprio Workspace ou a web. As dos Conectores entram depois,
- * cada uma com o Conector dela.
+ * De onde vem uma Ferramenta: o próprio Workspace, a web ou um Conector (com o Conector dela em
+ * `connector`).
  */
-export type ToolOrigin = "workspace" | "web";
+export type ToolOrigin = "workspace" | "web" | "connector";
 /** `read` só lê; `write` escreve, e toda escrita passa por um Pedido de aprovação. */
 export type ToolAccess = "read" | "write";
 
@@ -448,6 +453,59 @@ export interface AgentToolSummaryDto {
   /** O nome em pt-BR ("listar Agentes"). */
   title: string;
   origin: ToolOrigin;
+  /** Só nas de um Conector (`origin: "connector"`): qual, e de quem é a credencial. */
+  connector?: ToolConnectorDto;
+}
+
+/** O Conector de uma Ferramenta, como a lista de Agentes e a tela do Agente o mostram. */
+export interface ToolConnectorDto {
+  id: string;
+  name: string;
+  /** De quem é a credencial que a Ferramenta usa: do Workspace (uma só para todos). */
+  credential: ConnectorCredentialMode;
+}
+
+/** De quem é a credencial de um Conector: do Workspace (uma só, colada pelo Admin). */
+export type ConnectorCredentialMode = "workspace";
+
+/**
+ * Um Conector (Spec #44): a ligação do Workspace a um servidor MCP remoto, adicionada pelo Admin.
+ * `GET /api/connectors`, `GET /api/connectors/:id` (relê o catálogo), `POST /api/connectors`
+ * (`CreateConnectorInput`), `PUT /api/connectors/:id/credential` (`{ token }`) e
+ * `DELETE /api/connectors/:id`, todos só do Admin. O token nunca volta.
+ */
+export interface ConnectorDto {
+  id: string;
+  name: string;
+  /** O endereço do servidor MCP (streamable HTTP). */
+  url: string;
+  credential: ConnectorCredentialMode;
+  /** `refused`: o servidor recusou a credencial (401) numa chamada; o Admin cola outra. */
+  credentialState: "ok" | "refused";
+  /** Quando a credencial foi recusada (ISO 8601), ou `null`. */
+  refusedAt: string | null;
+  /** O catálogo do `tools/list`, na ordem do servidor. */
+  tools: ConnectorToolDto[];
+  /** Ao reler o catálogo (`GET /api/connectors/:id`): por que não deu (o catálogo é o último lido). */
+  catalogError: string | null;
+}
+
+/** Uma Ferramenta do catálogo de um Conector. Só o que o servidor marca como "só leitura" é `read`. */
+export interface ConnectorToolDto {
+  /** O id da Ferramenta no Shearim (o que se concede e o que o modelo recebe), ex. `crm__buscar_cliente`. */
+  id: string;
+  /** O nome dela no servidor. */
+  name: string;
+  title: string;
+  description: string;
+  access: ToolAccess;
+}
+
+/** Corpo de `POST /api/connectors`: o nome (não se repete), o endereço e o token do Workspace. */
+export interface CreateConnectorInput {
+  name: string;
+  url: string;
+  token: string;
 }
 
 /**
@@ -463,6 +521,8 @@ export interface AgentToolDto {
   origin: ToolOrigin;
   access: ToolAccess;
   granted: boolean;
+  /** Só nas de um Conector: qual, e de quem é a credencial. */
+  connector?: ToolConnectorDto;
 }
 
 /**
