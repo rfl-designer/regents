@@ -190,7 +190,7 @@ describe("o orçamento do resumo", () => {
     }
   });
 
-  test("passando dele, entram os itens mais recentes e o resto fica de fora", async () => {
+  test("passando dele, entram os itens mais recentes, e o resto fica de fora do grupo (só pelo título)", async () => {
     // Cada linha ("- Primeiro fato.\n") tem até 17 caracteres: cabem duas.
     const t = await testApp({ memory: { summaryChars: 40 } });
     const { produto } = await produtoComFaro(t);
@@ -200,7 +200,10 @@ describe("o orçamento do resumo", () => {
 
     const system = await systemDaChamada(t, 2);
     expect(system).toContain("- Segundo fato.\n- Terceiro fato.");
-    expect(system).not.toContain("Primeiro fato.");
+    // O que não coube entra só pelo título (#69), num bloco à parte.
+    const [resumo, titulos] = system.split("Também na Memória, só pelo começo do texto");
+    expect(resumo).not.toContain("Primeiro fato.");
+    expect(titulos).toContain("- Primeiro fato.");
   });
 
   test("a resposta guarda os itens que entraram nela, e a extração dela recebe só esses", async () => {

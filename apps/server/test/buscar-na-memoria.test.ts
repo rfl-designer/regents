@@ -9,7 +9,6 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { AgentDto, ChannelDto, DmDto, ExecutionDto, MeDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
-import { schema } from "../src/db/client";
 import { toolResults } from "./fakes/messages-api";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 
@@ -84,13 +83,23 @@ const systemDe = (r: ReturnType<typeof respostas>[number]) => {
 const ferramentasDe = (r: ReturnType<typeof respostas>[number]) =>
   ((r.body.tools ?? []) as { name: string }[]).map((f) => f.name);
 
-/** `who` guarda `textos` na Memória de `conversationId` pela troca com o Faro (a extração roteirizada). */
-async function guardar(t: TestApp, who: Person, conversationId: string, textos: string[]) {
+/**
+ * `who` guarda `textos` na Memória de `conversationId` pela troca com um Agente (a extração
+ * roteirizada): na da Conversa ou, com `escopo: "agente"`, na do Agente que respondeu.
+ */
+async function guardar(
+  t: TestApp,
+  who: Person,
+  conversationId: string,
+  textos: string[],
+  opts: { escopo?: "conversa" | "agente"; agente?: string } = {},
+) {
   const ler = async () =>
     (await (await t.as(who).get(`/api/conversations/${conversationId}/memory`)).json()) as MemoryItemDto[];
   const antes = (await ler()).length;
-  t.anthropic.remember({ json: { operacoes: textos.map((texto) => ({ acao: "criar", texto })) } });
-  await enviar(t, who, conversationId, "@faro anota isso");
+  const escopo = opts.escopo ?? "conversa";
+  t.anthropic.remember({ json: { operacoes: textos.map((texto) => ({ acao: "criar", escopo, texto })) } });
+  await enviar(t, who, conversationId, `@${opts.agente ?? "faro"} anota isso`);
   return eventually(
     "os itens guardados",
     async () => {
@@ -99,24 +108,6 @@ async function guardar(t: TestApp, who: Person, conversationId: string, textos: 
     },
     10_000,
   );
-}
-
-/**
- * Um item da Memória do Agente com origem numa mensagem da conversa. A extração ainda não escolhe
- * o escopo do Agente (#65): o item é gravado como ela gravaria.
- */
-async function licaoDoAgente(t: TestApp, agentId: string, origem: MessageDto, text: string) {
-  await t.db.insert(schema.memoryItems).values({
-    id: crypto.randomUUID(),
-    scope: "agent",
-    agentId,
-    conversationId: origem.channelId,
-    originMessageId: origem.id,
-    text,
-    createdBy: "extraction",
-    state: "active",
-    createdAt: t.clock.now(),
-  });
 }
 
 /**
@@ -267,13 +258,13 @@ describe("o que a busca alcança", () => {
     "a Memória do Workspace, a da Conversa e a do próprio Agente, cada uma com a origem; a de outro Agente não",
     async () => {
       const t = await testApp();
-      const { faro, geral } = await workspace(t);
+      const { geral } = await workspace(t);
       const lia = await novoAgente(t, "Lia");
       await t.as(juliana).post("/api/workspace-memory", { text: "Reembolso: todo pedido passa pelo financeiro." });
       await guardar(t, ana, geral.id, ["O reembolso de viagens sai pelo Flouz."]);
-      const origem = await enviar(t, ana, geral.id, "Faro, sempre cite o número do pedido de reembolso.");
-      await licaoDoAgente(t, faro.id, origem, "Citar o número do pedido de reembolso.");
-      await licaoDoAgente(t, lia.id, origem, "Reembolso é com o Faro.");
+      await guardar(t, ana, geral.id, ["Citar o número do pedido de reembolso."], { escopo: "agente" });
+      await t.as(juliana).post(`/api/channels/${geral.id}/agents`, { agentId: lia.id });
+      await guardar(t, ana, geral.id, ["Reembolso é com o Faro."], { escopo: "agente", agente: "lia" });
 
       const { resultado } = await buscar(t, bruno, geral.id, "REEMBOLSO");
 
@@ -290,10 +281,9 @@ describe("o que a busca alcança", () => {
     "a Memória de #financeiro (privado) não aparece numa resposta no #geral, nem pelo título, nem no Andamento",
     async () => {
       const t = await testApp({ memory: { summaryChars: 1 } });
-      const { faro, geral, financeiro } = await workspace(t);
+      const { geral, financeiro } = await workspace(t);
       await guardar(t, ana, financeiro.id, ["O orçamento de 2027 fecha em março."]);
-      const origem = await enviar(t, ana, financeiro.id, "Faro, no orçamento use sempre valores sem centavos.");
-      await licaoDoAgente(t, faro.id, origem, "Orçamento com valores sem centavos.");
+      await guardar(t, ana, financeiro.id, ["Orçamento com valores sem centavos."], { escopo: "agente" });
       await guardar(t, ana, geral.id, ["O orçamento do evento é de 10 mil."]);
 
       const { resultado, pedido, andamento } = await buscar(t, ana, geral.id, "orçamento");
@@ -313,8 +303,7 @@ describe("o que a busca alcança", () => {
       const t = await testApp();
       const { me, faro, financeiro } = await workspace(t);
       await guardar(t, ana, financeiro.id, ["O orçamento de 2027 fecha em março."]);
-      const origem = await enviar(t, ana, financeiro.id, "Faro, no orçamento use sempre valores sem centavos.");
-      await licaoDoAgente(t, faro.id, origem, "Orçamento com valores sem centavos.");
+      await guardar(t, ana, financeiro.id, ["Orçamento com valores sem centavos."], { escopo: "agente" });
       const emGrupo = await dm(t, ana, { memberIds: [me.Bruno!.id] });
       await guardar(t, ana, emGrupo.id, ["O orçamento da viagem é da Ana."]);
 
@@ -340,8 +329,7 @@ describe("o que a busca alcança", () => {
       const t = await testApp();
       const { faro, financeiro } = await workspace(t);
       await guardar(t, ana, financeiro.id, ["O orçamento de 2027 fecha em março."]);
-      const origem = await enviar(t, ana, financeiro.id, "Faro, no orçamento use sempre valores sem centavos.");
-      await licaoDoAgente(t, faro.id, origem, "Orçamento com valores sem centavos.");
+      await guardar(t, ana, financeiro.id, ["Orçamento com valores sem centavos."], { escopo: "agente" });
 
       const comBruno = await dm(t, bruno, { memberIds: [], agentId: faro.id });
       const { resultado, pedido, andamento } = await buscar(t, bruno, comBruno.id, "orçamento", "e o orçamento?");

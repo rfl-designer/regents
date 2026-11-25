@@ -130,8 +130,10 @@ describe("Montagem de contexto", () => {
 
   test("o preâmbulo diz que é um chat de time em pt-BR, sem ferramentas, sem prometer ações, e quem chamou", async () => {
     const t = await testApp();
-    const { geral } = await workspaceComFaro(t);
+    const { faro, geral } = await workspaceComFaro(t);
     await t.addMember(bruno, { by: juliana });
+    // Com a Memória ligada, o Faro teria "buscar na Memória" (#69): sem ela, não tem Ferramenta nenhuma.
+    await t.as(juliana).patch(`/api/agents/${faro.id}`, { memoryEnabled: false });
 
     await enviar(t, bruno, geral.id, "@Faro me manda a proposta por e-mail amanhã?");
 
