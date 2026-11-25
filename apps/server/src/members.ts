@@ -1,5 +1,6 @@
 import type { MeDto, MemberSummaryDto } from "@shearim/contracts";
 import { and, asc, eq, getTableColumns, isNull, type SQL, sql } from "drizzle-orm";
+import type { MiddlewareHandler } from "hono";
 import { addArticuladora } from "./articuladora";
 import type { Clock } from "./clock";
 import { type Db, schema, type Tx } from "./db/client";
@@ -43,6 +44,12 @@ export async function activeAdminIds(db: Executor): Promise<string[]> {
  * (`member`).
  */
 export type Env = { Variables: { who: TailnetUser; member: Member } };
+
+/** Só o Admin passa; os outros Membros recebem `403 not_admin`. */
+export const adminOnly: MiddlewareHandler<Env> = async (c, next) => {
+  if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
+  await next();
+};
 
 /** Um Membro pelo id (inclusive quem saiu do Workspace: as mensagens continuam dele). */
 export async function memberById(db: Executor, id: string): Promise<Member | undefined> {

@@ -35,7 +35,7 @@ import { Hono } from "hono";
 import type { Clock } from "../clock";
 import { type Db, isUuid, schema, type Tx } from "../db/client";
 import type { EventHub } from "../events";
-import type { Env } from "../members";
+import { adminOnly, type Env } from "../members";
 import type { Push } from "../push";
 import type { SecretBox } from "../secrets";
 import {
@@ -607,14 +607,8 @@ export function createConnectors(deps: {
 
   const routes = new Hono<Env>();
 
-  routes.use("/connectors/*", async (c, next) => {
-    if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
-    await next();
-  });
-  routes.use("/connectors", async (c, next) => {
-    if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
-    await next();
-  });
+  routes.use("/connectors/*", adminOnly);
+  routes.use("/connectors", adminOnly);
 
   routes.get("/connectors", async (c) => {
     const all = await db.select().from(connectors).orderBy(asc(connectors.createdAt), asc(connectors.name));

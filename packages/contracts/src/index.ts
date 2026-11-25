@@ -55,6 +55,11 @@ export function mentionPattern() {
   return /(?<![\p{L}\p{N}_.@])@([\p{L}\p{N}_]+)/gu;
 }
 
+/** "Faro", "Faro e Prisma", "Faro, Prisma e Lince" (vazio: ""). */
+export function joinPt(list: readonly string[]) {
+  return list.length <= 1 ? (list[0] ?? "") : `${list.slice(0, -1).join(", ")} e ${list.at(-1)}`;
+}
+
 /** O identificador de Menção como é guardado: sem `@` na frente, sem acento, em minúsculas. */
 export function normalizeHandle(text: string) {
   return text.trim().replace(/^@+/, "").normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();

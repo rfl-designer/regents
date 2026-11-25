@@ -1,4 +1,4 @@
-import { type ReadTool, type ToolDefinition, ToolFailure, type WriteTool } from "../tools/port";
+import { type ReadTool, type ToolDefinition, ToolFailure, WRITE_NOTE, type WriteTool } from "../tools/port";
 import type { GitHub, GitHubPermissions } from "./connector";
 
 /** O tamanho máximo de um arquivo que volta ao modelo (o resto é cortado, com aviso). */
@@ -352,8 +352,7 @@ export function githubTools(github: GitHub): ToolDefinition[] {
       id: "github_criar_issue",
       title: "criar issue no GitHub",
       label: "preparando a issue do GitHub",
-      description:
-        "Cria uma issue num repositório do GitHub, como o bot do GitHub App. Antes de sair, quem escreveu a mensagem que você responde aprova ou recusa: a resposta termina aqui e continua depois da decisão.",
+      description: `Cria uma issue num repositório do GitHub, como o bot do GitHub App. ${WRITE_NOTE}`,
       origin: "github",
       access: "write",
       inputSchema: {
@@ -399,8 +398,7 @@ export function githubTools(github: GitHub): ToolDefinition[] {
       id: "github_comentar",
       title: "comentar no GitHub",
       label: "preparando o comentário no GitHub",
-      description:
-        "Comenta numa issue ou num pull request de um repositório do GitHub, como o bot do GitHub App. Antes de sair, quem escreveu a mensagem que você responde aprova ou recusa: a resposta termina aqui e continua depois da decisão.",
+      description: `Comenta numa issue ou num pull request de um repositório do GitHub, como o bot do GitHub App. ${WRITE_NOTE}`,
       origin: "github",
       access: "write",
       inputSchema: {

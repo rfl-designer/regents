@@ -109,6 +109,10 @@ export interface ReadTool extends ToolBase {
   run(ctx: ToolContext, input: unknown, signal: AbortSignal): Promise<string>;
 }
 
+/** O fim da descrição de toda escrita, para o modelo: ela passa por Pedido de aprovação (ADR 0011). */
+export const WRITE_NOTE =
+  "Antes de sair, quem escreveu a mensagem que você responde aprova ou recusa: a resposta termina aqui e continua depois da decisão.";
+
 /**
  * Uma Ferramenta que escreve (ADR 0011): não roda durante a resposta. A porta confere a entrada e o
  * alcance (`prepare`), cria o Pedido de aprovação com a ação exata e encerra a execução; o Shearim

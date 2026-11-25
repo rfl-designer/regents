@@ -1,12 +1,7 @@
 import type { GitHubDto } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
-import { ApiFailure, api } from "./api";
+import { api, messageOf } from "./api";
 import { dateTimeShort } from "./format";
-
-function messageOf(err: unknown, fallback: string) {
-  const body = err instanceof ApiFailure ? err.body : null;
-  return body && "message" in body ? body.message : fallback;
-}
 
 /** O desfecho do retorno do GitHub (`/github?github=…` ou `?erro=…`), lido uma vez e tirado do endereço. */
 function returnOfUrl(): { ok: string } | { error: string } | null {

@@ -1,13 +1,8 @@
 import type { ConnectorCredentialMode, ConnectorDto } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
-import { ApiFailure, api } from "./api";
+import { api, messageOf } from "./api";
 import { goToLogin, loginReturn } from "./connector-login";
 import { dateTimeShort } from "./format";
-
-function messageOf(err: unknown, fallback: string) {
-  const body = err instanceof ApiFailure ? err.body : null;
-  return body && "message" in body && typeof body.message === "string" ? body.message : fallback;
-}
 
 /**
  * Só para o Admin: os Conectores (servidores MCP remotos). A credencial do Workspace se liga pelo

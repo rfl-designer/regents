@@ -8,7 +8,7 @@ import {
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { type Db, isUuid, schema } from "../db/client";
-import type { Env } from "../members";
+import { adminOnly, type Env } from "../members";
 import { ToolFailure } from "../tools/port";
 import { APP_PERMISSIONS, type GitHub } from "./connector";
 
@@ -50,15 +50,13 @@ export function githubRoutes(deps: { db: Db; github: GitHub }) {
    * Os repositórios de um Agente, na tela dele (só Admin): os que a instalação alcança, para
    * escolher, e a lista dele. Sem lista, o Agente alcança tudo o que a instalação alcança.
    */
-  routes.get("/agents/:id/github", async (c) => {
-    if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
+  routes.get("/agents/:id/github", adminOnly, async (c) => {
     const id = c.req.param("id");
     if (!(await agentExists(id))) return c.json({ error: "not_found" }, 404);
     return c.json(await agentGitHub(id));
   });
 
-  routes.put("/agents/:id/github", async (c) => {
-    if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
+  routes.put("/agents/:id/github", adminOnly, async (c) => {
     const id = c.req.param("id");
     if (!(await agentExists(id))) return c.json({ error: "not_found" }, 404);
     const input = (await c.req.json().catch(() => null)) as { repositories?: unknown } | null;
@@ -86,14 +84,8 @@ export function githubRoutes(deps: { db: Db; github: GitHub }) {
     return c.json({ repositories: [...chosen].sort((a, b) => a.localeCompare(b)), available: list, failure: null });
   });
 
-  routes.use("/github/*", async (c, next) => {
-    if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
-    await next();
-  });
-  routes.use("/github", async (c, next) => {
-    if (c.get("member").role !== "admin") return c.json({ error: "not_admin" }, 403);
-    await next();
-  });
+  routes.use("/github/*", adminOnly);
+  routes.use("/github", adminOnly);
 
   routes.get("/github", async (c) => c.json(await github.status()));
 

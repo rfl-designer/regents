@@ -1,9 +1,9 @@
-import { isChannelKind } from "@shearim/contracts";
+import { isChannelKind, joinPt } from "@shearim/contracts";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { type Db, isUuid, schema } from "../db/client";
 import { isActive } from "../members";
 import { canSee } from "../participation";
-import { ToolFailure, type ToolRun, type WriteTool } from "./port";
+import { ToolFailure, type ToolRun, WRITE_NOTE, type WriteTool } from "./port";
 import { reachOf } from "./reach";
 
 const { channels, channelAgents, channelParticipants, members, messages } = schema;
@@ -48,7 +48,7 @@ async function labelOf(db: Db, conversation: Conversation) {
     .where(eq(channelParticipants.channelId, conversation.id))
     .orderBy(asc(members.displayName));
   const names = people.map((p) => p.name);
-  return `a DM com ${names.length > 1 ? `${names.slice(0, -1).join(", ")} e ${names.at(-1)}` : (names[0] ?? "ninguém")}`;
+  return `a DM com ${joinPt(names) || "ninguém"}`;
 }
 
 /** A conversa pelo nome do Canal ("#anuncios", sem diferença de maiúsculas) ou pelo id. */
@@ -106,8 +106,7 @@ const postMessage: WriteTool = {
   id: "postar_mensagem",
   title: "postar mensagem",
   label: "preparando a mensagem",
-  description:
-    "Posta uma mensagem, como você, num Canal ou DM de que você participa. Antes de sair, quem escreveu a mensagem que você responde aprova ou recusa: a resposta termina aqui e continua depois da decisão.",
+  description: `Posta uma mensagem, como você, num Canal ou DM de que você participa. ${WRITE_NOTE}`,
   origin: "workspace",
   access: "write",
   inputSchema: {
@@ -136,8 +135,7 @@ const replyInThread: WriteTool = {
   id: "responder_thread",
   title: "responder em Thread",
   label: "preparando a resposta na Thread",
-  description:
-    "Responde, como você, na Thread de uma mensagem (pelo id dela) numa conversa de que você participa. Antes de sair, quem escreveu a mensagem que você responde aprova ou recusa: a resposta termina aqui e continua depois da decisão.",
+  description: `Responde, como você, na Thread de uma mensagem (pelo id dela) numa conversa de que você participa. ${WRITE_NOTE}`,
   origin: "workspace",
   access: "write",
   inputSchema: {

@@ -3,6 +3,7 @@ import {
   type ApprovalRequestDto,
   type ChannelDto,
   type ExecutionDto,
+  joinPt,
   type MeDto,
   type MemberSummaryDto,
   type MessageDto,
@@ -641,11 +642,6 @@ function Composer({ label, onSend }: { label: string; onSend(body: string): Prom
   );
 }
 
-/** "Faro", "Faro e Prisma", "Faro, Prisma e Lince". */
-function joinNames(names: string[]) {
-  return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} e ${names.at(-1)}`;
-}
-
 function MessageRow({
   message: m,
   me,
@@ -740,7 +736,7 @@ function NoneMark({ outcome }: { outcome: OutcomeDto }) {
 /** "↳ Sophya passou para Faro e Prisma": o motivo e o que cada um cobre, ao passar o mouse ou tocar. */
 function DelegationLine({ outcome }: { outcome: OutcomeDto }) {
   const [open, setOpen] = useState(false);
-  const line = `↳ ${outcome.by.displayName} passou para ${joinNames(outcome.delegates.map((d) => d.agent.displayName))}`;
+  const line = `↳ ${outcome.by.displayName} passou para ${joinPt(outcome.delegates.map((d) => d.agent.displayName))}`;
   const detail = [outcome.reason, ...outcome.delegates.map((d) => `${d.agent.displayName}: ${d.cover}`)];
   return (
     <div className="delegation">

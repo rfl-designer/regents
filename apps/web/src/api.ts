@@ -55,6 +55,12 @@ export class ApiFailure extends Error {
   }
 }
 
+/** A mensagem que o servidor mandou com o erro (`{ error, message }`), ou `fallback`. */
+export function messageOf(err: unknown, fallback: string) {
+  const body = err instanceof ApiFailure ? err.body : null;
+  return body && "message" in body && typeof body.message === "string" ? body.message : fallback;
+}
+
 /** O servidor não respondeu (Tailscale desligado, servidor fora do ar). */
 export class Offline extends Error {}
 
