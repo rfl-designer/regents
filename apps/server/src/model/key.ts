@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ExecutionTools } from "../tools/port";
 import { fetchLabel, WEB_FETCH, WEB_SEARCH } from "../tools/web";
-import type { ModelBrain, ModelEvent } from "./port";
+import { MAX_TOOL_TURNS, type ModelBrain, type ModelEvent, toolLimitNote } from "./port";
 
 /** Preço por milhão de tokens (entrada, saída), em dólares, para o gasto na Chave (#28). */
 const PRICES: Record<string, { input: number; output: number }> = {
@@ -67,6 +67,15 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
         const messages: Anthropic.MessageParam[] = [...request.messages];
         /** Já saiu texto num turno anterior: o do turno seguinte vem depois de uma linha em branco. */
         let wrote = false;
+        /**
+         * O teto de turnos de Ferramenta (#53): contam os turnos que pediram client tools e as
+         * retomadas de `pause_turn` (as server tools da web), para nenhuma volta do laço ficar sem
+         * limite. Chegou ao teto (`capped`): a última chamada vai sem Ferramentas. Elas continuam
+         * declaradas (o histórico tem `tool_use`), mas `tool_choice: none` impede o modelo de usá-las.
+         */
+        const maxTurns = request.maxToolTurns ?? MAX_TOOL_TURNS;
+        let toolTurns = 0;
+        let capped = false;
         // O vai-e-vem de `tool_use`: cada turno que pede Ferramentas recebe os resultados e segue.
         for (;;) {
           turn.inputTokens = 0;
@@ -80,6 +89,7 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
               system: request.system,
               messages,
               ...(apiTools.length && { tools: apiTools }),
+              ...(capped && { tool_choice: { type: "none" as const } }),
               ...(request.output && {
                 output_config: { format: { type: "json_schema", schema: request.output.schema } },
               }),
@@ -124,10 +134,21 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
             terminal = { type: "failed", reason: "o modelo se recusou a responder", retryable: false };
             break;
           }
+          // A última chamada (sem Ferramentas) encerra, como quer que tenha parado.
+          if (capped) {
+            terminal = { type: "done", usage: sum(), costUsd: cost() };
+            break;
+          }
           // As server tools pararam no limite de iterações do lado da Anthropic: retoma com o turno
-          // como veio, sem nada depois (sem isso, a resposta sairia cortada).
+          // como veio, sem nada depois (sem isso, a resposta sairia cortada). A retomada conta como
+          // turno de Ferramenta; no teto, ela vai sem Ferramentas e sem aviso (depois de um turno
+          // pausado não cabe mensagem nossa).
           if (final.stop_reason === "pause_turn") {
             messages.push({ role: "assistant", content: final.content as Anthropic.ContentBlockParam[] });
+            if (++toolTurns >= maxTurns) {
+              capped = true;
+              yield { type: "tool_limit" };
+            }
             continue;
           }
           const calls = final.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
@@ -149,7 +170,14 @@ export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {
             });
           }
           messages.push({ role: "assistant", content: final.content as Anthropic.ContentBlockParam[] });
-          messages.push({ role: "user", content: results });
+          if (++toolTurns >= maxTurns) {
+            capped = true;
+            yield { type: "tool_limit" };
+          }
+          messages.push({
+            role: "user",
+            content: [...results, ...(capped ? [{ type: "text" as const, text: toolLimitNote(maxTurns) }] : [])],
+          });
         }
       } catch (err) {
         if (signal.aborted || err instanceof Anthropic.APIUserAbortError) return;

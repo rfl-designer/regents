@@ -868,6 +868,8 @@ function Progress({
               ⚠ {c.title} falhou: {c.reason}
             </p>
           ))}
+        {/* O teto de turnos de Ferramenta: o Agente responde com o que tem (#53). */}
+        {e.toolLimit && <p className="tool-failed">⚠ parou no limite de Ferramentas</p>}
         <p className="writing">
           {e.apiRetry ? (
             `tentando de novo (${e.apiRetry.attempt}/${e.apiRetry.max})`
