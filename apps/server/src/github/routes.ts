@@ -137,12 +137,12 @@ export function githubRoutes(deps: { db: Db; github: GitHub }) {
     if (!started)
       return c.redirect(backToPwa({ error: "O retorno do GitHub não é do fluxo em andamento. Comece de novo." }));
     const code = c.req.query("code");
-    if (!code) return c.redirect(backToPwa({ error: "O GitHub não mandou o código do App." }));
+    if (!code) return c.redirect(backToPwa({ error: "O GitHub não mandou o código do GitHub App." }));
     try {
       await github.convert(code);
     } catch (err) {
       console.error("shearim: a criação do GitHub App falhou", err);
-      return c.redirect(backToPwa({ error: "O GitHub não criou o App. Comece de novo." }));
+      return c.redirect(backToPwa({ error: "O GitHub não criou o GitHub App. Comece de novo." }));
     }
     return c.redirect(backToPwa({ ok: "created" }));
   });

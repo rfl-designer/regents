@@ -29,7 +29,7 @@ export function ConnectorsSettings() {
     <main className="settings">
       <h1 className="channel-name">Conectores</h1>
       <p className="hint">
-        Um Conector liga o Workspace a um sistema de fora por um servidor MCP. Quem fala com um Agente que tem as
+        Um Conector liga o Workspace a um sistema de fora pelo servidor do Conector. Quem fala com um Agente que tem as
         Ferramentas dele alcança o que o token alcança; a descrição do Agente diz isso. Ferramenta sem a marca de "só
         leitura" do servidor é escrita e passa por Pedido de aprovação.
       </p>
@@ -219,7 +219,7 @@ function NewConnector({ onCreated }: { onCreated(c: ConnectorDto): void }) {
       <h2>Adicionar Conector</h2>
       <input aria-label="Nome" placeholder="Nome (ex. CRM)" value={name} onChange={(e) => setName(e.target.value)} />
       <input
-        aria-label="Endereço do servidor MCP"
+        aria-label="Endereço do Conector"
         placeholder="https://…/mcp"
         value={url}
         onChange={(e) => setUrl(e.target.value)}

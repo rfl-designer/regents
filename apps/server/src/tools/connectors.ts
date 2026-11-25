@@ -637,7 +637,7 @@ export function createConnectors(deps: {
       parsed = new URL(url);
     } catch {}
     if (!parsed || !["http:", "https:"].includes(parsed.protocol)) {
-      return invalid("O endereço do servidor MCP é uma URL http(s).");
+      return invalid("O endereço do Conector é uma URL http(s).");
     }
     if (await nameTaken(name)) {
       return { fail: c.json({ error: "name_taken", message: "Já existe um Conector com esse nome." }, 409) };
