@@ -1,5 +1,6 @@
 import { and, desc, eq, type SQL } from "drizzle-orm";
 import { type Db, schema } from "../db/client";
+import { SEARCH_MEMORY_TITLE } from "./search";
 
 const { memoryItems } = schema;
 
@@ -30,7 +31,7 @@ export interface MemorySummary {
    * guarda nela (só o Admin).
    */
   shown: SummaryItem[];
-  /** Os que passaram do orçamento (os mais velhos): ficam de fora; o #69 os põe só pelo título. */
+  /** Os que passaram do orçamento (os mais velhos): entram só pelo título (`titles`). */
   left: SummaryItem[];
 }
 
@@ -75,6 +76,7 @@ export async function memorySummary(db: Db, input: { conversationId: string; bud
     if (group.extractable) shown.push(...fitted.shown);
     sections.push(group.title, fitted.shown.map(line).join("\n"));
   }
+  sections.push(...titles(left));
   if (!sections.length) return { text: "", shown, left };
   return { text: ["## Memória", PRECEDENCE, ...sections].join("\n\n"), shown, left };
 }
@@ -89,6 +91,37 @@ function activeNewestFirst(db: Db, where: SQL | undefined): Promise<SummaryItem[
 }
 
 const line = (item: SummaryItem) => `- ${item.text}`;
+
+/** Até quantos caracteres do começo do texto um título tem. */
+const TITLE_CHARS = 60;
+/** Até quantos títulos entram; os outros só pela contagem (a busca os acha). */
+const MAX_TITLES = 50;
+
+/**
+ * O título de um item: o item não tem título próprio, então é o começo do texto, até
+ * `TITLE_CHARS`, cortado no fim de uma palavra e com "…" quando o texto segue.
+ */
+export function titleOf(text: string): string {
+  if (text.length <= TITLE_CHARS) return text;
+  const cut = text.slice(0, TITLE_CHARS);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > 0 ? cut.slice(0, space) : cut).replace(/[\s,;:.]+$/, "")}…`;
+}
+
+/**
+ * Os itens que não couberam no orçamento, só pelo título, na ordem em que ficaram de fora (o grupo
+ * e, dentro dele, do mais novo para o mais velho). Fora do orçamento, até `MAX_TITLES`.
+ */
+function titles(left: SummaryItem[]): string[] {
+  if (!left.length) return [];
+  const listed = left.slice(0, MAX_TITLES).map((i) => `- ${titleOf(i.text)}`);
+  const more = left.length - listed.length;
+  if (more > 0) listed.push(`- e mais ${more} ${more === 1 ? "item" : "itens"}`);
+  return [
+    `Também na Memória, só pelo começo do texto (leia o resto com a Ferramenta ${SEARCH_MEMORY_TITLE}):`,
+    listed.join("\n"),
+  ];
+}
 
 /**
  * Os mais recentes que cabem no orçamento, em ordem de gravação; o primeiro que não cabe fecha o

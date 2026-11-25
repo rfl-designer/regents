@@ -26,6 +26,7 @@ import { createKeyLedger, type KeyHooks } from "./key-budget";
 import { memberAdminRoutes } from "./member-admin";
 import { type Env, listMembers, memberFor } from "./members";
 import { memoryRoutes } from "./memory/routes";
+import { SEARCH_MEMORY } from "./memory/search";
 import { accountBrain } from "./model/account";
 import { keyBrain } from "./model/key";
 import { createModelPort, type ModelBrain } from "./model/port";
@@ -161,6 +162,8 @@ export function createApp(deps: AppDeps) {
     clock,
     definitions: [...(deps.tools?.definitions ?? [...WORKSPACE_TOOLS, ...WEB_TOOLS]), ...githubTools(github)],
     extra: connectors.definitions,
+    // Sem concessão do Admin: "buscar na Memória" vem com a Memória ligada (#69).
+    automatic: [SEARCH_MEMORY],
     timeoutMs: deps.tools?.timeoutMs,
   });
   // As mensagens novas (de pessoa e as respostas de Agente) vão ao push pelo mesmo `messageCreated`.
