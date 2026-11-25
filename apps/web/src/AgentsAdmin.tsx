@@ -269,7 +269,11 @@ function EditAgent({ agent, onSaved }: { agent: AgentDto; onSaved(agent: AgentDt
   );
 }
 
-const ORIGIN_LABEL: Record<Exclude<ToolOrigin, "connector">, string> = { workspace: "Do Workspace", web: "Da web" };
+const ORIGIN_LABEL: Record<Exclude<ToolOrigin, "connector">, string> = {
+  workspace: "Do Workspace",
+  web: "Da web",
+  github: "Do GitHub",
+};
 
 /** O grupo de uma Ferramenta na tela do Agente: a origem, e cada Conector no seu. */
 const groupOf = (t: AgentToolDto) => (t.connector ? `connector:${t.connector.id}` : t.origin);

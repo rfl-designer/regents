@@ -15,6 +15,9 @@ import type {
   DmDto,
   ExecutionDto,
   FollowedThreadDto,
+  GitHubDto,
+  GitHubInstallDto,
+  GitHubManifestDto,
   InstallationDto,
   JoinRequestAdminDto,
   JoinRequestDto,
@@ -173,4 +176,8 @@ export const api = {
   removeConnector: (id: string) => call<void>(`/api/connectors/${id}`, { method: "DELETE" }),
   workspaceKey: () => call<WorkspaceKeyDto>("/api/workspace-key"),
   setWorkspaceKey: (apiKey: string) => call<WorkspaceKeyDto>("/api/workspace-key", json("PUT", { apiKey })),
+  github: () => call<GitHubDto>("/api/github"),
+  githubManifest: (origin: string, organization: string) =>
+    call<GitHubManifestDto>("/api/github/manifest", json("POST", { origin, organization: organization || undefined })),
+  githubInstall: () => call<GitHubInstallDto>("/api/github/installation", { method: "POST" }),
 };
