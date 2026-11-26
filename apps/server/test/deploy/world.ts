@@ -8,7 +8,12 @@
  * `os` (Darwin/Linux), `docker-up` (o Docker responde), `docker-os` (o que `docker info` diz),
  * `tailnet.json` (o `tailscale status --json` do sidecar), `health` (do app), `latest` (a última
  * release), `releases/<tag>/` (os assets), `volumes/<nome>/` (os volumes do Docker; o `docker run`
- * roda o `sh -c` aqui, com os pontos de montagem trocados pelas pastas dos volumes).
+ * roda o `sh -c` aqui, com os pontos de montagem trocados pelas pastas dos volumes), `running/<projeto>`
+ * (os projetos do Compose de pé: o `up -d` põe, o `down` tira, e o `pg_dump` só roda num de pé).
+ *
+ * `fail-on` e `interrupt-on` têm um padrão do `case` contra a chamada ("docker compose up -d",
+ * "docker run *regents_pgdata*"): a chamada que casa sai com erro, ou (uma vez) mata o script que a
+ * fez, como uma queda ou um `kill -9`, sem trap.
  */
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -53,21 +58,36 @@ export type World = Sandbox & {
   installDir: string;
 };
 
+/** O começo de um dublê: a falha ou a interrupção que o teste pediu para esta chamada. */
+const hooks = (name: string) => `call="${name} $*"
+if [ -f "$STATE/interrupt-on" ]; then
+  pat=$(cat "$STATE/interrupt-on")
+  case "$call" in $pat) rm -f "$STATE/interrupt-on"; kill -9 "$PPID"; exit 137 ;; esac
+fi
+if [ -f "$STATE/fail-on" ]; then
+  pat=$(cat "$STATE/fail-on")
+  case "$call" in $pat) echo "${name} falso: falha pedida pelo teste" >&2; exit 1 ;; esac
+fi`;
+
 export async function world({ os = "Darwin" }: { os?: "Darwin" | "Linux" } = {}): Promise<World> {
   const s = sandbox();
   const set = (file: string, content = "") => writeFileSync(join(s.state, file), content);
   set("os", os);
   set("docker-up");
   set("tailnet.json", tailnetStatus());
+  mkdirSync(join(s.state, "running"));
 
   s.fake("uname", `case "$1" in -m) echo arm64 ;; *) cat "$STATE/os" ;; esac`);
   s.fake("sleep");
   s.fake(
     "docker",
-    `up() {
+    `${hooks("docker")}
+up() {
   [ -f "$STATE/docker-up" ] || { echo "Cannot connect to the Docker daemon. Is the docker daemon running?" >&2; exit 1; }
   if [ -f "$STATE/docker-needs-sudo" ] && [ -z "\${AS_ROOT:-}" ]; then echo "permission denied while trying to connect to the Docker daemon socket" >&2; exit 1; fi
 }
+# O projeto do Compose: o name: do compose.yaml (ou do -f).
+project() { f=compose.yaml; prev=""; for a; do [ "$prev" = -f ] && f=$a; prev=$a; done; sed -n 's/^name: *//p' "$f" | head -n 1; }
 case "$*" in
   "info --format {{.OperatingSystem}}") up; if [ -f "$STATE/docker-os" ]; then cat "$STATE/docker-os"; else echo "Docker Desktop"; fi ;;
   info*) up ;;
@@ -75,7 +95,9 @@ case "$*" in
   "login ghcr.io"*) up; cat >"$STATE/docker-login-stdin" ;;
   "compose exec -T tailscale"*) cat "$STATE/tailnet.json" ;;
   "compose ps app --format {{.Health}}") if [ -f "$STATE/health" ]; then cat "$STATE/health"; else echo healthy; fi ;;
-  *"exec -T postgres pg_dump"*) up; echo "dump falso" ;;
+  *"exec -T postgres pg_dump"*)
+    up; [ -f "$STATE/running/$(project "$@")" ] || { echo "service \\"postgres\\" is not running" >&2; exit 1; }
+    echo "dump falso" ;;
   # Os volumes: uma pasta cada em $STATE/volumes/<nome>.
   "volume inspect "*) up; [ -d "$STATE/volumes/$3" ] || { echo "Error: No such volume: $3" >&2; exit 1; } ;;
   "volume create "*) up; for name; do :; done; mkdir -p "$STATE/volumes/$name"; echo "$name" ;;
@@ -101,13 +123,16 @@ case "$*" in
       exit 1
     done
     up ;;
+  compose*" up -d"*) up; touch "$STATE/running/$(project "$@")" ;;
+  compose*" down"*) up; rm -f "$STATE/running/$(project "$@")" ;;
   compose*) up ;;
   *) echo "docker falso: não sei responder a $*" >&2; exit 1 ;;
 esac`,
   );
   s.fake(
     "launchctl",
-    `case "$1" in
+    `${hooks("launchctl")}
+case "$1" in
   print) [ -f "$STATE/launchagent" ] ;;
   bootstrap) touch "$STATE/launchagent" ;;
   bootout) rm -f "$STATE/launchagent" ;;
@@ -135,7 +160,8 @@ esac`,
   // releases pelo nome antigo do repositório vêm das mesmas: o GitHub redireciona o nome antigo.
   s.fake(
     "curl",
-    `out="" url=""
+    `${hooks("curl")}
+out="" url=""
 while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift ;; -*) ;; *) url=$1 ;; esac; shift; done
 case "$url" in ${OLD_RELEASES}/*) url=${RELEASES}\${url#${OLD_RELEASES}} ;; esac
 case "$url" in

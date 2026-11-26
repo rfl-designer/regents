@@ -157,20 +157,31 @@ warn_pinned() {
 
 # Os volumes do projeto do Compose que a migração do nome copia.
 VOLUMES="ts-state ts-socket pgdata contas"
+# O compose e o deploy/ do Shearim, guardados enquanto a migração do nome não termina.
+ANTES=.migracao-regents/antes
 
-# Uma Instalação que ainda é Shearim: o .env só com SHEARIM_*, ou o banco só no volume do projeto
-# shearim. Sem nenhum dos dois, a atualização é a de sempre.
+# Uma Instalação que ainda é Shearim: uma migração do nome que não terminou (a pasta
+# .migracao-regents), o .env só com SHEARIM_*, ou o banco só no volume do projeto shearim. Sem
+# nenhum dos três, a atualização é a de sempre.
 still_shearim() {
+  if [ -d .migracao-regents ]; then return 0; fi
   if grep -q '^SHEARIM_' .env && ! grep -q '^REGENTS_' .env; then return 0; fi
   docker volume inspect shearim_pgdata >/dev/null 2>&1 && ! docker volume inspect regents_pgdata >/dev/null 2>&1
 }
 
-# O compose de antes da atualização (o do projeto shearim), com o .env e os caminhos da pasta.
-shearim_compose() { docker compose --project-directory "$DIR" -f "$WORK/antes/compose.yaml" "$@"; }
+# O compose do projeto shearim, com o .env de antes (o .env.shearim, depois que o .env mudou) e os
+# caminhos da pasta.
+shearim_compose() {
+  env=.env
+  if [ -f .env.shearim ]; then env=.env.shearim; fi
+  docker compose --project-directory "$DIR" --env-file "$DIR/$env" -f "$DIR/$ANTES/compose.yaml" "$@"
+}
 
 # A migração do nome (spec #96), uma vez: a Instalação Shearim passa a ser Regents com os mesmos
-# dados e a mesma URL. Cada passo pode rodar de novo: os volumes já copiados ficam marcados em
-# .migracao-regents/, e o .env novo sai sempre do .env.shearim, o .env de antes.
+# dados e a mesma URL. Cada passo pode rodar de novo, e uma execução interrompida continua de onde
+# parou: o compose e o deploy/ do Shearim, o backup e os volumes já copiados ficam em
+# .migracao-regents/, e o .env novo sai sempre do .env.shearim, o .env de antes. Uma falha volta
+# tudo para o Shearim (rename_failed).
 rename_installation() {
   old_host=$(sed -n 's/^TS_HOSTNAME=//p' .env | tail -n 1)
   old_host=${old_host:-shearim}
@@ -184,6 +195,16 @@ rename_installation() {
   say "  fica: a pasta $DIR"
   agree "Fazer a migração do nome agora?" ||
     fail "Nada mudou. A migração do nome precisa do seu sim: rode num terminal, ou com --yes para não perguntar."
+  mkdir -p .migracao-regents
+  if [ ! -d "$ANTES" ]; then
+    rm -rf "$ANTES.partial"
+    mkdir "$ANTES.partial"
+    cp -R compose.yaml deploy "$ANTES.partial/"
+    mv "$ANTES.partial" "$ANTES"
+  fi
+  from=$(compose_version "$ANTES/compose.yaml")
+  # Daqui até o app novo responder, toda falha volta para o Shearim.
+  RENAMING=1
   download
   backup_shearim
   shearim_compose down || rename_failed "o 'docker compose down' do projeto shearim falhou (veja acima)."
@@ -196,6 +217,7 @@ rename_installation() {
   if [ "$HEALTHY" = 0 ]; then
     rename_failed "o Regents não respondeu em $WAIT_SECONDS s. Veja 'docker compose logs app'."
   fi
+  RENAMING=0
   rm -rf .migracao-regents
   say "ok: o Shearim $from agora é o Regents $(compose_version)"
   say ""
@@ -210,9 +232,29 @@ rename_installation() {
   say "de callback é a antiga). Veja \"Migração do nome\" no README."
 }
 
-# Uma migração que parou: por enquanto, só o motivo. Os volumes shearim_* e o .env.shearim ficam,
-# e a próxima tentativa continua de onde esta parou.
-rename_failed() { fail "a migração do nome parou: $1"; }
+# Uma migração que falhou antes de o app novo responder (ADR 0003: o Shearim de pé, com o motivo):
+# o projeto regents sai, o compose, o deploy/ e o .env de antes voltam e o projeto shearim sobe com
+# os volumes shearim_*. Os volumes regents_* ficam, e a próxima tentativa os completa. O Shearim
+# volta a escrever nos shearim_*, então o backup e as cópias desta tentativa deixam de valer: a
+# próxima faz de novo.
+rename_failed() {
+  RENAMING=0
+  # Os dois projetos juntos teriam o mesmo hostname na tailnet.
+  if grep -q '^name: regents$' compose.yaml 2>/dev/null; then docker compose down >/dev/null 2>&1 || true; fi
+  rm -rf compose.yaml deploy
+  cp -R "$ANTES/compose.yaml" "$ANTES/deploy" .
+  if [ -f .env.shearim ]; then
+    cat .env.shearim >.env
+    rm -f .env.shearim
+  fi
+  for mark in backup $VOLUMES; do rm -f ".migracao-regents/$mark"; done
+  if shearim_compose up -d; then
+    back="Voltei o compose, o deploy/ e o .env de antes, e o Shearim subiu de novo com os volumes shearim_*."
+  else
+    back="Voltei o compose, o deploy/ e o .env de antes, mas o Shearim não subiu (veja acima): rode 'cd $DIR && docker compose up -d'."
+  fi
+  fail "a migração do nome parou: $1 $back Os volumes regents_* ficaram; para tentar de novo, rode o instalador com --update outra vez."
+}
 
 # No Mac, o LaunchAgent que não deixa o Mac dormir troca de nome: sai o do Shearim, entra o do Regents.
 rename_keep_awake() {
@@ -223,8 +265,10 @@ rename_keep_awake() {
 }
 
 # O backup de antes da migração, com o Shearim ainda de pé: o pg_dump do Postgres da Instalação, no
-# formato dos backups da noite, em ./backups (um pre-migracao, que a retenção não apaga).
+# formato dos backups da noite, em ./backups (um pre-migracao, que a retenção não apaga). Numa
+# execução depois de uma interrompida, o backup dela ainda vale: o Shearim não rodou desde então.
 backup_shearim() {
+  if [ -f .migracao-regents/backup ]; then return 0; fi
   file=backups/shearim-pre-migracao-$(date -u +%Y%m%dT%H%M%SZ).dump
   mkdir -p backups
   if ! shearim_compose exec -T postgres pg_dump -U shearim -d shearim --format=custom --no-owner --no-privileges \
@@ -233,6 +277,7 @@ backup_shearim() {
     rename_failed "o backup de antes da migração falhou (veja acima). Nada foi parado."
   fi
   mv "$file.partial" "$file"
+  touch .migracao-regents/backup
   say "ok: backup de antes da migração em $DIR/$file"
 }
 
@@ -261,7 +306,11 @@ copy_volumes() {
 # REGENTS_<sufixo> com o mesmo valor (se as duas existem, fica a REGENTS_), e entram o hostname, a
 # tag e o papel e o banco do Postgres do Shearim, que o compose novo lê do .env.
 rename_env() {
-  [ -f .env.shearim ] || cp -p .env .env.shearim
+  # Pelo .partial: uma interrupção no meio não deixa um .env.shearim pela metade.
+  if [ ! -f .env.shearim ]; then
+    cp -p .env .env.shearim.partial
+    mv .env.shearim.partial .env.shearim
+  fi
   awk '
     NR == FNR { if (/^REGENTS_[A-Za-z0-9_]*=/) { key = $0; sub(/=.*/, "", key); have[key] = 1 }; next }
     /^SHEARIM_[A-Za-z0-9_]*=/ {
@@ -291,6 +340,8 @@ compose_version() { sed -n 's/.*_VERSION:-\([^}]*\)}.*/\1/p' "${1:-compose.yaml}
 
 say() { printf '%s\n' "$*"; }
 fail() {
+  # No meio da migração do nome, toda falha (a do download, a do pull...) volta para o Shearim.
+  if [ "${RENAMING:-0}" = 1 ]; then rename_failed "$*"; fi
   printf 'regents install: %s\n' "$*" >&2
   exit 1
 }

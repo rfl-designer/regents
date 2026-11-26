@@ -587,7 +587,8 @@ curl -fsSL https://github.com/rfl-designer/regents/releases/latest/download/inst
   6. No Mac, troca o LaunchAgent: sai o `com.shearim.acordado`, entra o `com.regents.acordado`.
   7. Sobe o projeto `regents` (`docker compose pull && docker compose up -d`) e espera o app responder.
   8. No fim, lista os volumes antigos, o comando para apagá-los e como trocar o hostname.
-- **Numa nova execução**, um volume já copiado não é copiado de novo (fica marcado em `.migracao-regents/`, pasta que sai no fim), e o `.env` novo sai sempre do `.env.shearim`, sem linha duplicada.
+- **Se falhar** antes de o Regents responder (no download, no backup, na cópia, no `.env` novo ou ao subir), o instalador para o projeto `regents`, volta o `compose.yaml`, o `deploy/` e o `.env` de antes, sobe o projeto `shearim` com os volumes `shearim_*` e sai com o motivo e um código de erro. Os volumes `regents_*` ficam, mesmo incompletos. Para tentar de novo, rode o mesmo comando outra vez.
+- **Se for interrompida** (um Ctrl-C, uma queda), rode o mesmo comando outra vez: ela continua de onde parou, até tudo estar no nome novo. Enquanto ela não termina, a pasta `.migracao-regents/` guarda o compose e o `deploy/` do Shearim e marca o backup e os volumes já copiados, que não são feitos de novo; a pasta sai no fim. O `.env` novo sai sempre do `.env.shearim`, sem linha duplicada. Depois de uma falha, o Shearim volta a rodar e a escrever nos `shearim_*`: a nova tentativa faz o backup e copia os volumes de novo, para não perder o que ele escreveu.
 - **Por que o hostname, a tag e o banco ficam:** trocar o hostname ou a tag muda a URL e a identidade do nó na tailnet. O Postgres não renomeia o papel da própria sessão, e o nome do banco não aparece para ninguém.
 - **Apagar os volumes antigos:** os `shearim_*` ficam intactos, como volta segura. Quando o Regents estiver bem (as conversas, os aparelhos e as Contas no lugar), apague-os para liberar o disco:
 
