@@ -8,7 +8,7 @@ const { memoryItems } = schema;
 
 /**
  * O resumo da Memória que entra em toda resposta de Agente (spec #60, #62): uma camada do
- * `system` depois das Instruções do Canal e antes de "quem é quem", com um orçamento fixo da Instalação (`SHEARIM_MEMORY_SUMMARY_CHARS`).
+ * `system` depois das Instruções do Canal e antes de "quem é quem", com um orçamento fixo da Instalação (`REGENTS_MEMORY_SUMMARY_CHARS`).
  *
  * Entram, nesta ordem, cada uma num grupo: a Memória do Workspace (#66), a da Conversa atual
  * (com as Threads, o mesmo `channelId`) e a Memória do Agente que responde, das conversas de

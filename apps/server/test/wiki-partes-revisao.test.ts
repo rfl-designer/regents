@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type ServerEvent, type WikiDto, type WikiPageDto, wikiSyncStepText } from "@regents/contracts";
+import { configFrom } from "../src/config";
 import { wikiFromEnv } from "../src/wiki/sources";
 import { type FakeReply, lastUserText, type RecordedRequest, toolResults } from "./fakes/messages-api";
 import { eventually, type TestApp, testApp } from "./harness";
@@ -76,8 +77,8 @@ const EXTRA = () => new File(["Aula extra. Legendas curtas."], "extra.txt");
 
 describe("uma Fonte grande vai em partes", () => {
   test("o tamanho de parte é da Instalação (SHEARIM_WIKI_PART_MAX_CHARS)", () => {
-    expect(wikiFromEnv({ SHEARIM_WIKI_PART_MAX_CHARS: "20000" })).toEqual({ partMaxChars: 20_000 });
-    expect(() => wikiFromEnv({ SHEARIM_WIKI_PART_MAX_CHARS: "dez" })).toThrow(
+    expect(wikiFromEnv(configFrom({ SHEARIM_WIKI_PART_MAX_CHARS: "20000" }))).toEqual({ partMaxChars: 20_000 });
+    expect(() => wikiFromEnv(configFrom({ SHEARIM_WIKI_PART_MAX_CHARS: "dez" }))).toThrow(
       "SHEARIM_WIKI_PART_MAX_CHARS=dez não é um número inteiro maior que zero.",
     );
   });

@@ -76,7 +76,7 @@ export async function buildContext(
   call: Call = { kind: "mention" },
   /** As Ferramentas que o Agente tem nesta execução (o preâmbulo diz o que ele pode usar). */
   tools: readonly Pick<ToolSpec, "title">[] = [],
-  /** O orçamento do resumo da Memória, em caracteres (`SHEARIM_MEMORY_SUMMARY_CHARS`). */
+  /** O orçamento do resumo da Memória, em caracteres (`REGENTS_MEMORY_SUMMARY_CHARS`). */
   memoryBudget: number = DEFAULT_SUMMARY_CHARS,
 ): Promise<ResponseContext> {
   const agent = withBuiltinText(row);
