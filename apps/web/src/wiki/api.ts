@@ -26,6 +26,8 @@ export const wikiApi = {
   },
   /** "Sincronizar": começa na hora; o estado segue por `wiki_sync.updated`. */
   sync: (wikiId: string) => call<WikiSyncDto>(`/api/wikis/${wikiId}/sync`, { method: "POST" }),
+  /** "Cancelar": a Sincronização em curso termina em `canceled`, e a Wiki fica como estava. */
+  cancelSync: (wikiId: string) => call<WikiSyncDto>(`/api/wikis/${wikiId}/sync/cancel`, { method: "POST" }),
   versions: (wikiId: string) => call<WikiVersionDto[]>(`/api/wikis/${wikiId}/versions`),
   /** Os Canais que o Admin vê, com a marca de ligado à Wiki. */
   channels: (wikiId: string) => call<WikiChannelDto[]>(`/api/wikis/${wikiId}/channels`),

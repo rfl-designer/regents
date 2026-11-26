@@ -119,7 +119,10 @@ export const wikiSyncs = pgTable(
      * Chave do Workspace), decidido a cada chamada (#80). Nulo antes da primeira.
      */
     payer: text().$type<"account" | "key">(),
-    /** A tentativa da chamada em curso (a nova tentativa automática é do #86). */
+    /**
+     * A tentativa da chamada em curso: 2 na nova tentativa automática, com o motivo da 1ª falha em
+     * `reason`; volta a 1 quando a chamada vai bem (#86).
+     */
     attempt: integer().notNull().default(1),
     createdAt: timestamp({ withTimezone: true }).notNull(),
     startedAt: timestamp({ withTimezone: true }),
