@@ -7,6 +7,7 @@ import {
   type WikiSourceDto,
   type WikiSyncDto,
   type WikiVersionDto,
+  wikiSyncPayerText,
   wikiSyncStepText,
 } from "@shearim/contracts";
 import { type ChangeEvent, type FormEvent, useCallback, useEffect, useState } from "react";
@@ -111,8 +112,17 @@ export function WikisSettings() {
 
 const open = (s: WikiSyncDto | null) => s?.state === "queued" || s?.state === "running";
 
-/** O estado da Sincronização para gente ler: o passo em curso, o fim ou o motivo da falha. */
+/**
+ * O estado da Sincronização para gente ler: o passo em curso, o fim ou o motivo da falha, com
+ * "pela Chave do Workspace" quando a Chave paga.
+ */
 function syncStateText(s: WikiSyncDto) {
+  const paid = wikiSyncPayerText(s);
+  const text = stateText(s);
+  return paid && s.state !== "failed" ? `${text} · ${paid}` : text;
+}
+
+function stateText(s: WikiSyncDto) {
   if (s.state === "queued") return "Sincronização pedida";
   if (s.state === "running") return `Sincronização ${s.step ? wikiSyncStepText(s.step) : "em curso"}`;
   if (s.state === "done") return `Sincronização concluída: versão ${s.version}`;

@@ -1,4 +1,7 @@
-import type { Db } from "./db/client";
+import { eq } from "drizzle-orm";
+import { type AccountStanding, accountStanding } from "./accounts";
+import type { Clock } from "./clock";
+import { type Db, schema } from "./db/client";
 import type { KeyLedger } from "./key-budget";
 import type { Spent } from "./model/call";
 import type { Payer, TerminalModelEvent } from "./model/port";
@@ -32,6 +35,32 @@ export async function keyPayer(
 ): Promise<Extract<Payer, { kind: "key" }> | { kind: "none"; reason: string }> {
   const key = await keyUsable(deps, agentId);
   return "apiKey" in key ? { kind: "key", apiKey: key.apiKey } : { kind: "none", reason: key.reason };
+}
+
+/** O porquê de a Conta não pagar, para o motivo de "sem quem pague". */
+const ACCOUNT_WHY: Record<Exclude<AccountStanding["state"], "linked">, string> = {
+  limited: "está no limite",
+  needs_relink: "precisa ser ligada de novo",
+  not_linked: "não está ligada",
+};
+
+/**
+ * A tabela de quem paga (Spec, módulo 6) para quem não espera na fila: a Conta de `memberId`
+ * Ligada paga; senão, a Chave utilizável; senão, ninguém, com o motivo dos dois lados (`account`:
+ * "está no limite"; `key`: "o Workspace não tem Chave"). A Sincronização da Wiki decide assim antes
+ * de cada chamada (#80).
+ */
+export async function accountOrKey(
+  deps: Parameters<typeof keyUsable>[0] & { clock: Clock },
+  memberId: string,
+  agentId: string,
+): Promise<Payer | { kind: "none"; account: string; key: string }> {
+  const [row] = await deps.db.select().from(schema.accounts).where(eq(schema.accounts.memberId, memberId));
+  const standing = accountStanding(row, deps.clock.now());
+  if (standing.state === "linked") return { kind: "account", memberId, configDir: standing.configDir };
+  const key = await keyPayer(deps, agentId);
+  if (key.kind === "key") return key;
+  return { kind: "none", account: ACCOUNT_WHY[standing.state], key: key.reason };
 }
 
 /**

@@ -278,8 +278,15 @@
     {
       "idx": 39,
       "version": "7",
-      "when": 1795662637074,
-      "tag": "0039_wiki-restrita",
+      "when": 1795662438874,
+      "tag": "0039_sync-pela-conta",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1795663446685,
+      "tag": "0040_wiki-restrita",
       "breakpoints": true
     }
   ]

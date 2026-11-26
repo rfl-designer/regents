@@ -1,5 +1,5 @@
 {
-  "id": "a7810ab8-ecbf-42b2-b108-7785bff0dd50",
+  "id": "9c9282d5-2f74-44ac-a1ad-b82ccda573a2",
   "prevId": "9bee9ff5-144b-45ff-8624-316f0fd2e160",
   "version": "7",
   "dialect": "postgresql",
@@ -3890,88 +3890,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.wiki_members": {
-      "name": "wiki_members",
-      "schema": "",
-      "columns": {
-        "wiki_id": {
-          "name": "wiki_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "member_id": {
-          "name": "member_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "added_at": {
-          "name": "added_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "wiki_members_member_id_index": {
-          "name": "wiki_members_member_id_index",
-          "columns": [
-            {
-              "expression": "member_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "wiki_members_wiki_id_wikis_id_fk": {
-          "name": "wiki_members_wiki_id_wikis_id_fk",
-          "tableFrom": "wiki_members",
-          "tableTo": "wikis",
-          "columnsFrom": [
-            "wiki_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "wiki_members_member_id_members_id_fk": {
-          "name": "wiki_members_member_id_members_id_fk",
-          "tableFrom": "wiki_members",
-          "tableTo": "members",
-          "columnsFrom": [
-            "member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "wiki_members_wiki_id_member_id_pk": {
-          "name": "wiki_members_wiki_id_member_id_pk",
-          "columns": [
-            "wiki_id",
-            "member_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.wiki_page_sources": {
       "name": "wiki_page_sources",
       "schema": "",
@@ -4337,6 +4255,12 @@
         "report": {
           "name": "report",
           "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payer": {
+          "name": "payer",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
