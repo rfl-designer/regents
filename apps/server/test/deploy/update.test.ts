@@ -20,6 +20,14 @@ const kept = ["secrets/master_key", "secrets/postgres_password", "secrets/ts_aut
 const snapshot = (w: World) => kept.map((f) => readFileSync(join(w.installDir, f), "utf8"));
 const compose = (w: World) => readFileSync(join(w.installDir, "compose.yaml"), "utf8");
 const callsSince = (w: World, n: number) => w.calls().slice(n);
+/** O compose.yaml e cada arquivo de deploy/, com o conteúdo. */
+const deployFiles = (dir: string) =>
+  ["compose.yaml", ...readdirSync(join(dir, "deploy"), { recursive: true }).map((f) => join("deploy", String(f)))]
+    .filter((f) => statSync(join(dir, f)).isFile())
+    .sort()
+    .map((f) => [f, readFileSync(join(dir, f), "utf8")]);
+/** Os projetos do Compose de pé no Docker falso. */
+const running = (w: World) => readdirSync(join(w.state, "running")).sort();
 
 describe("deploy/update.sh", () => {
   test("baixa a última release, mantém o .env e os segredos, e roda pull e up", async () => {
@@ -130,13 +138,6 @@ describe("o updater antigo, numa Instalação Shearim, diante da release nova", 
     return { w, installDir: join(w.home, "shearim") };
   }
 
-  // O compose.yaml e cada arquivo de deploy/, com o conteúdo.
-  const deployFiles = (dir: string) =>
-    ["compose.yaml", ...readdirSync(join(dir, "deploy"), { recursive: true }).map((f) => join("deploy", String(f)))]
-      .filter((f) => statSync(join(dir, f)).isFile())
-      .sort()
-      .map((f) => [f, readFileSync(join(dir, f), "utf8")]);
-
   test("volta o compose e o deploy/ de antes, não reinicia nada e mostra o comando do instalador novo com --update", async () => {
     const { w, installDir } = await shearimInstalled();
     await w.release("0.2.0");
@@ -213,6 +214,7 @@ async function shearimInstallation({ env }: { env?: string } = {}) {
   mkdirSync(volume("shearim_ts-socket"), { recursive: true });
   put(join(w.home, OLD_PLIST), "<plist>com.shearim.acordado</plist>\n", 0o644);
   w.set("launchagent");
+  w.set("running/shearim");
 
   const installer = await w.release("1.3.0");
   w.set("latest", "v1.3.0");
@@ -428,5 +430,157 @@ describe("a migração do nome (install.sh --update numa Instalação Shearim)",
     expect(r.stdout).toContain("ok: Regents atualizado de 1.3.0 para 1.3.1");
     expect(callsSince(w, n).filter((c) => /docker (run|volume create)|compose .*down/.test(c))).toEqual([]);
     expect(read(join(dir, ".env"))).toBe(env);
+  });
+});
+
+/**
+ * A migração do nome que falha ou para no meio (ADR 0003): uma falha deixa o Shearim de pé, com o
+ * motivo; uma interrupção pode rodar de novo e terminar, sem metade em cada nome.
+ */
+describe("a migração do nome que falha ou para no meio", () => {
+  const failures = [
+    ["o app novo não responde", "não respondeu", (w: World) => w.set("health", "unhealthy")],
+    ["o docker compose up -d falha", "docker compose up -d", (w: World) => w.set("fail-on", "docker compose up -d")],
+  ] as const;
+  for (const [how, reason, failure] of failures) {
+    test(`se ${how}: volta o compose, o deploy/ e o .env de antes, sobe o projeto shearim e sai com o motivo`, async () => {
+      const { w, dir, installer } = await shearimInstallation();
+      const before = deployFiles(dir);
+      const env = read(join(dir, ".env"));
+      failure(w);
+
+      const r = await w.run(installer, ["--update", "--dir", dir, "--yes"]);
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain("a migração do nome parou");
+      expect(r.stderr).toContain(reason);
+      expect(deployFiles(dir)).toEqual(before);
+      expect(read(join(dir, ".env"))).toBe(env);
+      expect(running(w)).toEqual(["shearim"]);
+    });
+  }
+
+  test("os volumes regents_* da tentativa que falhou ficam, mesmo incompletos", async () => {
+    const { w, dir, installer, volume } = await shearimInstallation();
+    w.set("fail-on", "docker run *regents_contas*");
+
+    const r = await w.run(installer, ["--update", "--dir", dir, "--yes"]);
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toContain("não consegui copiar o volume shearim_contas para regents_contas");
+    expect(read(join(volume("regents_pgdata"), "18/docker/PG_VERSION"))).toBe("18\n");
+    expect(existsSync(volume("regents_contas"))).toBe(true);
+    expect(w.calls().filter((c) => /volume rm|volume prune/.test(c))).toEqual([]);
+    expect(running(w)).toEqual(["shearim"]);
+  });
+
+  test("uma nova tentativa depois da falha termina a migração", async () => {
+    const { w, dir, installer, volume } = await shearimInstallation();
+    w.set("fail-on", "docker run *regents_contas*");
+    expect((await w.run(installer, ["--update", "--dir", dir, "--yes"])).code).not.toBe(0);
+    w.set("fail-on", "nada");
+
+    const r = await w.run(installer, ["--update", "--dir", dir, "--yes"]);
+    expect(r.code, r.output).toBe(0);
+    expect(r.stdout).toContain("ok: o Shearim 0.1.2 agora é o Regents 1.3.0");
+    expect(read(join(volume("regents_contas"), "m-1001/.credentials.json"))).toContain("da Juliana");
+    expect(read(join(dir, ".env"))).toContain("REGENTS_VAPID_CONTACT=mailto:rafa@example.com\n");
+    expect(running(w)).toEqual(["regents"]);
+    expect(existsSync(join(dir, ".migracao-regents"))).toBe(false);
+  });
+
+  const copies = (calls: string[], v: string) =>
+    calls.filter((c) => c.startsWith("docker run") && c.includes(`regents_${v}:`));
+
+  test("interrompida na cópia, uma nova execução não copia de novo um volume que já está completo", async () => {
+    const { w, dir, installer, volume } = await shearimInstallation();
+    w.set("interrupt-on", "docker run *regents_contas*");
+    expect((await w.run(installer, ["--update", "--dir", dir, "--yes"])).code).not.toBe(0);
+    const n = w.calls().length;
+
+    const r = await w.run(installer, ["--update", "--dir", dir, "--yes"]);
+    expect(r.code, r.output).toBe(0);
+    const calls = callsSince(w, n);
+    for (const v of ["ts-state", "ts-socket", "pgdata"]) expect(copies(calls, v)).toEqual([]);
+    expect(copies(calls, "contas")).toHaveLength(1);
+    expect(read(join(volume("regents_contas"), "m-1001/.credentials.json"))).toContain("da Juliana");
+  });
+
+  // Depois de uma volta, o Shearim rodou de novo e escreveu nos shearim_* (o banco, as Contas): uma
+  // cópia anterior a isso perderia o que ele escreveu.
+  test("depois de uma volta para o Shearim, a nova tentativa copia de novo os volumes", async () => {
+    const { w, dir, installer } = await shearimInstallation();
+    w.set("health", "unhealthy");
+    expect((await w.run(installer, ["--update", "--dir", dir, "--yes"])).code).not.toBe(0);
+    w.set("health", "healthy");
+    const n = w.calls().length;
+
+    const r = await w.run(installer, ["--update", "--dir", dir, "--yes"]);
+    expect(r.code, r.output).toBe(0);
+    for (const v of VOLUMES) expect(copies(callsSince(w, n), v)).toHaveLength(1);
+  });
+
+  const ONCE =
+    "REGENTS_VAPID_CONTACT=mailto:rafa@example.com\nREGENTS_MAX_PROCESSES=4\nREGENTS_BACKUP_AT=04:30\nTZ=America/Sao_Paulo\n";
+  const keys = (env: string) =>
+    env.split("\n").flatMap((l) => (/^[A-Z_]+=/.test(l) ? [l.slice(0, l.indexOf("="))] : []));
+
+  /** Tudo no nome novo: o .env, o compose, os volumes, o projeto de pé e, no Mac, o LaunchAgent. */
+  function allRegents(w: World, dir: string, volume: (name: string) => string) {
+    const env = read(join(dir, ".env"));
+    expect(env).toStartWith(ONCE);
+    expect(env).not.toContain("SHEARIM_");
+    expect(env).toContain("REGENTS_POSTGRES_DB=shearim\n");
+    expect(new Set(keys(env)).size).toBe(keys(env).length);
+    expect(read(join(dir, "compose.yaml"))).toContain("name: regents");
+    expect(read(join(volume("regents_pgdata"), "18/docker/PG_VERSION"))).toBe("18\n");
+    expect(read(join(volume("regents_contas"), "m-1001/.credentials.json"))).toContain("da Juliana");
+    expect(read(join(volume("regents_ts-state"), "tailscaled.state"))).toBe('{"no":"shearim"}\n');
+    expect(running(w)).toEqual(["regents"]);
+    expect(existsSync(join(w.home, OLD_PLIST))).toBe(false);
+    expect(existsSync(join(w.home, NEW_PLIST))).toBe(true);
+    expect(existsSync(join(dir, ".migracao-regents"))).toBe(false);
+  }
+
+  const steps = [
+    ["no download", "curl *regents-compose.tar.gz*"],
+    ["no backup", "docker compose *pg_dump*"],
+    ["ao parar o projeto shearim", "docker compose * down"],
+    ["ao criar um volume", "docker volume create *regents_pgdata"],
+    ["na cópia de um volume", "docker run *regents_pgdata*"],
+    ["depois do .env novo", "docker compose config -q"],
+    ["ao tirar o com.shearim.acordado", "launchctl bootout *com.shearim.acordado"],
+    ["ao pôr o com.regents.acordado", "launchctl bootstrap *"],
+    ["no pull", "docker compose pull"],
+    ["ao subir o projeto regents", "docker compose up -d"],
+  ] as const;
+  for (const [where, call] of steps) {
+    test(`interrompida ${where}, uma nova execução termina com tudo no nome novo`, async () => {
+      const { w, dir, installer, volume } = await shearimInstallation();
+      w.set("interrupt-on", call);
+      const stopped = await w.run(installer, ["--update", "--dir", dir, "--yes"]);
+      expect(stopped.code).not.toBe(0);
+      expect(stopped.output).not.toContain("a migração do nome parou");
+      expect(existsSync(join(w.state, "interrupt-on"))).toBe(false);
+
+      const r = await w.run(installer, ["--update", "--dir", dir, "--yes"]);
+      expect(r.code, r.output).toBe(0);
+      expect(r.stdout).toContain("ok: o Shearim 0.1.2 agora é o Regents 1.3.0");
+      allRegents(w, dir, volume);
+    });
+  }
+
+  test("uma nova tentativa não reescreve o .env duas vezes: nenhuma linha REGENTS_* duplicada", async () => {
+    for (const stop of [
+      (w: World) => w.set("interrupt-on", "docker compose config -q"),
+      (w: World) => w.set("health", "unhealthy"),
+    ]) {
+      const { w, dir, installer, volume } = await shearimInstallation();
+      stop(w);
+      expect((await w.run(installer, ["--update", "--dir", dir, "--yes"])).code).not.toBe(0);
+      w.set("health", "healthy");
+
+      expect((await w.run(installer, ["--update", "--dir", dir, "--yes"])).code).toBe(0);
+      allRegents(w, dir, volume);
+      expect(read(join(dir, ".env.shearim"))).toStartWith("SHEARIM_VAPID_CONTACT=");
+    }
   });
 });
