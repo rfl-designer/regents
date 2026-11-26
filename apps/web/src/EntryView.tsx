@@ -54,7 +54,7 @@ export function EntryView({ onApproved }: { onApproved: () => void }) {
   if (!state) {
     return (
       <main className="center" aria-busy={!failed}>
-        {failed ? <p role="alert">Não foi possível falar com o Shearim. Recarregue a página.</p> : "Carregando…"}
+        {failed ? <p role="alert">Não foi possível falar com o Regents. Recarregue a página.</p> : "Carregando…"}
       </main>
     );
   }
@@ -62,7 +62,7 @@ export function EntryView({ onApproved }: { onApproved: () => void }) {
   const request = state.joinRequest;
   const error = failed && (
     <p className="error" role="alert">
-      Não foi possível falar com o Shearim. Tente de novo.
+      Não foi possível falar com o Regents. Tente de novo.
     </p>
   );
   const whoami = (

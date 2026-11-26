@@ -342,7 +342,7 @@ export function App() {
       <div className="shell">
         <ConnectionBanner notice={connection} />
         <header className="topbar">
-          <strong>Shearim</strong>
+          <strong>Regents</strong>
           <div className="row">
             <button
               type="button"

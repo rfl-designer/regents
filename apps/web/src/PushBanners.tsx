@@ -16,7 +16,7 @@ export function PushBanners({ push, onOpenDevices }: { push: PushState; onOpenDe
           {push.othersStopped.map((d) => (
             <p key={d.id}>
               {d.label ? `O push parou no ${d.label}` : "O push parou num outro aparelho"} em{" "}
-              {dayMonth(d.pushStoppedAt!)}. Abra o Shearim nele para religar, ou remova-o se não usa mais.
+              {dayMonth(d.pushStoppedAt!)}. Abra o Regents nele para religar, ou remova-o se não usa mais.
             </p>
           ))}
           <div className="actions">
@@ -38,7 +38,7 @@ function ThisDeviceBanner({ push }: { push: PushState }) {
       {push.thisDevice === "blocked" ? (
         <p role="alert">
           As notificações estão bloqueadas neste aparelho. Para voltar a receber os avisos, libere as notificações do
-          Shearim nas configurações do navegador (no iPhone: Ajustes › Notificações › Shearim).
+          Regents nas configurações do navegador (no iPhone: Ajustes › Notificações › Regents).
         </p>
       ) : (
         <>
@@ -73,7 +73,7 @@ export function InstallOnIphone() {
   return (
     <section className="offer install" aria-label="Adicionar à Tela de Início">
       <p>
-        <strong>Adicione o Shearim à Tela de Início</strong> para receber notificações no iPhone. Só o app da tela de
+        <strong>Adicione o Regents à Tela de Início</strong> para receber notificações no iPhone. Só o app da tela de
         início recebe push.
       </p>
       <ol className="install-steps">
@@ -84,7 +84,7 @@ export function InstallOnIphone() {
           <AddIcon /> Escolha <strong>Adicionar à Tela de Início</strong> e toque em Adicionar.
         </li>
         <li>
-          <img src="/icon.svg" alt="" width={22} height={22} /> Abra o Shearim pelo ícone e ligue as notificações.
+          <img src="/icon.svg" alt="" width={22} height={22} /> Abra o Regents pelo ícone e ligue as notificações.
         </li>
       </ol>
       <div className="actions">
