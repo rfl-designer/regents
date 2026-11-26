@@ -89,7 +89,7 @@ export type RunOptions = {
 export type RunResult = { code: number; stdout: string; stderr: string; output: string };
 
 export function sandbox(): Sandbox {
-  const root = mkdtempSync(join(tmpdir(), "shearim-deploy-"));
+  const root = mkdtempSync(join(tmpdir(), "regents-deploy-"));
   onCleanup(() => rmSync(root, { recursive: true, force: true }));
   const bin = join(root, "bin");
   const sys = join(root, "sys");
@@ -136,10 +136,10 @@ export function sandbox(): Sandbox {
           LOG: log,
           STATE: state,
           // Onde o instalador procuraria o Docker e os apps no Mac: só dentro da caixa.
-          SHEARIM_EXTRA_PATH: join(root, "extra-bin"),
-          SHEARIM_APPLICATIONS: join(root, "Applications"),
-          SHEARIM_TTY: tty,
-          SHEARIM_WAIT_SECONDS: "1",
+          REGENTS_EXTRA_PATH: join(root, "extra-bin"),
+          REGENTS_APPLICATIONS: join(root, "Applications"),
+          REGENTS_TTY: tty,
+          REGENTS_WAIT_SECONDS: "1",
           ...opts.env,
         },
         stdin: "ignore",

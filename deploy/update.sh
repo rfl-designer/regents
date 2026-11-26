@@ -1,5 +1,5 @@
 #!/bin/sh
-# Atualização do Shearim (Spec, história 8). Na pasta da Instalação:
+# Atualização do Regents (Spec, história 8). Na pasta da Instalação:
 #
 #   sh deploy/update.sh            a última release
 #   sh deploy/update.sh v1.3.0     uma release em particular

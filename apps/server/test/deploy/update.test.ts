@@ -60,28 +60,29 @@ describe("deploy/update.sh", () => {
     expect(compose(w)).toContain(composeTag("1.2.4"));
   });
 
-  test("avisa quando o .env fixa SHEARIM_VERSION", async () => {
+  test("avisa quando o .env fixa REGENTS_VERSION", async () => {
     const w = await installed("1.2.3");
     await w.release("1.3.0");
     w.set("latest", "v1.3.0");
     const env = join(w.installDir, ".env");
-    await Bun.write(env, `${readFileSync(env, "utf8")}SHEARIM_VERSION=1.2.3\n`);
+    await Bun.write(env, `${readFileSync(env, "utf8")}REGENTS_VERSION=1.2.3\n`);
 
     const r = await w.run(join(w.installDir, "deploy/update.sh"));
     expect(r.code, r.output).toBe(0);
-    expect(r.output).toContain("SHEARIM_VERSION=1.2.3");
+    expect(r.output).toContain("REGENTS_VERSION=1.2.3");
   });
 
-  test("se o compose novo não fecha com o .env: volta o de antes e não reinicia nada", async () => {
+  test("se o compose novo não fecha com o .env (falta REGENTS_VAPID_CONTACT): volta o de antes e não reinicia nada", async () => {
     const w = await installed("1.2.3");
     await w.release("1.3.0");
     w.set("latest", "v1.3.0");
-    w.set("config-fails");
+    await Bun.write(join(w.installDir, ".env"), "SHEARIM_VAPID_CONTACT=mailto:rafa@example.com\n");
     const n = w.calls().length;
 
     const r = await w.run(join(w.installDir, "deploy/update.sh"));
     expect(r.code).not.toBe(0);
-    expect(r.stderr).toContain("SHEARIM_VAPID_CONTACT");
+    expect(r.stderr).toContain("REGENTS_VAPID_CONTACT");
+    expect(r.stderr).toContain("rode o instalador novo com --update (veja o README)");
     expect(compose(w)).toContain(composeTag("1.2.3"));
     expect(callsSince(w, n).filter((c) => /compose (pull|up)/.test(c))).toEqual([]);
   });

@@ -1,4 +1,4 @@
-# Instalação do Shearim (Spec, módulo 13; ADRs 0007 e 0008).
+# Instalação do Regents (Spec, módulo 13; ADRs 0007 e 0008).
 #
 # Quem chega: um peer da tailnet abre https://<TS_HOSTNAME>.<tailnet>.ts.net. O Tailscale Serve,
 # no sidecar, termina o HTTPS, limpa e reescreve os headers de identidade e faz proxy para
@@ -12,24 +12,27 @@
 # - O sidecar fica em userspace, sem /dev/net/tun e sem capabilities.
 #
 # Configuração do Admin só no .env (o setup o escreve); segredos em ./secrets (deploy/setup.sh).
+# O hostname (TS_HOSTNAME), a tag da tailnet (REGENTS_TAILNET_TAG) e o papel e o banco do Postgres
+# (REGENTS_POSTGRES_USER, REGENTS_POSTGRES_DB) vêm do .env, com `regents` como padrão: uma
+# Instalação que era Shearim guarda os de antes, porque trocá-los muda a URL e a identidade do nó.
 # Atualizar: `sh deploy/update.sh` (baixa o compose da release e roda `docker compose pull &&
 # docker compose up -d`). Na subida, o app faz um dump em ./backups antes de migrar; uma versão
 # mais velha não sobe num banco migrado por uma mais nova (voltar de versão é
 # `docker compose run --rm app restore <dump de antes da migração>`).
 # Backup completo: ./backups (um pg_dump por noite, 14 dias) mais ./secrets. Guarde os dois fora daqui.
 
-name: shearim
+name: regents
 
 services:
   tailscale:
     # >= 1.104.4 (boletins TS-2026-016 e TS-2026-017). Fixado por tag e digest.
     image: tailscale/tailscale:v1.104.7@sha256:72c1e19e0aedca96b8533bbb0b4368564410ff20b17e53b804eb6c1f04a31be4
-    hostname: ${TS_HOSTNAME:-shearim}
+    hostname: ${TS_HOSTNAME:-regents}
     environment:
       TS_AUTHKEY: file:/run/secrets/ts_authkey
-      # O nó é tag:shearim: o que sai da Instalação não herda a identidade de quem criou a chave.
-      TS_EXTRA_ARGS: --advertise-tags=tag:shearim
-      TS_HOSTNAME: ${TS_HOSTNAME:-shearim}
+      # O nó é tag:regents (por padrão): o que sai da Instalação não herda a identidade de quem criou a chave.
+      TS_EXTRA_ARGS: --advertise-tags=${REGENTS_TAILNET_TAG:-tag:regents}
+      TS_HOSTNAME: ${TS_HOSTNAME:-regents}
       TS_USERSPACE: "true"
       TS_AUTH_ONCE: "true"
       TS_STATE_DIR: /var/lib/tailscale
@@ -58,37 +61,37 @@ services:
     restart: unless-stopped
 
   app:
-    image: ${SHEARIM_IMAGE:-ghcr.io/rfl-designer/shearim}:${SHEARIM_VERSION:-local}
+    image: ${REGENTS_IMAGE:-ghcr.io/rfl-designer/regents}:${REGENTS_VERSION:-local}
     build: .
     init: true
     environment:
-      SHEARIM_IDENTITY: tailnet
+      REGENTS_IDENTITY: tailnet
       TS_SOCKET: /var/run/tailscale/tailscaled.sock
-      DATABASE_URL: postgres://shearim@postgres:5432/shearim
+      DATABASE_URL: postgres://${REGENTS_POSTGRES_USER:-regents}@postgres:5432/${REGENTS_POSTGRES_DB:-regents}
       DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
       # Cifra a Chave do Workspace no banco (Contas e Chave). Sem ela, um dump não basta.
-      SHEARIM_MASTER_KEY_FILE: /run/secrets/master_key
+      REGENTS_MASTER_KEY_FILE: /run/secrets/master_key
       # `sub` do VAPID (Push). Precisa de domínio real: a Apple recusa localhost.
-      SHEARIM_VAPID_CONTACT: ${SHEARIM_VAPID_CONTACT:?rode deploy/setup.sh (falta SHEARIM_VAPID_CONTACT no .env)}
+      REGENTS_VAPID_CONTACT: ${REGENTS_VAPID_CONTACT:?rode o instalador novo com --update (veja o README)}
       # Pasta-raiz das Contas: o volume `contas` abaixo.
-      SHEARIM_ACCOUNTS_DIR: /data/contas
+      REGENTS_ACCOUNTS_DIR: /data/contas
       # A versão na seção Instalação: a mesma tag da imagem.
-      SHEARIM_VERSION: ${SHEARIM_VERSION:-local}
+      REGENTS_VERSION: ${REGENTS_VERSION:-local}
       # O dump de antes de migrar e o `restore <arquivo>` (que acha o arquivo pelo nome aqui).
-      SHEARIM_BACKUPS_DIR: /backups
+      REGENTS_BACKUPS_DIR: /backups
       # Tetos de concorrência das execuções, ajustáveis no `.env` (vazio: 2 por Conta, 4 na Chave,
       # 8 processos `claude -p` no host).
-      SHEARIM_MAX_PER_ACCOUNT: ${SHEARIM_MAX_PER_ACCOUNT:-}
-      SHEARIM_MAX_ON_KEY: ${SHEARIM_MAX_ON_KEY:-}
-      SHEARIM_MAX_PROCESSES: ${SHEARIM_MAX_PROCESSES:-}
-      SHEARIM_TOOL_TIMEOUT_S: ${SHEARIM_TOOL_TIMEOUT_S:-}
-      SHEARIM_TOOL_MAX_TURNS: ${SHEARIM_TOOL_MAX_TURNS:-}
-      SHEARIM_APPROVAL_TTL_H: ${SHEARIM_APPROVAL_TTL_H:-}
-      SHEARIM_MEMORY_MODEL: ${SHEARIM_MEMORY_MODEL:-}
-      SHEARIM_MEMORY_SUMMARY_CHARS: ${SHEARIM_MEMORY_SUMMARY_CHARS:-}
-      SHEARIM_WIKI_SOURCE_MAX_MB: ${SHEARIM_WIKI_SOURCE_MAX_MB:-}
-      SHEARIM_WIKI_PART_MAX_CHARS: ${SHEARIM_WIKI_PART_MAX_CHARS:-}
-      SHEARIM_WIKI_SYNC_MAX_TURNS: ${SHEARIM_WIKI_SYNC_MAX_TURNS:-}
+      REGENTS_MAX_PER_ACCOUNT: ${REGENTS_MAX_PER_ACCOUNT:-}
+      REGENTS_MAX_ON_KEY: ${REGENTS_MAX_ON_KEY:-}
+      REGENTS_MAX_PROCESSES: ${REGENTS_MAX_PROCESSES:-}
+      REGENTS_TOOL_TIMEOUT_S: ${REGENTS_TOOL_TIMEOUT_S:-}
+      REGENTS_TOOL_MAX_TURNS: ${REGENTS_TOOL_MAX_TURNS:-}
+      REGENTS_APPROVAL_TTL_H: ${REGENTS_APPROVAL_TTL_H:-}
+      REGENTS_MEMORY_MODEL: ${REGENTS_MEMORY_MODEL:-}
+      REGENTS_MEMORY_SUMMARY_CHARS: ${REGENTS_MEMORY_SUMMARY_CHARS:-}
+      REGENTS_WIKI_SOURCE_MAX_MB: ${REGENTS_WIKI_SOURCE_MAX_MB:-}
+      REGENTS_WIKI_PART_MAX_CHARS: ${REGENTS_WIKI_PART_MAX_CHARS:-}
+      REGENTS_WIKI_SYNC_MAX_TURNS: ${REGENTS_WIKI_SYNC_MAX_TURNS:-}
     secrets:
       - postgres_password
       - master_key
@@ -121,8 +124,8 @@ services:
   postgres:
     image: postgres:18.6-alpine@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
     environment:
-      POSTGRES_USER: shearim
-      POSTGRES_DB: shearim
+      POSTGRES_USER: ${REGENTS_POSTGRES_USER:-regents}
+      POSTGRES_DB: ${REGENTS_POSTGRES_DB:-regents}
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     secrets:
       - postgres_password
@@ -130,7 +133,7 @@ services:
       - pgdata:/var/lib/postgresql
     networks: [interna]
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "shearim", "-d", "shearim"]
+      test: ["CMD", "pg_isready", "-U", "${REGENTS_POSTGRES_USER:-regents}", "-d", "${REGENTS_POSTGRES_DB:-regents}"]
       interval: 10s
       timeout: 5s
       start_period: 30s
@@ -142,15 +145,15 @@ services:
   # `backup`: grava cada tentativa no banco, e o app avisa o Admin (push e faixa) quando falha ou
   # passa 36 h sem um backup bom. Espera o app subir (é ele quem migra).
   backup:
-    image: ${SHEARIM_IMAGE:-ghcr.io/rfl-designer/shearim}:${SHEARIM_VERSION:-local}
+    image: ${REGENTS_IMAGE:-ghcr.io/rfl-designer/regents}:${REGENTS_VERSION:-local}
     init: true
     command: ["backup"]
     environment:
-      DATABASE_URL: postgres://shearim@postgres:5432/shearim
+      DATABASE_URL: postgres://${REGENTS_POSTGRES_USER:-regents}@postgres:5432/${REGENTS_POSTGRES_DB:-regents}
       DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
-      SHEARIM_BACKUPS_DIR: /backups
+      REGENTS_BACKUPS_DIR: /backups
       # HH:MM na hora local do container (TZ, padrão UTC).
-      SHEARIM_BACKUP_AT: ${SHEARIM_BACKUP_AT:-03:00}
+      REGENTS_BACKUP_AT: ${REGENTS_BACKUP_AT:-03:00}
       TZ: ${TZ:-UTC}
     secrets:
       - postgres_password
