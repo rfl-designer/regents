@@ -1,4 +1,4 @@
-import { isChannelKind, joinPt } from "@shearim/contracts";
+import { isChannelKind, joinPt } from "@regents/contracts";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { type Db, isUuid, schema } from "../db/client";
 import { isActive } from "../members";

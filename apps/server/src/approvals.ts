@@ -1,4 +1,4 @@
-import type { ApprovalRequestDto, RejectApprovalInput } from "@shearim/contracts";
+import type { ApprovalRequestDto, RejectApprovalInput } from "@regents/contracts";
 import type { Server } from "bun";
 import { and, asc, eq, gt, isNull, type SQL } from "drizzle-orm";
 import { type Context, Hono } from "hono";
@@ -261,7 +261,7 @@ export function approvalRoutes(deps: {
       }
     } catch (err) {
       // Já aprovado: sem resultado nem falha gravados, o Pedido e a execução ficariam presos.
-      console.error("shearim: a ação aprovada falhou", err);
+      console.error("regents: a ação aprovada falhou", err);
       const cause = "erro inesperado ao executar a ação";
       outcome = performing
         ? {

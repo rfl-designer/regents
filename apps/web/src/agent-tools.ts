@@ -1,4 +1,4 @@
-import type { AgentDto } from "@shearim/contracts";
+import type { AgentDto } from "@regents/contracts";
 
 /**
  * O que um Agente sabe fazer, numa linha ao lado da descrição (toda lista de Agentes): para cada

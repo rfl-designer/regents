@@ -1,4 +1,4 @@
-import { formatBytes, WIKI_SYNC_OPEN_STATES, type WikiSourceDto, type WikiSourceFormat } from "@shearim/contracts";
+import { formatBytes, WIKI_SYNC_OPEN_STATES, type WikiSourceDto, type WikiSourceFormat } from "@regents/contracts";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { type Db, schema, type Tx } from "../db/client";
 import { pendingOf, reflectedSources } from "./wikis";

@@ -9,7 +9,7 @@
  *   Andamento, `nativeWebSteps`). O MCP também, menos o
  *   endpoint do próprio Shearim (`tools/mcp.ts`) quando a execução tem Ferramentas: ele vai sozinho
  *   no `--mcp-config` (com `--strict-mcp-config`), e as Ferramentas dele são liberadas sem pergunta
- *   de permissão (`--allowedTools mcp__shearim`). O roteamento nunca tem Ferramentas (ADR 0009).
+ *   de permissão (`--allowedTools mcp__regents`). O roteamento nunca tem Ferramentas (ADR 0009).
  * - O `env` é o de `accountEnv`: `CLAUDE_CONFIG_DIR`, as novas tentativas (3) e as esperas (90 s).
  * - A falha se lê por `result.is_error`, `assistant.error` e `terminal_reason`; nunca por
  *   `subtype` nem só pelo exit code (nota 02: token inválido sai 1 com `subtype: "success"`).

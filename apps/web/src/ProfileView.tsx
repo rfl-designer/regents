@@ -1,4 +1,4 @@
-import type { MeDto } from "@shearim/contracts";
+import type { MeDto } from "@regents/contracts";
 import { type FormEvent, useState } from "react";
 import { Avatar } from "./Avatar";
 import { ApiFailure, api } from "./api";

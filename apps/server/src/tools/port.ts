@@ -5,7 +5,7 @@ import type {
   ToolCallDto,
   ToolConnectorDto,
   ToolOrigin,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { lockLiveAgent } from "../agents";
 import type { Clock } from "../clock";
@@ -275,7 +275,7 @@ export function createToolPort(deps: {
     const ran = work(own.signal).then(
       (value) => ({ ok: true as const, value }),
       (err) => {
-        if (!(err instanceof ToolFailure)) console.error(`shearim: a Ferramenta ${def.id} falhou`, err);
+        if (!(err instanceof ToolFailure)) console.error(`regents: a Ferramenta ${def.id} falhou`, err);
         return {
           ok: false as const,
           reason: err instanceof ToolFailure ? err.reason : "erro inesperado na Ferramenta",

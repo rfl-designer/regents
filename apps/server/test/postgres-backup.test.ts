@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ChannelDto, MessageDto } from "@shearim/contracts";
+import type { ChannelDto, MessageDto } from "@regents/contracts";
 import { sql } from "drizzle-orm";
 import { systemClock } from "../src/clock";
 import { connect } from "../src/db/connect";

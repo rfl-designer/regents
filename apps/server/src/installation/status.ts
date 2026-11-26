@@ -6,7 +6,7 @@ import {
   type InstallationDto,
   NODE_KEY_WARNING_DAYS,
   type NodeKeyDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
@@ -184,7 +184,7 @@ export function createInstallation(deps: {
   function tick() {
     running = running
       .then(check)
-      .catch((err) => console.error("shearim: a verificação da Instalação falhou", err))
+      .catch((err) => console.error("regents: a verificação da Instalação falhou", err))
       .finally(() => {
         if (!stopped) cancel = clock.after(INSTALLATION_CHECK_MS, tick);
       });

@@ -1,4 +1,4 @@
-import type { MyConnectorDto } from "@shearim/contracts";
+import type { MyConnectorDto } from "@regents/contracts";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { api, messageOf } from "./api";
 import { goToLogin, loginReturn } from "./connector-login";

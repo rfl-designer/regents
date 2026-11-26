@@ -1,4 +1,4 @@
-import { EVENTS_PATH } from "@shearim/contracts";
+import { EVENTS_PATH } from "@regents/contracts";
 import type { Server } from "bun";
 import { Hono } from "hono";
 import { websocket } from "hono/bun";
@@ -225,7 +225,7 @@ export function createApp(deps: AppDeps) {
       return await identity.whoAmI(c.req.raw, peer);
     } catch (err) {
       if (!(err instanceof IdentityUnavailableError)) throw err;
-      console.error(`shearim: ${err.message}`);
+      console.error(`regents: ${err.message}`);
       return UNAVAILABLE;
     }
   }

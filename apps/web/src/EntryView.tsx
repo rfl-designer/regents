@@ -1,4 +1,4 @@
-import type { MyJoinRequestDto } from "@shearim/contracts";
+import type { MyJoinRequestDto } from "@regents/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { dayMonthTime } from "./format";

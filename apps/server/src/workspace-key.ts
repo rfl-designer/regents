@@ -1,4 +1,4 @@
-import type { SetWorkspaceKeyInput, WorkspaceKeyDto } from "@shearim/contracts";
+import type { SetWorkspaceKeyInput, WorkspaceKeyDto } from "@regents/contracts";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "./clock";

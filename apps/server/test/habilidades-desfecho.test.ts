@@ -5,7 +5,7 @@
  * roteamento continua sem Ferramentas (ADR 0009).
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, MessageDto, SkillDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, MessageDto, SkillDto } from "@regents/contracts";
 import { eventually, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };

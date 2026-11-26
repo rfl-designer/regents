@@ -10,7 +10,7 @@
  * tentativa é observada pelas chamadas que chegam aos dublês.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ExecutionDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, ExecutionDto, MemoryItemDto, MessageDto } from "@regents/contracts";
 import type { FakeRun } from "./fake-claude/script";
 import { type EventSocket, eventually, type Person, type TestApp, testApp } from "./harness";
 

@@ -11,7 +11,7 @@
  *   aprovação.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ApprovalRequestDto, ChannelDto, ExecutionDto, MessageDto, UnreadDto } from "@shearim/contracts";
+import type { AgentDto, ApprovalRequestDto, ChannelDto, ExecutionDto, MessageDto, UnreadDto } from "@regents/contracts";
 import { and, eq } from "drizzle-orm";
 import { approvalTtlFromEnv } from "../src/approvals";
 import { schema } from "../src/db/client";

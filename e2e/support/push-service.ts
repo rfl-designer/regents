@@ -7,7 +7,7 @@
 import { createECDH, randomBytes, randomUUID } from "node:crypto";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
-import type { PushSubscriptionInput } from "@shearim/contracts";
+import type { PushSubscriptionInput } from "@regents/contracts";
 import { pushServiceCert } from "../../apps/server/test/fakes/push-cert";
 
 export interface FakePushService {

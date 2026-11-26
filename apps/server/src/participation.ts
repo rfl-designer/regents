@@ -1,4 +1,4 @@
-import type { ConversationKind, ParticipantDto } from "@shearim/contracts";
+import type { ConversationKind, ParticipantDto } from "@regents/contracts";
 import { type AnyColumn, and, asc, eq, inArray, or, type SQL } from "drizzle-orm";
 import { type Db, schema, type Tx } from "./db/client";
 import type { Audience } from "./events";

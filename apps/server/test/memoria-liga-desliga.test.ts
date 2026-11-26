@@ -5,7 +5,7 @@
  * conversa. O que se confere é o DTO do Agente, a lista da Memória e o pedido que chega ao cérebro.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ExecutionDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, ExecutionDto, MemoryItemDto, MessageDto } from "@regents/contracts";
 import { eq } from "drizzle-orm";
 import { schema } from "../src/db/client";
 import { type ScriptedRun, scriptedBrain } from "./fakes/scripted-brain";

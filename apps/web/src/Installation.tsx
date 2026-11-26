@@ -4,7 +4,7 @@ import {
   type InstallationAlertDto,
   type InstallationDto,
   type NodeKeyDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { dayMonthHour, fullDay } from "./format";

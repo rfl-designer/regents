@@ -16,7 +16,7 @@ import type {
   WikiCitationDto,
   WikiDto,
   WikiPageViewDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" }; // Admin (chega primeiro)

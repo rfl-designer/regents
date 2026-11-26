@@ -1,4 +1,4 @@
-import type { AgentDto, ChannelDto, DmDto, MeDto, MemberSummaryDto, UnreadDto, WikiDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, DmDto, MeDto, MemberSummaryDto, UnreadDto, WikiDto } from "@regents/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { agentCapabilitiesText } from "./agent-tools";
 import { ApiFailure, api } from "./api";

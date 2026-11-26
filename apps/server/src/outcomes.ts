@@ -1,4 +1,4 @@
-import type { OutcomeDto } from "@shearim/contracts";
+import type { OutcomeDto } from "@regents/contracts";
 import { asc, eq, inArray, type SQL } from "drizzle-orm";
 import { articuladoraOf } from "./articuladora";
 import { type Db, schema } from "./db/client";

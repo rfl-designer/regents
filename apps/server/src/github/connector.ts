@@ -1,5 +1,5 @@
 import { createPrivateKey, sign } from "node:crypto";
-import type { GitHubDto } from "@shearim/contracts";
+import type { GitHubDto } from "@regents/contracts";
 import { asc, eq, inArray } from "drizzle-orm";
 import { lockLiveAgent } from "../agents";
 import type { Clock } from "../clock";

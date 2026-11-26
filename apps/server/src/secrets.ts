@@ -63,7 +63,7 @@ export function loadMasterKey(
       mode: 0o600,
     });
     chmodSync(file, 0o600);
-    (opts.log ?? console.log)(`shearim: chave mestra nova gerada em ${file}`);
+    (opts.log ?? console.log)(`regents: chave mestra nova gerada em ${file}`);
   }
   try {
     return parseMasterKey(readFileSync(file, "utf8"));

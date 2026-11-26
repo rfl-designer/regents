@@ -15,7 +15,7 @@ import type {
   WikiDto,
   WikiPageViewDto,
   WikiReachDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { toolResults } from "./fakes/messages-api";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 

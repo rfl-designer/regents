@@ -5,7 +5,7 @@ import {
   type KeyIncidentDto,
   MEMBERS_PATH,
   WORKSPACE_KEY_PATH,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import type { Db } from "./db/client";
 import type { JoinRequestHooks } from "./join-requests";
 import type { KeyHooks } from "./key-budget";
@@ -28,7 +28,7 @@ export function adminPushes(deps: { db: Db; notify: Push["notify"] }): JoinReque
 
   /** O aviso já saiu da transação que o pediu: uma falha aqui vai para o log, nunca desfaz nada. */
   const later = (what: string, work: Promise<void>) =>
-    void work.catch((err) => console.error(`shearim: o push ${what} falhou`, err));
+    void work.catch((err) => console.error(`regents: o push ${what} falhou`, err));
 
   return {
     joinRequestCreated(request: JoinRequestAdminDto) {

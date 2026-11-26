@@ -1,4 +1,4 @@
-import type { MeDto, MemoryItemDto } from "@shearim/contracts";
+import type { MeDto, MemoryItemDto } from "@regents/contracts";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { useServerEvents } from "./live";

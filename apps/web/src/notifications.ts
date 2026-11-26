@@ -1,4 +1,4 @@
-import type { DeviceDto } from "@shearim/contracts";
+import type { DeviceDto } from "@regents/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { useServerEvents } from "./live";
@@ -183,7 +183,7 @@ export function usePush(enabled: boolean) {
     try {
       setDevices(await api.devices());
     } catch (err) {
-      console.error("shearim: não consegui carregar os aparelhos", err);
+      console.error("regents: não consegui carregar os aparelhos", err);
     }
   }, []);
 
@@ -208,7 +208,7 @@ export function usePush(enabled: boolean) {
           if (!cancelled) setDevices(after);
         } catch (err) {
           // Sem o gesto, o iPhone pode recusar: a faixa deste aparelho oferece "Ligar".
-          console.error("shearim: não consegui renovar a inscrição de push deste aparelho", err);
+          console.error("regents: não consegui renovar a inscrição de push deste aparelho", err);
         }
       }
       if (!cancelled) setChecked(true);

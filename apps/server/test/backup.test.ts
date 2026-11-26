@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { InstallationDto } from "@shearim/contracts";
+import type { InstallationDto } from "@regents/contracts";
 import { migrationsFolder } from "../src/db/client";
 import { createNightlyBackups } from "../src/installation/backups";
 import { writeAtomically } from "../src/installation/dumper";

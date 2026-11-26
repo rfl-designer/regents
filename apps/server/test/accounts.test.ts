@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync } from "node:fs";
-import type { AccountDto } from "@shearim/contracts";
+import type { AccountDto } from "@regents/contracts";
 import { FAKE_ACCESS_TOKEN, FAKE_LOGIN_CODE } from "./fake-claude";
 import { type EventSocket, onCleanup, type Person, type TestApp, testApp } from "./harness";
 

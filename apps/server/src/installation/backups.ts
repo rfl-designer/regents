@@ -1,6 +1,6 @@
 import { readdirSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
-import { BACKUP_RETENTION_DAYS } from "@shearim/contracts";
+import { BACKUP_RETENTION_DAYS } from "@regents/contracts";
 import { and, desc, eq, gt } from "drizzle-orm";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";

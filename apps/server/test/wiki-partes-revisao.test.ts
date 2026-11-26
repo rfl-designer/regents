@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type ServerEvent, type WikiDto, type WikiPageDto, wikiSyncStepText } from "@shearim/contracts";
+import { type ServerEvent, type WikiDto, type WikiPageDto, wikiSyncStepText } from "@regents/contracts";
 import { wikiFromEnv } from "../src/wiki/sources";
 import { type FakeReply, lastUserText, type RecordedRequest, toolResults } from "./fakes/messages-api";
 import { eventually, type TestApp, testApp } from "./harness";

@@ -1,4 +1,4 @@
-import type { AgentWikiDto, WikiChannelDto, WikiReachDto, WikiScope } from "@shearim/contracts";
+import type { AgentWikiDto, WikiChannelDto, WikiReachDto, WikiScope } from "@regents/contracts";
 import { and, asc, eq, inArray, isNotNull, or, type SQL, sql } from "drizzle-orm";
 import { type Db, schema, type Tx } from "../db/client";
 import { isActive } from "../members";

@@ -19,7 +19,7 @@ import {
   WORKSPACE_KEY_PATH,
   wikiPageOfPath,
   wikiPagePath,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { AgentsSettings, WorkspaceKeySettings } from "./AgentsAdmin";
 import { Avatar } from "./Avatar";

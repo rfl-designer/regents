@@ -11,7 +11,7 @@
  * - Um Membro removido perde as credenciais.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ConnectorDto, ExecutionDto, MessageDto, MyConnectorDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, ConnectorDto, ExecutionDto, MessageDto, MyConnectorDto } from "@regents/contracts";
 import { toolResults } from "./fakes/messages-api";
 import type { FakeRemoteTool } from "./fakes/remote-mcp";
 import { type EventSocket, eventually, remoteMcp, type TestApp, testApp } from "./harness";

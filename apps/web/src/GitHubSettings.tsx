@@ -1,4 +1,4 @@
-import type { GitHubDto } from "@shearim/contracts";
+import type { GitHubDto } from "@regents/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { api, messageOf } from "./api";
 import { dateTimeShort } from "./format";

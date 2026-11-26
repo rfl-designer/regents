@@ -1,5 +1,5 @@
 import { describe, test } from "@e2e-dev/web";
-import type { DmDto, UnreadDto } from "@shearim/contracts";
+import type { DmDto, UnreadDto } from "@regents/contracts";
 import { expect } from "e2e";
 import { addMember, as, ensureAdmin, jsonBody, newPerson } from "../support/people";
 

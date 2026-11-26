@@ -6,7 +6,7 @@ import {
   wikiBodyParts,
   wikiPagePath,
   wikiSyncOpen,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { type MouseEvent, type ReactNode, useCallback, useEffect, useState } from "react";
 import { ApiFailure, messageOf } from "../api";
 import { dateTimeShort } from "../format";

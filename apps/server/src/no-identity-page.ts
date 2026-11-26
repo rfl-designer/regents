@@ -1,4 +1,4 @@
-import { NO_IDENTITY_TEXT, type NoIdentityReason } from "@shearim/contracts";
+import { NO_IDENTITY_TEXT, type NoIdentityReason } from "@regents/contracts";
 
 const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (ch) => `&#${ch.charCodeAt(0)};`);
 

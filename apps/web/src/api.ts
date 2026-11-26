@@ -49,7 +49,7 @@ import type {
   UpdateSkillInput,
   WorkspaceContextDto,
   WorkspaceKeyDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 
 /** Falha de uma chamada à API, já com o que a tela precisa para explicar. */
 export class ApiFailure extends Error {

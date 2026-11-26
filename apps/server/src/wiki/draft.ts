@@ -6,7 +6,7 @@ import {
   type WikiPageRefDto,
   type WikiSyncReportDto,
   wikiLinkSlugs,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import type { ExecutionTools, ToolResult, ToolSpec } from "../tools/port";
 import { POINT_CONTRADICTION, READ_PAGE, REMOVE_PAGE, WRITE_PAGE } from "./rules";
 

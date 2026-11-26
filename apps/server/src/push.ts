@@ -11,7 +11,7 @@ import {
   messagePath,
   type PushKeyDto,
   type PushSubscriptionInput,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "./clock";
@@ -127,7 +127,7 @@ export function createPush(deps: {
   // rajada sai em ordem e a última notificação é a da última mensagem. Quem grava não espera.
   let chain: Promise<void> = Promise.resolve();
   function enqueue(work: () => Promise<void>) {
-    chain = chain.then(work).catch((err) => console.error("shearim: o push falhou", err));
+    chain = chain.then(work).catch((err) => console.error("regents: o push falhou", err));
   }
 
   /** Manda um push a todo aparelho com push ligado do Membro. */
@@ -148,7 +148,7 @@ export function createPush(deps: {
         });
         await announceDevices(s.memberId);
       } else {
-        console.error(`shearim: o push service recusou um push (${result.detail})`);
+        console.error(`regents: o push service recusou um push (${result.detail})`);
       }
     }
   }

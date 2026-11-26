@@ -1,4 +1,4 @@
-import { type MentionDto, mentionPattern, normalizeHandle } from "@shearim/contracts";
+import { type MentionDto, mentionPattern, normalizeHandle } from "@regents/contracts";
 import { asc, inArray } from "drizzle-orm";
 import { type Db, schema, type Tx } from "./db/client";
 import { type HandleOwner, resolveHandles } from "./mention-handles";

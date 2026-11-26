@@ -8,7 +8,7 @@
  * - O token da execução deixa de valer no endpoint quando ela termina.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ApprovalRequestDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ApprovalRequestDto, ChannelDto, ExecutionDto, MessageDto } from "@regents/contracts";
 import type { FakeClaudeCall, FakeRun } from "./fake-claude";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
 
@@ -92,7 +92,7 @@ function endpointDe(c: FakeClaudeCall) {
     JSON.parse(flag(c, "--mcp-config")!) as {
       mcpServers: Record<string, { url: string; headers: Record<string, string> }>;
     }
-  ).mcpServers.shearim!;
+  ).mcpServers.regents!;
   return { url: servidor.url, token: servidor.headers.Authorization!.replace(/^Bearer /, "") };
 }
 

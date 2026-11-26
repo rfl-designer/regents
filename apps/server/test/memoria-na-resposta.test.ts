@@ -5,7 +5,7 @@
  * fixo da Instalação. O que se confere é o pedido que chega ao cérebro.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, MemoryItemDto, MessageDto } from "@regents/contracts";
 import { memoryFromEnv } from "../src/memory/extraction";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { WikiDto, WikiSourceDto } from "@shearim/contracts";
+import type { WikiDto, WikiSourceDto } from "@regents/contracts";
 import { wikiFromEnv } from "../src/wiki/sources";
 import { type Person, type TestApp, testApp } from "./harness";
 

@@ -9,7 +9,7 @@ import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
-import type { AgentDto, ChannelDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, MessageDto } from "@regents/contracts";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { systemClock } from "../src/clock";

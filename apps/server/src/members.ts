@@ -1,4 +1,4 @@
-import type { MeDto, MemberSummaryDto } from "@shearim/contracts";
+import type { MeDto, MemberSummaryDto } from "@regents/contracts";
 import { and, asc, eq, getTableColumns, isNull, type SQL, sql } from "drizzle-orm";
 import type { MiddlewareHandler } from "hono";
 import { addArticuladora } from "./articuladora";
@@ -98,7 +98,7 @@ export async function memberFor(
 
   return db.transaction(async (tx) => {
     // Serializa a entrada: só um primeiro Admin, mesmo com chegadas simultâneas.
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('shearim:entrada'))`);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('regents:entrada'))`);
     const [again] = await selectMembers(tx, eq(members.tailnetUserId, who.userId));
     if (again) return again;
     const [anyone] = await tx.select({ id: members.id }).from(members).limit(1);

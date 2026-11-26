@@ -1,4 +1,4 @@
-import type { MeDto, MessageDto } from "@shearim/contracts";
+import type { MeDto, MessageDto } from "@regents/contracts";
 import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
 

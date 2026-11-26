@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentDto } from "@shearim/contracts";
+import type { AgentDto } from "@regents/contracts";
 import { type HandleOwner, resolveHandles } from "../src/mention-handles";
 import { type Person, type TestApp, testApp } from "./harness";
 

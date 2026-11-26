@@ -1,4 +1,4 @@
-import type { FollowedThreadDto, MentionDto } from "@shearim/contracts";
+import type { FollowedThreadDto, MentionDto } from "@regents/contracts";
 import { and, asc, eq, isNotNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { type Db, schema, type Tx } from "./db/client";

@@ -1,5 +1,5 @@
 import { describe, test } from "@e2e-dev/web";
-import type { AgentDto, MeDto, WikiDto } from "@shearim/contracts";
+import type { AgentDto, MeDto, WikiDto } from "@regents/contracts";
 import { expect } from "e2e";
 import { addMember, as, jsonBody, newPerson } from "../support/people";
 

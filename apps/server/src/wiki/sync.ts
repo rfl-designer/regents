@@ -5,7 +5,7 @@ import {
   WIKIS_PATH,
   type WikiSyncDto,
   type WikiSyncStepDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { and, asc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { articuladoraOf } from "../articuladora";
 import type { Clock } from "../clock";
@@ -474,7 +474,7 @@ export function createWikiSyncs(deps: {
       const controller = new AbortController();
       const done = work(id, controller)
         .catch(async (err) => {
-          console.error("shearim: a Sincronização da Wiki falhou", err);
+          console.error("regents: a Sincronização da Wiki falhou", err);
           await fail(id, "erro inesperado no Shearim").catch(() => {});
         })
         .finally(() => running.delete(id));

@@ -7,7 +7,7 @@ import {
   type SkillDto,
   type SkillOrigin,
   type UpdateSkillInput,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { and, eq } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { findAgent, lockLiveAgent } from "../agents";

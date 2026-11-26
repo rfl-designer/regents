@@ -5,7 +5,7 @@
  * vista no Andamento. Pela Chave e pela Conta.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ExecutionDto, MessageDto, WikiChannelDto, WikiDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, ExecutionDto, MessageDto, WikiChannelDto, WikiDto } from "@regents/contracts";
 import { toolResults } from "./fakes/messages-api";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 

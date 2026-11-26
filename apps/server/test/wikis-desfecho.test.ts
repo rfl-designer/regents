@@ -6,7 +6,7 @@
  * fora do alcance da conversa. O Desfecho não lê páginas da Wiki: o pedido vai sem Ferramentas.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, MeDto, MessageDto, WikiDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, MeDto, MessageDto, WikiDto } from "@regents/contracts";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 
 const ana = { id: "2201", login: "ana@exemplo.com", name: "Ana" }; // Admin (chega primeiro)

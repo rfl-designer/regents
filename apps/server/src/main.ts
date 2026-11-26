@@ -61,7 +61,7 @@ import { wikiFromEnv } from "./wiki/sources";
 const repoRoot = resolve(import.meta.dir, "../../..");
 
 function fail(message: string): never {
-  console.error(`shearim: ${message}`);
+  console.error(`regents: ${message}`);
   process.exit(1);
 }
 
@@ -79,7 +79,7 @@ function identityFromEnv(): { identity: IdentityPort; routes?: Hono; describe: s
   if (mode === "tailnet") {
     const socketPath = process.env.TS_SOCKET || DEFAULT_TS_SOCKET;
     // Não exige o socket já na subida: o sidecar pode estar subindo. Sem ele, a API responde 503.
-    if (!existsSync(socketPath)) console.warn(`shearim: socket do tailscaled ainda não existe em ${socketPath}`);
+    if (!existsSync(socketPath)) console.warn(`regents: socket do tailscaled ainda não existe em ${socketPath}`);
     return {
       identity: createWhoisIdentity({
         socketPath,
@@ -112,7 +112,7 @@ function pgliteDirFromEnv(raw: string | undefined) {
 const backupsDir = resolve(process.env.SHEARIM_BACKUPS_DIR || resolve(repoRoot, ".data/backups"));
 
 function commandDeps(conn: ReturnType<typeof connect>): CommandDeps {
-  return { conn, clock: systemClock, backupsDir, log: (line) => console.log(`shearim: ${line}`) };
+  return { conn, clock: systemClock, backupsDir, log: (line) => console.log(`regents: ${line}`) };
 }
 
 /** As migrações do jeito seguro; um banco de versão mais nova encerra com a explicação. */
@@ -140,7 +140,7 @@ async function nightlyBackups(conn: ReturnType<typeof connect>) {
   for (;;) {
     const state = await migrationState(conn.db);
     if (state.kind === "current") break;
-    if (!warned) console.log("shearim: esperando o app aplicar as migrações para começar os backups");
+    if (!warned) console.log("regents: esperando o app aplicar as migrações para começar os backups");
     warned = true;
     await Bun.sleep(10_000);
   }
@@ -150,12 +150,12 @@ async function nightlyBackups(conn: ReturnType<typeof connect>) {
     dumper: conn.dumper,
     dir: backupsDir,
     at: { hour: hour!, minute: minute! },
-    log: (line) => console.log(`shearim: ${line}`),
+    log: (line) => console.log(`regents: ${line}`),
   });
   mkdirSync(backupsDir, { recursive: true });
   job.start();
   console.log(
-    `shearim: backup noturno às ${process.env.SHEARIM_BACKUP_AT || "03:00"} em ${backupsDir} (${conn.describe})`,
+    `regents: backup noturno às ${process.env.SHEARIM_BACKUP_AT || "03:00"} em ${backupsDir} (${conn.describe})`,
   );
   const stop = async () => {
     await job.stop();
@@ -176,7 +176,7 @@ async function main(command: string | undefined) {
 
   if (command === "migrate") {
     await migrateOrFail(conn);
-    console.log(`shearim: migrações aplicadas em ${conn.describe}`);
+    console.log(`regents: migrações aplicadas em ${conn.describe}`);
     await conn.close();
     return;
   }
@@ -285,7 +285,7 @@ async function main(command: string | undefined) {
     fetch: root.fetch,
     websocket: shearim.websocket,
   });
-  console.log(`shearim: ouvindo em http://${server.hostname}:${server.port} (${conn.describe}; ${who.describe})`);
+  console.log(`regents: ouvindo em http://${server.hostname}:${server.port} (${conn.describe}; ${who.describe})`);
 
   // SIGTERM (o `docker compose stop`, com 30 s de folga): dreno, até 20 s para o que está rodando
   // terminar. SIGINT (Ctrl-C no dev): para na hora. Nos dois, os WebSockets fecham com 1012 logo

@@ -1,4 +1,4 @@
-import { type AgentDto, EVENTS_CLOSE_UPDATING, EVENTS_PATH, type ServerEvent } from "@shearim/contracts";
+import { type AgentDto, EVENTS_CLOSE_UPDATING, EVENTS_PATH, type ServerEvent } from "@regents/contracts";
 import { type Dispatch, type SetStateAction, useEffect, useRef, useSyncExternalStore } from "react";
 import { api } from "./api";
 
@@ -56,7 +56,7 @@ function sendPresence() {
   if (!id) return;
   presenceChain = presenceChain.then(() =>
     api.setPresence({ connectionId: id, conversationId }).catch((err) => {
-      console.error("shearim: a Presença não chegou ao servidor", err);
+      console.error("regents: a Presença não chegou ao servidor", err);
     }),
   );
 }

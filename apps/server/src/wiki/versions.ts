@@ -6,7 +6,7 @@ import {
   type WikiSyncReportDto,
   type WikiVersionDto,
   wikiLinkSlugs,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { and, asc, desc, eq, inArray, max } from "drizzle-orm";
 import { type Db, schema, type Tx } from "../db/client";
 import type { DraftPage } from "./draft";

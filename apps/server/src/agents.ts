@@ -7,7 +7,7 @@ import {
   type AgentWikiSummaryDto,
   type CreateAgentInput,
   type UpdateAgentInput,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { and, asc, desc, eq, getTableColumns, inArray, isNull, ne, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { withBuiltinText } from "./articuladora";

@@ -1,4 +1,4 @@
-import { DM_KINDS, type DmDto, type DmKind, type OpenDmInput } from "@shearim/contracts";
+import { DM_KINDS, type DmDto, type DmKind, type OpenDmInput } from "@regents/contracts";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { findAgent, lockLiveAgent } from "./agents";
@@ -82,7 +82,7 @@ export function dmRoutes(deps: { db: Db; clock: Clock; events: EventHub }) {
     const now = clock.now();
     const { dm, created } = await db.transaction(async (tx) => {
       // Serializa a abertura: duas aberturas simultâneas com as mesmas pessoas dão numa DM só.
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('shearim:dm-nova'))`);
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('regents:dm-nova'))`);
       // Travado: um DELETE ao mesmo tempo espera, ou já o apagou, e então não nasce DM com ele.
       for (const id of agentIds) if (!(await lockLiveAgent(tx, id))) return { dm: undefined, created: false };
       const existing = await findDmWith(tx, kind, me.id, everyone, agentIds);

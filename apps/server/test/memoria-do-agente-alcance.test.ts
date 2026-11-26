@@ -17,7 +17,7 @@ import {
   type MemoryItemDto,
   type MessageDto,
   OPEN_STATES,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { type ScriptedRun, scriptedBrain } from "./fakes/scripted-brain";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 

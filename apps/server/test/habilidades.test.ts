@@ -6,7 +6,7 @@
  * tarefa pede, à vista no Andamento. Pela Chave e pela Conta.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, AgentSkillDto, ChannelDto, ExecutionDto, MessageDto, SkillDto } from "@shearim/contracts";
+import type { AgentDto, AgentSkillDto, ChannelDto, ExecutionDto, MessageDto, SkillDto } from "@regents/contracts";
 import type { ToolDefinition } from "../src/tools/port";
 import { WORKSPACE_TOOLS } from "../src/tools/workspace";
 import { toolResults } from "./fakes/messages-api";

@@ -1,4 +1,4 @@
-import type { NoIdentityReason } from "@shearim/contracts";
+import type { NoIdentityReason } from "@regents/contracts";
 
 export type { NoIdentityReason };
 

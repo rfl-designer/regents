@@ -3,19 +3,19 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "shearim",
+      "name": "regents",
       "devDependencies": {
         "@biomejs/biome": "2.6.8",
         "typescript": "7.0.2",
       },
     },
     "apps/server": {
-      "name": "@shearim/server",
+      "name": "@regents/server",
       "dependencies": {
         "@anthropic-ai/sdk": "1.8.0",
         "@electric-sql/pglite": "0.5.17",
         "@modelcontextprotocol/sdk": "1.32.2",
-        "@shearim/contracts": "workspace:*",
+        "@regents/contracts": "workspace:*",
         "drizzle-orm": "0.45.4",
         "hono": "4.13.20",
         "postgres": "3.4.9",
@@ -29,9 +29,9 @@
       },
     },
     "apps/web": {
-      "name": "@shearim/web",
+      "name": "@regents/web",
       "dependencies": {
-        "@shearim/contracts": "workspace:*",
+        "@regents/contracts": "workspace:*",
         "react": "19.3.1",
         "react-dom": "19.3.1",
       },
@@ -43,9 +43,9 @@
       },
     },
     "e2e": {
-      "name": "@shearim/e2e",
+      "name": "@regents/e2e",
       "dependencies": {
-        "@shearim/contracts": "workspace:*",
+        "@regents/contracts": "workspace:*",
       },
       "devDependencies": {
         "@e2e-dev/web": "0.16.1",
@@ -54,7 +54,7 @@
       },
     },
     "packages/contracts": {
-      "name": "@shearim/contracts",
+      "name": "@regents/contracts",
     },
   },
   "packages": {
@@ -288,6 +288,14 @@
 
     "@oxc-transform/binding-win32-x64-msvc": ["@oxc-transform/binding-win32-x64-msvc@0.159.0", "", { "os": "win32", "cpu": "x64" }, "sha512-eJOxZQLUXAgoXltbQc2x9RW6D2cF4tr/omH0m+PnEmvdvqXiAydVdnG/VqPkmtPSD+pNwlcPq0DtmKfGJn4DvA=="],
 
+    "@regents/contracts": ["@regents/contracts@workspace:packages/contracts"],
+
+    "@regents/e2e": ["@regents/e2e@workspace:e2e"],
+
+    "@regents/server": ["@regents/server@workspace:apps/server"],
+
+    "@regents/web": ["@regents/web@workspace:apps/web"],
+
     "@rolldown/binding-android-arm-eabi": ["@rolldown/binding-android-arm-eabi@1.2.19", "", { "os": "android", "cpu": "arm" }, "sha512-e+Ebe0WT+9tbXmNKPIiC8YrWAHYwug3m6i4p3rZGGulfZri1jtI4HslT+OZnFf/OIHowWF71DTlHwXBP2SiA7A=="],
 
     "@rolldown/binding-android-arm64": ["@rolldown/binding-android-arm64@1.2.19", "", { "os": "android", "cpu": "arm64" }, "sha512-hOombrTJ+szt2ciEzS7oCA78lMPBgF5UMQWCJIyNfnrI7GLl8HYoFqCnpL2gcPOaXMqryGCU5ExdQKyDDcC+yA=="],
@@ -321,14 +329,6 @@
     "@rolldown/binding-win32-x64-msvc": ["@rolldown/binding-win32-x64-msvc@1.2.19", "", { "os": "win32", "cpu": "x64" }, "sha512-y/sqRRc6d7hECzOFc5n3LSeqctmIp9mMjY1Kq4s14uLPd/LZ4z7i1zrW6fMtp2mPeuQIC4e6ULMcwQzMomqQag=="],
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.1.1", "", {}, "sha512-glFIJDvLNDtJhT9qrMFWLPbvS+skxgt4L0K8Ei2YtnhPysAJnsI7nyxSJxKj4ADeKX0OLjC4ntRkwpLOoS3rwA=="],
-
-    "@shearim/contracts": ["@shearim/contracts@workspace:packages/contracts"],
-
-    "@shearim/e2e": ["@shearim/e2e@workspace:e2e"],
-
-    "@shearim/server": ["@shearim/server@workspace:apps/server"],
-
-    "@shearim/web": ["@shearim/web@workspace:apps/web"],
 
     "@stablelib/base64": ["@stablelib/base64@1.0.1", "", {}, "sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ=="],
 

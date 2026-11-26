@@ -8,7 +8,7 @@
  * Workspace, `reachOf`). Nada fora do alcance aparece, nem pelo título.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, DmDto, ExecutionDto, MeDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, DmDto, ExecutionDto, MeDto, MemoryItemDto, MessageDto } from "@regents/contracts";
 import { toolResults } from "./fakes/messages-api";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 

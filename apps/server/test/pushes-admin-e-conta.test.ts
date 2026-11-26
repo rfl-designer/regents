@@ -11,7 +11,7 @@
  *   Conta é do #35.
  */
 import { describe, expect, test } from "bun:test";
-import type { AccountDto, AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import type { AccountDto, AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@regents/contracts";
 import { PUSH_TTL_SECONDS } from "../src/push";
 import { FAKE_LOGIN_CODE, type FakeRun } from "./fake-claude";
 import { type EventSocket, eventually, type Person, type TestApp, testApp } from "./harness";

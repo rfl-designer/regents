@@ -10,7 +10,7 @@
  * - O custo das buscas pela Chave entra no orçamento do Agente.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, AgentToolDto, ChannelDto, ExecutionDto, MessageDto, ToolCallDto } from "@shearim/contracts";
+import type { AgentDto, AgentToolDto, ChannelDto, ExecutionDto, MessageDto, ToolCallDto } from "@regents/contracts";
 import { STALL_MS } from "../src/executions";
 import type { FakeClaudeCall } from "./fake-claude";
 import type { RecordedRequest } from "./fakes/messages-api";
@@ -273,7 +273,7 @@ describe("pela Conta, a linha de comando", () => {
       await respostaA(t, geral.id, await enviar(t, geral.id, "@Faro tudo"));
       const tudo = execucoes(t)[3]!;
       expect(flag(tudo, "--tools")).toBe("WebSearch");
-      expect(flag(tudo, "--allowedTools")).toBe("mcp__shearim,WebSearch");
+      expect(flag(tudo, "--allowedTools")).toBe("mcp__regents,WebSearch");
       expect(flag(tudo, "--system-prompt")).toContain("abrir URL não está disponível");
       expect(t.claude.mcp()).toContainEqual({ pid: tudo.pid, listed: ["listar_agentes"] });
     },

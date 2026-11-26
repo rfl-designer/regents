@@ -5,7 +5,7 @@
  * ainda não começou aparece no Andamento ("esperando a vez").
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@regents/contracts";
 import { DEFAULT_LIMITS, limitsFromEnv } from "../src/executions";
 import type { FakeClaudeCall } from "./fake-claude";
 import { type ScriptedRun, scriptedBrain } from "./fakes/scripted-brain";

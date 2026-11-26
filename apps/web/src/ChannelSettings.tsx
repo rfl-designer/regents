@@ -1,4 +1,4 @@
-import type { ChannelSettingsDto } from "@shearim/contracts";
+import type { ChannelSettingsDto } from "@regents/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { ApiFailure, api } from "./api";
 

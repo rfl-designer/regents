@@ -1,4 +1,4 @@
-import { WORKSPACE_CONTEXT_MAX, type WorkspaceContextDto } from "@shearim/contracts";
+import { WORKSPACE_CONTEXT_MAX, type WorkspaceContextDto } from "@regents/contracts";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { type Db, schema } from "./db/client";

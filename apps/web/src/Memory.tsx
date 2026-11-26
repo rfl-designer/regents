@@ -1,4 +1,4 @@
-import type { MemoryItemDto } from "@shearim/contracts";
+import type { MemoryItemDto } from "@regents/contracts";
 import { useState } from "react";
 import { api } from "./api";
 import { useAction } from "./use-action";

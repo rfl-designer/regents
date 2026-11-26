@@ -1,4 +1,4 @@
-import { normalizeHandle } from "@shearim/contracts";
+import { normalizeHandle } from "@regents/contracts";
 import { and, asc, eq, inArray, isNotNull, notInArray, or } from "drizzle-orm";
 import type { Agent } from "./agents";
 import { recentMessages } from "./context";
