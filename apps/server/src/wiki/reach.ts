@@ -1,4 +1,4 @@
-import type { WikiChannelDto, WikiReachDto, WikiScope } from "@shearim/contracts";
+import type { AgentWikiDto, WikiChannelDto, WikiReachDto, WikiScope } from "@shearim/contracts";
 import { and, asc, eq, inArray, isNotNull, or, type SQL, sql } from "drizzle-orm";
 import { type Db, schema, type Tx } from "../db/client";
 import { isActive } from "../members";
@@ -6,7 +6,7 @@ import { seenBy } from "../participation";
 import type { ToolRun } from "../tools/port";
 import { type Viewers, viewersOf } from "../viewers";
 
-const { wikis, wikiChannels, wikiMembers, wikiVersions, channels, members } = schema;
+const { wikis, wikiChannels, wikiAgents, wikiMembers, wikiVersions, channels, members } = schema;
 
 /** Uma Wiki que alcança a resposta, com a versão atual (a que ela lê). */
 export interface WikiInReach {
@@ -23,13 +23,14 @@ export type Answer = Pick<ToolRun, "channelId" | "originMessageId" | "agentId">;
 /**
  * As Wikis que alcançam a resposta (spec #74, ADR 0014), por nome, calculadas na hora: na montagem
  * do contexto e em cada chamada de "ler a Wiki". Entra uma Wiki que
- * (a) está ligada ao Canal da conversa, e
+ * (a) está ligada ao Canal da conversa ou ao Agente que responde (#84: em qualquer conversa, a DM
+ *     inclusive), e
  * (b) tem versão publicada (a nunca sincronizada não tem o que ler), e
  * (c) tem no alcance dela o autor e todos os Membros que veem a conversa.
  *
- * Em (c), quem vê a conversa vem de `viewersOf`, a mesma peça de `reachOf` (`inReachOf`). A
- * ligação a Agentes (#84) entra em (a), com `answer.agentId`. Fora daqui, nenhuma Wiki aparece:
- * nem no catálogo, nem na Ferramenta, nem no Andamento.
+ * Em (c), quem vê a conversa vem de `viewersOf`, a mesma peça de `reachOf` (`inReachOf`): a
+ * ligação ao Agente não abre o alcance. Fora daqui, nenhuma Wiki aparece: nem no catálogo, nem na
+ * Ferramenta, nem no Andamento.
  */
 export async function wikisInReach(db: Db, answer: Answer): Promise<WikiInReach[]> {
   const viewers = await viewersOf(db, answer);
@@ -42,11 +43,20 @@ export async function wikisInReach(db: Db, answer: Answer): Promise<WikiInReach[
       versionId: wikiVersions.id,
       versionNumber: wikiVersions.number,
     })
-    .from(wikiChannels)
-    .innerJoin(wikis, eq(wikis.id, wikiChannels.wikiId))
+    .from(wikis)
     .innerJoin(wikiVersions, eq(wikiVersions.id, wikis.currentVersionId))
-    .where(and(eq(wikiChannels.channelId, answer.channelId), isNotNull(wikis.currentVersionId), inReachOf(db, viewers)))
+    .where(and(linkedTo(db, answer), isNotNull(wikis.currentVersionId), inReachOf(db, viewers)))
     .orderBy(asc(sql`lower(${wikis.name})`));
+}
+
+/** A condição (a), em SQL sobre `wikis`: ligada ao Canal da conversa ou ao Agente que responde. */
+function linkedTo(db: Db, answer: Answer): SQL {
+  const toChannel = db
+    .select({ id: wikiChannels.wikiId })
+    .from(wikiChannels)
+    .where(eq(wikiChannels.channelId, answer.channelId));
+  const toAgent = db.select({ id: wikiAgents.wikiId }).from(wikiAgents).where(eq(wikiAgents.agentId, answer.agentId));
+  return or(inArray(wikis.id, toChannel), inArray(wikis.id, toAgent))!;
 }
 
 /**
@@ -110,6 +120,39 @@ export async function linkWikiToChannel(db: Db, wikiId: string, channelId: strin
 
 export async function unlinkWikiFromChannel(db: Db, wikiId: string, channelId: string) {
   await db.delete(wikiChannels).where(and(eq(wikiChannels.wikiId, wikiId), eq(wikiChannels.channelId, channelId)));
+}
+
+/**
+ * As Wikis na tela do Agente (#84): todas as do Workspace, por nome, com a marca de ligada a ele.
+ * O Admin vê toda Wiki na administração, mesmo a restrita a uma lista sem ele.
+ */
+export async function agentWikisOf(db: Db, agentId: string): Promise<AgentWikiDto[]> {
+  const rows = await db
+    .select({
+      id: wikis.id,
+      name: wikis.name,
+      description: wikis.description,
+      scope: wikis.scope,
+      linkedAt: wikiAgents.linkedAt,
+    })
+    .from(wikis)
+    .leftJoin(wikiAgents, and(eq(wikiAgents.wikiId, wikis.id), eq(wikiAgents.agentId, agentId)))
+    .orderBy(asc(sql`lower(${wikis.name})`));
+  return rows.map(({ linkedAt, ...w }) => ({ ...w, linked: linkedAt !== null }));
+}
+
+/** Liga a Wiki ao Agente, na transação que travou o Agente vivo (`lockLiveAgent`). */
+export async function linkWikiToAgent(tx: Tx, wikiId: string, agentId: string, now: Date) {
+  await tx.insert(wikiAgents).values({ wikiId, agentId, linkedAt: now }).onConflictDoNothing();
+}
+
+export async function unlinkWikiFromAgent(db: Db, wikiId: string, agentId: string) {
+  await db.delete(wikiAgents).where(and(eq(wikiAgents.wikiId, wikiId), eq(wikiAgents.agentId, agentId)));
+}
+
+/** O Agente apagado leva as ligações dele a Wikis (no `DELETE /api/agents/:id`). */
+export async function leaveAgentWikis(tx: Tx, agentId: string) {
+  await tx.delete(wikiAgents).where(eq(wikiAgents.agentId, agentId));
 }
 
 /** Se o Membro está na lista da Wiki (o alcance de leitura da restrita). */

@@ -14,7 +14,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { channels, members } from "../db/schema";
+import { agents, channels, members } from "../db/schema";
 
 // As tabelas da Wiki (spec #74, ADR 0014 e 0015). Reexportadas por `db/schema.ts`, para o
 // drizzle-kit e o `schema` do cliente as verem.
@@ -216,6 +216,25 @@ export const wikiChannels = pgTable(
     linkedAt: timestamp({ withTimezone: true }).notNull(),
   },
   (t) => [primaryKey({ columns: [t.wikiId, t.channelId] }), index().on(t.channelId)],
+);
+
+/**
+ * A ligação da Wiki a um Agente (#84): o Agente a consulta em qualquer conversa, a DM inclusive,
+ * dentro do alcance dela. O Agente apagado (marca em `agents.deleted_at`) leva as ligações dele no
+ * `DELETE /api/agents/:id`.
+ */
+export const wikiAgents = pgTable(
+  "wiki_agents",
+  {
+    wikiId: uuid()
+      .notNull()
+      .references(() => wikis.id, { onDelete: "cascade" }),
+    agentId: uuid()
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    linkedAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.wikiId, t.agentId] }), index().on(t.agentId)],
 );
 
 /**
