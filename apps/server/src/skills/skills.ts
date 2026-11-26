@@ -1,6 +1,7 @@
 import type { AgentSkillDto, SkillDto } from "@shearim/contracts";
 import { and, asc, eq, inArray, type SQL, sql } from "drizzle-orm";
 import { type Db, isUuid, schema } from "../db/client";
+import { SYNC_SKILL } from "../wiki/rules";
 
 const { skills, agentSkills, agents } = schema;
 
@@ -42,12 +43,16 @@ export async function skillById(db: Db, id: string): Promise<SkillDto | undefine
   return found;
 }
 
-/** Todas as Habilidades, por nome, com a marca de ativa no Agente `agentId` (a tela do Agente). */
-export async function agentSkillsOf(db: Db, agentId: string): Promise<AgentSkillDto[]> {
+/**
+ * Todas as Habilidades, por nome, com a marca de ativa no Agente `agentId` (a tela do Agente). Na
+ * Articuladora (`builtin`), primeiro a Habilidade do Shearim "Sincronizar a Wiki", só para leitura.
+ */
+export async function agentSkillsOf(db: Db, agentId: string, builtin = false): Promise<AgentSkillDto[]> {
   const rows = await db
     .select({ id: skills.id, name: skills.name, description: skills.description, activeIn: agentSkills.agentId })
     .from(skills)
     .leftJoin(agentSkills, and(eq(agentSkills.skillId, skills.id), eq(agentSkills.agentId, agentId)))
     .orderBy(asc(sql`lower(${skills.name})`));
-  return rows.map(({ activeIn, ...r }) => ({ ...r, active: activeIn !== null }));
+  const own = rows.map(({ activeIn, ...r }) => ({ ...r, active: activeIn !== null }));
+  return builtin ? [{ ...SYNC_SKILL, active: true, builtin: true }, ...own] : own;
 }

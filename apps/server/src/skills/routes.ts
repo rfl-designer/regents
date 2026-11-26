@@ -72,7 +72,7 @@ export function skillRoutes(deps: { db: Db; clock: Clock }) {
   routes.get("/agents/:id/skills", adminOnly, async (c) => {
     const [agent] = await findAgent(db, c.req.param("id"));
     if (!agent) return c.json({ error: "not_found" }, 404);
-    return c.json(await agentSkillsOf(db, agent.id));
+    return c.json(await agentSkillsOf(db, agent.id, agent.builtin));
   });
 
   for (const method of ["put", "delete"] as const) {
@@ -94,7 +94,7 @@ export function skillRoutes(deps: { db: Db; clock: Clock }) {
       } else {
         await db.delete(agentSkills).where(and(eq(agentSkills.agentId, agent.id), eq(agentSkills.skillId, skill.id)));
       }
-      return c.json(await agentSkillsOf(db, agent.id));
+      return c.json(await agentSkillsOf(db, agent.id, agent.builtin));
     });
   }
 

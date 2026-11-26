@@ -391,14 +391,25 @@ function AgentSkills({ agent }: { agent: AgentDto }) {
     <fieldset className="settings-row" aria-label={`Habilidades de ${agent.name}`}>
       <legend>Habilidades</legend>
       {skills === null && !error && <p className="hint">Carregando…</p>}
-      {skills?.length === 0 && <p className="hint">Nenhuma Habilidade no Workspace. Escreva uma em Habilidades.</p>}
-      {skills?.map((s) => (
-        <label key={s.id} className="hint">
-          <input type="checkbox" checked={s.active} disabled={busy !== null} onChange={() => toggle(s)} /> {s.name}
-          <br />
-          <small>{s.description}</small>
-        </label>
-      ))}
+      {skills?.map((s) =>
+        // A Habilidade do Shearim ("Sincronizar a Wiki", na Articuladora): sempre ativa, só para leitura.
+        s.builtin ? (
+          <label key={s.id} className="hint">
+            <input type="checkbox" checked disabled /> {s.name} <span className="tag">do Shearim</span>
+            <br />
+            <small>{s.description}</small>
+          </label>
+        ) : (
+          <label key={s.id} className="hint">
+            <input type="checkbox" checked={s.active} disabled={busy !== null} onChange={() => toggle(s)} /> {s.name}
+            <br />
+            <small>{s.description}</small>
+          </label>
+        ),
+      )}
+      {skills?.every((s) => s.builtin) && (
+        <p className="hint">Nenhuma Habilidade no Workspace. Escreva uma em Habilidades.</p>
+      )}
       {error && (
         <span className="error" role="alert">
           {error}

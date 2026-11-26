@@ -1,4 +1,12 @@
-import { formatBytes, type WikiDto, type WikiSourceDto } from "@shearim/contracts";
+import {
+  formatBytes,
+  type WikiDto,
+  type WikiPageRefDto,
+  type WikiSourceDto,
+  type WikiSyncDto,
+  type WikiVersionDto,
+  wikiSyncStepText,
+} from "@shearim/contracts";
 import { type ChangeEvent, type FormEvent, useCallback, useEffect, useState } from "react";
 import { messageOf } from "../api";
 import { dateTimeShort } from "../format";
@@ -40,6 +48,14 @@ export function WikisSettings() {
   useEffect(load, [load]);
   useServerEvents((event) => {
     if (event.type === "ready") load();
+    // O estado da Sincronização e a Wiki nova chegam em tempo real, sem recarregar a tela.
+    if (event.type === "wiki_sync.updated") {
+      const { sync } = event;
+      setWikis((list) => list?.map((w) => (w.id === sync.wikiId ? { ...w, lastSync: sync } : w)) ?? list);
+    }
+    if (event.type === "wiki.updated") {
+      setWikis((list) => list?.map((w) => (w.id === event.wiki.id ? event.wiki : w)) ?? list);
+    }
   });
 
   return (
@@ -74,6 +90,7 @@ export function WikisSettings() {
               </button>
             </div>
             <p className="hint">{w.description}</p>
+            <WikiSync wiki={w} />
             {w.id === openId && <WikiSources wiki={w} onChanged={load} />}
           </li>
         ))}
@@ -88,6 +105,102 @@ export function WikisSettings() {
   );
 }
 
+const open = (s: WikiSyncDto | null) => s?.state === "queued" || s?.state === "running";
+
+/** O estado da Sincronização para gente ler: o passo em curso, o fim ou o motivo da falha. */
+function syncStateText(s: WikiSyncDto) {
+  if (s.state === "queued") return "Sincronização pedida";
+  if (s.state === "running") return `Sincronização ${s.step ? wikiSyncStepText(s.step) : "em curso"}`;
+  if (s.state === "done") return `Sincronização concluída: versão ${s.version}`;
+  if (s.state === "canceled") return "Sincronização cancelada";
+  return `A Sincronização falhou: ${s.reason ?? "sem motivo"}`;
+}
+
+/**
+ * "Sincronizar" e o estado da Sincronização, em tempo real. O botão diz quando não há nada
+ * pendente e quando uma Sincronização já está em curso. Ao fim, o relatório e as versões.
+ */
+function WikiSync({ wiki }: { wiki: WikiDto }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const sync = wiki.lastSync;
+  const running = open(sync);
+
+  async function start() {
+    setBusy(true);
+    setError(null);
+    try {
+      await wikiApi.sync(wiki.id);
+    } catch (err) {
+      setError(messageOf(err, "A Sincronização não começou. Tente de novo."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const label = running ? "Sincronização em curso" : wiki.pending === 0 ? "Nada a sincronizar" : "Sincronizar";
+  return (
+    <section aria-label={`Sincronização de ${wiki.name}`}>
+      <div className="row">
+        <button type="button" disabled={busy || running || wiki.pending === 0} onClick={start}>
+          {label}
+        </button>
+        {sync && (
+          <span className={sync.state === "failed" ? "error" : "hint"} role="status">
+            {syncStateText(sync)}
+          </span>
+        )}
+        {error && (
+          <span className="error" role="alert">
+            {error}
+          </span>
+        )}
+      </div>
+      {sync?.state === "done" && sync.report && <SyncReport report={sync.report} />}
+      {wiki.currentVersion && <WikiVersions wiki={wiki} />}
+    </section>
+  );
+}
+
+function pageList(pages: WikiPageRefDto[]) {
+  return pages.map((p) => p.title).join(", ");
+}
+
+/** O relatório da última Sincronização: as páginas criadas, alteradas e removidas. */
+function SyncReport({ report }: { report: NonNullable<WikiSyncDto["report"]> }) {
+  const nothing = report.created.length + report.updated.length + report.removed.length === 0;
+  return (
+    <ul className="hint" aria-label="Relatório da Sincronização">
+      {nothing && <li>Nenhuma página mudou.</li>}
+      {report.created.length > 0 && <li>Páginas criadas: {pageList(report.created)}</li>}
+      {report.updated.length > 0 && <li>Páginas alteradas: {pageList(report.updated)}</li>}
+      {report.removed.length > 0 && <li>Páginas removidas: {pageList(report.removed)}</li>}
+    </ul>
+  );
+}
+
+/** As versões da Wiki, da mais nova para a mais velha, com a atual marcada. */
+function WikiVersions({ wiki }: { wiki: WikiDto }) {
+  const [versions, setVersions] = useState<WikiVersionDto[] | null>(null);
+  const current = wiki.currentVersion?.number;
+  useEffect(() => {
+    // Relê quando a versão atual muda (uma Sincronização concluída).
+    void current;
+    wikiApi.versions(wiki.id).then(setVersions, () => setVersions(null));
+  }, [wiki.id, current]);
+  if (!versions?.length) return null;
+  return (
+    <ul className="hint" aria-label={`Versões de ${wiki.name}`}>
+      {versions.map((v) => (
+        <li key={v.number}>
+          Versão {v.number} · {dateTimeShort(v.publishedAt)} · {v.startedBy.name}
+          {v.current && <span className="tag">atual</span>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** As Fontes de uma Wiki, com a pendência de cada uma, e a subida de outras. */
 function WikiSources({ wiki, onChanged }: { wiki: WikiDto; onChanged(): void }) {
   const [sources, setSources] = useState<WikiSourceDto[] | null>(null);
@@ -96,9 +209,12 @@ function WikiSources({ wiki, onChanged }: { wiki: WikiDto; onChanged(): void }) 
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
+  // Uma versão nova muda as pendências: a lista se relê.
+  const version = wiki.currentVersion?.number;
   useEffect(() => {
+    void version;
     wikiApi.sources(wiki.id).then(setSources, () => setLoadError(true));
-  }, [wiki.id]);
+  }, [wiki.id, version]);
 
   async function upload(e: ChangeEvent<HTMLInputElement>) {
     const input = e.currentTarget;

@@ -46,6 +46,7 @@ import { agentToolRoutes } from "./tools/routes";
 import { WEB_TOOLS } from "./tools/web";
 import { WORKSPACE_TOOLS } from "./tools/workspace";
 import { wikiRoutes } from "./wiki/routes";
+import { createWikiSyncs } from "./wiki/sync";
 import { workspaceContextRoutes } from "./workspace-context";
 import { workspaceKeyRoutes } from "./workspace-key";
 
@@ -92,8 +93,12 @@ export interface AppDeps {
    * orçamento do resumo em cada resposta, em caracteres (`SHEARIM_MEMORY_SUMMARY_CHARS`; padrão 4000).
    */
   memory?: { model?: string; summaryChars?: number };
-  /** A Wiki: o tamanho máximo de uma Fonte, em bytes (`SHEARIM_WIKI_SOURCE_MAX_MB`; padrão 5 MB). */
-  wiki?: { sourceMaxBytes?: number };
+  /**
+   * A Wiki: o tamanho máximo de uma Fonte, em bytes (`SHEARIM_WIKI_SOURCE_MAX_MB`; padrão 5 MB), e o
+   * teto de turnos de Ferramenta de cada chamada da Sincronização (`SHEARIM_WIKI_SYNC_MAX_TURNS`;
+   * padrão 40).
+   */
+  wiki?: { sourceMaxBytes?: number; syncMaxToolTurns?: number };
 }
 
 export type AppHooks = JoinRequestHooks & ExecutionHooks & KeyHooks & AccountHooks;
@@ -191,6 +196,16 @@ export function createApp(deps: AppDeps) {
     memoryModel: deps.memory?.model,
     memorySummaryChars: deps.memory?.summaryChars,
   });
+  // A Sincronização da Wiki (ADR 0015): um trabalho da Articuladora fora da fila de execuções.
+  const syncs = createWikiSyncs({
+    db,
+    clock,
+    events,
+    model,
+    secrets,
+    ledger,
+    maxToolTurns: deps.wiki?.syncMaxToolTurns,
+  });
   // A volta da Conta (ou a troca da Chave, ou do orçamento) solta quem espera por ela na fila.
   const reconsider = (memberId?: string) => void executions.reconsider(memberId).catch(() => {});
   accounts.onChanged(reconsider);
@@ -280,7 +295,7 @@ export function createApp(deps: AppDeps) {
   app.route("/api", skillRoutes({ db, clock }));
   app.route("/api", githubRoutes({ db, github }));
   app.route("/api", installation.routes);
-  app.route("/api", wikiRoutes({ db, clock, ...deps.wiki }));
+  app.route("/api", wikiRoutes({ db, clock, syncs, sourceMaxBytes: deps.wiki?.sourceMaxBytes }));
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
 
@@ -297,12 +312,14 @@ export function createApp(deps: AppDeps) {
     websocket,
     events,
     executions,
-    drain: (ms?: number) => {
+    drain: async (ms?: number) => {
       closeForRestart();
+      await syncs.stop();
       return executions.drain(ms);
     },
-    halt: () => {
+    halt: async () => {
       closeForRestart();
+      await syncs.stop();
       return executions.stop();
     },
     push,
@@ -320,6 +337,7 @@ export function createApp(deps: AppDeps) {
       if (deps.installation?.watch) installation.start();
     },
     close: async () => {
+      await syncs.stop();
       await connectors.stop();
       await installation.stop();
       await accounts.close();

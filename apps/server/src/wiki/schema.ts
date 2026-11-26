@@ -1,5 +1,19 @@
+import type { WikiSyncReportDto, WikiSyncStepDto } from "@shearim/contracts";
 import { sql } from "drizzle-orm";
-import { bigint, index, integer, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import {
+  type AnyPgColumn,
+  bigint,
+  index,
+  integer,
+  jsonb,
+  pgEnum,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { members } from "../db/schema";
 
 // As tabelas da Wiki (spec #74, ADR 0014 e 0015). Reexportadas por `db/schema.ts`, para o
@@ -25,6 +39,12 @@ export const wikis = pgTable(
       .notNull()
       .references(() => members.id),
     createdAt: timestamp({ withTimezone: true }).notNull(),
+    /**
+     * A versão que os Agentes e os Membros leem: a da última Sincronização concluída (ou a que o
+     * Admin escolheu ao voltar). Nula = "nunca sincronizada". Voltar a uma versão só troca isto, e
+     * as pendências se recalculam sozinhas.
+     */
+    currentVersionId: uuid().references((): AnyPgColumn => wikiVersions.id),
   },
   (t) => [uniqueIndex("wikis_name_lower_unique").on(sql`lower(${t.name})`)],
 );
@@ -65,4 +85,112 @@ export const wikiSources = pgTable(
       .on(t.wikiId, sql`lower(${t.fileName})`)
       .where(sql`${t.state} = 'active'`),
   ],
+);
+
+export const wikiSyncState = pgEnum("wiki_sync_state", ["queued", "running", "done", "failed", "canceled"]);
+
+/**
+ * Uma Sincronização (ADR 0015): o trabalho da Articuladora que leva as Fontes pendentes para as
+ * páginas. Não é uma `execution`: não tem Canal nem mensagem de origem. Ela trabalha num rascunho
+ * (fora do banco, que ninguém lê) e só grava a versão no fim, numa transação. Só uma por Wiki fica
+ * em `queued` ou `running` de cada vez (o índice único parcial).
+ */
+export const wikiSyncs = pgTable(
+  "wiki_syncs",
+  {
+    id: uuid().primaryKey(),
+    /** Ordem de pedido: com o relógio parado, desempata as Sincronizações da mesma hora. */
+    seq: bigint({ mode: "number" }).generatedAlwaysAsIdentity(),
+    wikiId: uuid()
+      .notNull()
+      .references(() => wikis.id, { onDelete: "cascade" }),
+    /** O Admin que apertou "Sincronizar": a Conta dele paga (#80), e o push vai para ele. */
+    startedByMemberId: uuid()
+      .notNull()
+      .references(() => members.id),
+    state: wikiSyncState().notNull().default("queued"),
+    /** O passo em curso ("Fonte 1 de 2", "revisando a Wiki", "publicando"); nulo fora de `running`. */
+    step: jsonb().$type<WikiSyncStepDto>(),
+    reason: text(),
+    /** Na concluída: o que mudou da versão anterior para a nova. */
+    report: jsonb().$type<WikiSyncReportDto>(),
+    /** A tentativa da chamada em curso (a nova tentativa automática é do #86). */
+    attempt: integer().notNull().default(1),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+    startedAt: timestamp({ withTimezone: true }),
+    finishedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    index().on(t.wikiId, t.seq),
+    uniqueIndex("wiki_syncs_one_open_per_wiki").on(t.wikiId).where(sql`${t.state} in ('queued', 'running')`),
+  ],
+);
+
+/**
+ * Uma versão da Wiki: o que uma Sincronização concluída publicou. Guarda as páginas (imutáveis: a
+ * versão nova copia o que não mudou) e o conjunto de Fontes que ela reflete, de onde se derivam as
+ * pendências.
+ */
+export const wikiVersions = pgTable(
+  "wiki_versions",
+  {
+    id: uuid().primaryKey(),
+    wikiId: uuid()
+      .notNull()
+      .references(() => wikis.id, { onDelete: "cascade" }),
+    /** 1, 2, 3... por Wiki. */
+    number: integer().notNull(),
+    syncId: uuid()
+      .notNull()
+      .references(() => wikiSyncs.id, { onDelete: "cascade" }),
+    report: jsonb().$type<WikiSyncReportDto>().notNull(),
+    publishedAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [uniqueIndex().on(t.wikiId, t.number)],
+);
+
+/** As Fontes que uma versão reflete. Uma Fonte removida fica guardada enquanto alguma versão a reflete. */
+export const wikiVersionSources = pgTable(
+  "wiki_version_sources",
+  {
+    versionId: uuid()
+      .notNull()
+      .references(() => wikiVersions.id, { onDelete: "cascade" }),
+    sourceId: uuid()
+      .notNull()
+      .references(() => wikiSources.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.versionId, t.sourceId] }), index().on(t.sourceId)],
+);
+
+/**
+ * Uma página de uma versão. O slug é o endereço estável dentro da Wiki; o corpo é markdown com
+ * links `[[slug]]`. Toda versão tem `index` e `log`.
+ */
+export const wikiPages = pgTable(
+  "wiki_pages",
+  {
+    id: uuid().primaryKey(),
+    versionId: uuid()
+      .notNull()
+      .references(() => wikiVersions.id, { onDelete: "cascade" }),
+    slug: text().notNull(),
+    title: text().notNull(),
+    body: text().notNull(),
+  },
+  (t) => [uniqueIndex().on(t.versionId, t.slug)],
+);
+
+/** As Fontes de onde uma página veio. */
+export const wikiPageSources = pgTable(
+  "wiki_page_sources",
+  {
+    pageId: uuid()
+      .notNull()
+      .references(() => wikiPages.id, { onDelete: "cascade" }),
+    sourceId: uuid()
+      .notNull()
+      .references(() => wikiSources.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.pageId, t.sourceId] })],
 );

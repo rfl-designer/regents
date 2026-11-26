@@ -1,0 +1,66 @@
+import { WIKI_INDEX_SLUG, WIKI_LOG_SLUG } from "@shearim/contracts";
+
+/**
+ * As regras da Wiki (o schema do padrão LLM Wiki, ADR 0014 e 0015): texto fixo do Shearim, como
+ * as instruções da Articuladora. Toda Wiki tem a mesma forma, e a consulta dos Agentes é previsível.
+ * Mudam só com uma versão nova do Shearim.
+ */
+
+/**
+ * A marca que abre o `system` de toda chamada da Sincronização. Os dublês do modelo a reconhecem
+ * (como reconhecem a extração da Memória pelo schema), para o teste roteirizar as escritas.
+ */
+export const SYNC_MARKER = "[Shearim] Sincronização da Wiki";
+
+/** A Habilidade do Shearim que a tela da Articuladora mostra, só para leitura. */
+export const SYNC_SKILL = {
+  id: "shearim:sincronizar-a-wiki",
+  name: "Sincronizar a Wiki",
+  description:
+    'Quando o Admin aperta "Sincronizar" numa Wiki: leva as Fontes pendentes para as páginas, com links entre elas e o índice. É do Shearim e não se edita.',
+} as const;
+
+/** As Ferramentas internas da Sincronização: só dela, nunca de uma resposta em conversa. */
+export const READ_PAGE = "ler_pagina";
+export const WRITE_PAGE = "escrever_pagina";
+export const REMOVE_PAGE = "remover_pagina";
+
+/** O `system` de cada chamada da Sincronização: a marca, a Wiki e as regras. */
+export function syncSystem(wiki: { name: string; description: string }) {
+  return [
+    `${SYNC_MARKER} "${wiki.name}"`,
+    "",
+    `Você é a Articuladora do Shearim e está sincronizando a Wiki "${wiki.name}": ${wiki.description}`,
+    "A Wiki segue o padrão LLM Wiki: as Fontes são o texto bruto e não mudam; as páginas são suas, em markdown, organizadas por tema; o índice diz o que cada página cobre. Os Agentes do Workspace consultam a Wiki pelo índice e abrem as páginas de que precisam.",
+    "Você trabalha num rascunho: nada do que você escreve aparece antes de a Sincronização terminar. Escreva só pelas Ferramentas.",
+    "",
+    "## Regras da Wiki",
+    "- Uma página por tema, e não uma página por Fonte. Antes de criar uma página, veja no índice se o tema já tem uma: se tem, leia-a (ler_pagina) e reescreva-a com o que a Fonte traz.",
+    "- O slug é o endereço da página: minúsculas, sem acento, palavras separadas por hífen (ex.: ganchos-para-reels). Não mude o slug de uma página que já existe.",
+    "- Ligue as páginas com [[slug]] ou [[slug|texto]]. Só ligue a páginas que existem ou que você vai criar.",
+    "- Diga em cada página de quais Fontes ela veio (o campo fontes, com o nome do arquivo). Uma página reescrita mantém as Fontes que já tinha.",
+    "- Escreva o que a Fonte ensina, destilado: sem repetir a transcrição e sem inventar o que ela não diz.",
+    `- Mantenha a página ${WIKI_INDEX_SLUG}: uma linha por página, no formato "- [[slug]]: o que ela cobre". Toda página nova entra no índice.`,
+    `- A página ${WIKI_LOG_SLUG} é do Shearim: não a escreva.`,
+    "- Escreva em português do Brasil.",
+    '- Quando terminar a Fonte, responda só "Pronto.".',
+  ].join("\n");
+}
+
+/** A mensagem de cada chamada: o índice do rascunho e a Fonte. */
+export function syncPrompt(input: {
+  index: string | null;
+  source: { fileName: string; text: string };
+  current: number;
+  total: number;
+}) {
+  return [
+    "## Índice do rascunho",
+    input.index?.trim() || "(a Wiki ainda não tem páginas)",
+    "",
+    `## Fonte nova: ${input.source.fileName} (Fonte ${input.current} de ${input.total})`,
+    input.source.text,
+    "",
+    "Leve esta Fonte para as páginas da Wiki, seguindo as regras.",
+  ].join("\n");
+}

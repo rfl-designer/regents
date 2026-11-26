@@ -1,6 +1,9 @@
 import type { WikiDto, WikiSourcePending, WikiSourceState } from "@shearim/contracts";
 import { asc, eq, sql } from "drizzle-orm";
 import { type Db, isUuid, schema } from "../db/client";
+import { activeAdminIds } from "../members";
+import { lastSyncOf } from "./sync-state";
+import { currentVersionId, currentVersionSummary, sourcesOfVersion } from "./versions";
 
 const { wikis, wikiSources } = schema;
 
@@ -17,11 +20,11 @@ export function pendingOf(source: { id: string; state: WikiSourceState }, reflec
 }
 
 /**
- * Os ids das Fontes que a versão atual da Wiki reflete. Sem Sincronização ainda, não há versão:
- * nenhuma. (A versão e o conjunto de Fontes dela vêm com a Sincronização.)
+ * Os ids das Fontes que a versão atual da Wiki reflete. Sem Sincronização concluída, não há
+ * versão: nenhuma. Voltar a uma versão (#89) troca a atual, e as pendências seguem sozinhas.
  */
-export async function reflectedSources(_db: Db, _wikiId: string): Promise<ReadonlySet<string>> {
-  return new Set();
+export async function reflectedSources(db: Db, wikiId: string): Promise<ReadonlySet<string>> {
+  return sourcesOfVersion(db, await currentVersionId(db, wikiId));
 }
 
 /** Uma Wiki pelo id. */
@@ -40,7 +43,7 @@ export async function wikiNamed(db: Db, name: string) {
   return wiki;
 }
 
-async function toWikiDto(db: Db, wiki: typeof wikis.$inferSelect): Promise<WikiDto> {
+export async function toWikiDto(db: Db, wiki: typeof wikis.$inferSelect): Promise<WikiDto> {
   const reflected = await reflectedSources(db, wiki.id);
   const sources = await db
     .select({ id: wikiSources.id, state: wikiSources.state })
@@ -51,8 +54,9 @@ async function toWikiDto(db: Db, wiki: typeof wikis.$inferSelect): Promise<WikiD
     name: wiki.name,
     description: wiki.description,
     scope: wiki.scope,
-    currentVersion: null,
+    currentVersion: await currentVersionSummary(db, wiki.id),
     pending: sources.filter((s) => pendingOf(s, reflected) !== null).length,
+    lastSync: await lastSyncOf(db, wiki.id),
     createdAt: wiki.createdAt.toISOString(),
   };
 }
@@ -83,4 +87,13 @@ export async function createWiki(
     .onConflictDoNothing()
     .returning();
   return wiki && toWikiDto(db, wiki);
+}
+
+/**
+ * Quem vê a Wiki, para os eventos em tempo real: a pública, todo Membro; a restrita, os Admins
+ * (que veem toda Wiki na administração). A lista de Membros da restrita entra com o alcance.
+ */
+export async function wikiAudience(db: Db, wiki: Pick<typeof wikis.$inferSelect, "scope">) {
+  if (wiki.scope === "public") return "everyone" as const;
+  return { members: await activeAdminIds(db) };
 }

@@ -146,20 +146,22 @@ export function createKeyLedger(deps: { db: Db; clock: Clock; events: EventHub; 
     },
 
     /**
-     * Uma chamada que a Chave pagou acabou: grava o uso que a API informou (Agente, pagador,
+     * Uma chamada que a Chave pagou acabou (de uma execução ou de uma Sincronização da Wiki, que
+     * conta no orçamento da Articuladora): grava o uso que a API informou (Agente, pagador,
      * modelo que respondeu, custo), tenha ela terminado bem (`succeeded`) ou não (cancelada,
      * parada pela vigia, falha no meio). `startedAt` é quando ela começou: com várias rodando ao
      * mesmo tempo (#42), só a que terminou bem e começou depois da recusa prova que a Chave voltou.
      */
     async charged(
-      execution: { id: string; agentId: string },
+      by: { agentId: string } & ({ executionId: string } | { wikiSyncId: string }),
       call: { model: string; usage: ModelUsage; costUsd: number; startedAt: Date; succeeded: boolean },
     ) {
       const now = clock.now();
       await db.insert(executionUsage).values({
         id: crypto.randomUUID(),
-        executionId: execution.id,
-        agentId: execution.agentId,
+        executionId: "executionId" in by ? by.executionId : null,
+        wikiSyncId: "wikiSyncId" in by ? by.wikiSyncId : null,
+        agentId: by.agentId,
         payer: "key",
         model: call.model,
         inputTokens: call.usage.inputTokens,
@@ -168,7 +170,7 @@ export function createKeyLedger(deps: { db: Db; clock: Clock; events: EventHub; 
         month: monthOf(now),
         createdAt: now,
       });
-      const budget = await announce(execution.agentId);
+      const budget = await announce(by.agentId);
       if (budget.overBudget) await overrun(budget);
       if (!call.succeeded) return;
       // A primeira chamada bem-sucedida pela Chave, começada depois da recusa, encerra o incidente.

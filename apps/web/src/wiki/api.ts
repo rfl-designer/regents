@@ -1,4 +1,4 @@
-import type { CreateWikiInput, WikiDto, WikiSourceDto } from "@shearim/contracts";
+import type { CreateWikiInput, WikiDto, WikiSourceDto, WikiSyncDto, WikiVersionDto } from "@shearim/contracts";
 import { call, json } from "../api";
 
 /** As chamadas da Wiki (spec #74). */
@@ -13,4 +13,7 @@ export const wikiApi = {
     for (const file of files) form.append("files", file);
     return call<WikiSourceDto[]>(`/api/wikis/${wikiId}/sources`, { method: "POST", body: form });
   },
+  /** "Sincronizar": começa na hora; o estado segue por `wiki_sync.updated`. */
+  sync: (wikiId: string) => call<WikiSyncDto>(`/api/wikis/${wikiId}/sync`, { method: "POST" }),
+  versions: (wikiId: string) => call<WikiVersionDto[]>(`/api/wikis/${wikiId}/versions`),
 };
