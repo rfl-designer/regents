@@ -1,7 +1,7 @@
 import { DM_KINDS, type DmDto, type DmKind, type OpenDmInput } from "@shearim/contracts";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { findAgent } from "./agents";
+import { findAgent, lockLiveAgent } from "./agents";
 import type { Clock } from "./clock";
 import type { ConversationRow } from "./conversations";
 import { type Db, isUuid, schema } from "./db/client";
@@ -83,6 +83,8 @@ export function dmRoutes(deps: { db: Db; clock: Clock; events: EventHub }) {
     const { dm, created } = await db.transaction(async (tx) => {
       // Serializa a abertura: duas aberturas simultâneas com as mesmas pessoas dão numa DM só.
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('shearim:dm-nova'))`);
+      // Travado: um DELETE ao mesmo tempo espera, ou já o apagou, e então não nasce DM com ele.
+      for (const id of agentIds) if (!(await lockLiveAgent(tx, id))) return { dm: undefined, created: false };
       const existing = await findDmWith(tx, kind, me.id, everyone, agentIds);
       if (existing) return { dm: existing, created: false };
       const [row] = await tx
@@ -94,6 +96,7 @@ export function dmRoutes(deps: { db: Db; clock: Clock; events: EventHub }) {
       return { dm: row as Dm, created: true };
     });
 
+    if (!dm) return c.json({ error: "invalid_input", message: "Esse Agente não existe no Workspace." }, 400);
     const dto = await toDmDto(db, dm);
     if (created) events.publish(await audienceOf(db, dm), { type: "dm.updated", dm: dto });
     return c.json(dto, created ? 201 : 200);

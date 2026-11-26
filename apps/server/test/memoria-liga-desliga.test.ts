@@ -6,6 +6,8 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { AgentDto, ChannelDto, ExecutionDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
+import { eq } from "drizzle-orm";
+import { schema } from "../src/db/client";
 import { type ScriptedRun, scriptedBrain } from "./fakes/scripted-brain";
 import { type EventSocket, eventually, type Person, type TestApp, testApp } from "./harness";
 
@@ -205,6 +207,29 @@ describe("desligada, o Agente não guarda nem lê", () => {
     const extracao = await cerebro.nextExtraction();
     expect(contexto(extracao)).toContain("Resposta da Lia.");
     expect(cerebro.extractions).toHaveLength(1);
+  });
+
+  test("a extração que já lia quando o Admin desligou a Memória do Faro termina sem guardar nada", async () => {
+    const cerebro = scriptedBrain({ scriptExtractions: true });
+    const t = await testApp({ keyBrain: cerebro.brain });
+    const { faro, produto } = await produtoComFaro(t);
+
+    await enviar(t, juliana, produto.id, "@faro o preço sobe em janeiro");
+    await responder(await cerebro.nextRun(), "Anotado.");
+    const extracao = await cerebro.nextExtraction();
+    expect((await memoriaDe(t, juliana, faro.id, false)).status).toBe(200);
+    await extracao.emit({
+      type: "text",
+      text: JSON.stringify(guardar("O preço sobe em janeiro.").json),
+    });
+    await extracao.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
+
+    const fim = await eventually("a extração terminar", async () => {
+      const [row] = await t.db.select().from(schema.executions).where(eq(schema.executions.kind, "memory"));
+      return row?.state === "done" ? row : undefined;
+    });
+    expect(fim.reason).toBeNull();
+    expect(await memoria(t, produto.id)).toEqual([]);
   });
 
   test("com a Memória do Faro desligada, a resposta dele não recebe o resumo de Memória", async () => {

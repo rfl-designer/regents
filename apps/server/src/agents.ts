@@ -11,7 +11,7 @@ import { Hono } from "hono";
 import { withBuiltinText } from "./articuladora";
 import type { Clock } from "./clock";
 import { type Channel, toChannelDto } from "./conversations";
-import { type Db, isUuid, schema } from "./db/client";
+import { type Db, isUuid, schema, type Tx } from "./db/client";
 import type { EventHub } from "./events";
 import type { Executions } from "./executions";
 import type { GitHub } from "./github/connector";
@@ -239,12 +239,16 @@ export function agentRoutes(deps: {
       return c.json({ error: "builtin_locked", message: "A Articuladora é do Shearim e não se apaga." }, 403);
     }
     const left = agent.deletedAt
-      ? []
+      ? await forgetAgent(db, agent.id).then(() => [])
       : await db.transaction(async (tx) => {
+          // Primeiro a marca, que trava o Agente: quem grava algo ligado a ele (`lockLiveAgent`)
+          // espera aqui, ou gravou antes e a limpeza abaixo leva junto.
           await tx.update(agents).set({ deletedAt: clock.now() }).where(eq(agents.id, agent.id));
           await releaseHandle(tx, { kind: "agent", id: agent.id });
           await tx.delete(agentTools).where(eq(agentTools.agentId, agent.id));
           await tx.delete(agentGithubRepositories).where(eq(agentGithubRepositories.agentId, agent.id));
+          // Na mesma transação: a marca não fica sem a Memória ter saído.
+          await forgetAgent(tx, agent.id);
           // Sai dos Canais; numa DM, fica (é com quem a DM foi).
           return tx
             .delete(channelAgents)
@@ -262,9 +266,8 @@ export function agentRoutes(deps: {
             )
             .returning({ channelId: channelAgents.channelId });
         });
-    // Depois de cancelada a extração em andamento, nada mais guarda na Memória dele.
+    // A extração em andamento confere o Agente antes de guardar: cancelada ou não, nada guarda.
     await deps.executions.cancelAgent(agent.id);
-    await forgetAgent(db, agent.id);
 
     deps.events.publish("everyone", { type: "agent.deleted", agentId: agent.id });
     const changed = left.length
@@ -298,6 +301,20 @@ export function findAgent(db: Db, id: string) {
         .from(agents)
         .where(and(eq(agents.id, id), isNull(agents.deletedAt)))
     : Promise.resolve([]);
+}
+
+/**
+ * Trava o Agente `id` na transação `tx`, se ele não foi apagado (devolve se não foi). Quem liga
+ * algo a ele (Canal, DM, Ferramenta, repositórios do GitHub, Memória) trava antes de gravar: o
+ * DELETE dele espera essa gravação e a limpa junto, ou já o apagou, e então nada se grava.
+ */
+export async function lockLiveAgent(tx: Tx, id: string): Promise<boolean> {
+  const [live] = await tx
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(eq(agents.id, id), isNull(agents.deletedAt)))
+    .for("share");
+  return Boolean(live);
 }
 
 /**

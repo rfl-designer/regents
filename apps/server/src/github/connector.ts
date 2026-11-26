@@ -1,6 +1,7 @@
 import { createPrivateKey, sign } from "node:crypto";
 import type { GitHubDto } from "@shearim/contracts";
 import { asc, eq, inArray } from "drizzle-orm";
+import { lockLiveAgent } from "../agents";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
 import type { SecretBox } from "../secrets";
@@ -322,12 +323,17 @@ export function createGitHub(deps: { db: Db; clock: Clock; secrets: SecretBox; c
       return (await github.agentRepositories([agentId])).get(agentId) ?? null;
     },
 
-    /** Troca a lista de um Agente (nula: tira a lista). Quem chama já conferiu os repositórios. */
-    async restrict(agentId: string, repositories: readonly string[] | null) {
-      await db.transaction(async (tx) => {
+    /**
+     * Troca a lista de um Agente (nula: tira a lista). Quem chama já conferiu os repositórios.
+     * Devolve `false` se o Agente foi apagado (o DELETE ganhou a corrida), e nada muda.
+     */
+    async restrict(agentId: string, repositories: readonly string[] | null): Promise<boolean> {
+      return db.transaction(async (tx) => {
+        if (!(await lockLiveAgent(tx, agentId))) return false;
         await tx.delete(agentGithubRepositories).where(eq(agentGithubRepositories.agentId, agentId));
         if (repositories?.length)
           await tx.insert(agentGithubRepositories).values(repositories.map((repository) => ({ agentId, repository })));
+        return true;
       });
     },
   };

@@ -25,8 +25,9 @@ export function agentToolRoutes(deps: { db: Db; tools: ToolPort }) {
       const id = c.req.param("id");
       const tool = c.req.param("tool");
       if (!(await agentExists(id)) || !(await tools.exists(tool))) return c.json({ error: "not_found" }, 404);
-      if (method === "put") await tools.grant(id, tool);
-      else await tools.revoke(id, tool);
+      if (method === "put") {
+        if (!(await tools.grant(id, tool))) return c.json({ error: "not_found" }, 404);
+      } else await tools.revoke(id, tool);
       return c.json(await tools.forAgent(id));
     });
   }

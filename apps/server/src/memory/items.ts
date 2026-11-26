@@ -73,10 +73,10 @@ export async function editableItem(
 
 /**
  * Apaga a Memória do Agente `agentId`, ativos e arquivados: o único apagamento de Memória (spec
- * #60), quando o Admin apaga o Agente (#65). A Memória da Conversa que ele gerou fica. Quem chama
- * já cancelou a extração em andamento dele.
+ * #60), quando o Admin apaga o Agente (#65), na transação que o marca apagado. A Memória da
+ * Conversa que ele gerou fica.
  */
-export async function forgetAgent(db: Db, agentId: string): Promise<void> {
+export async function forgetAgent(db: Db | Tx, agentId: string): Promise<void> {
   await db.delete(memoryItems).where(and(eq(memoryItems.scope, "agent"), eq(memoryItems.agentId, agentId)));
 }
 

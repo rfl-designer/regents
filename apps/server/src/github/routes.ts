@@ -60,7 +60,7 @@ export function githubRoutes(deps: { db: Db; github: GitHub }) {
     const invalid = (message: string) => c.json({ error: "invalid_input", message }, 400);
     const raw = input?.repositories;
     if (raw === null) {
-      await github.restrict(id, null);
+      if (!(await github.restrict(id, null))) return c.json({ error: "not_found" }, 404);
       return c.json(await agentGitHub(id));
     }
     if (!Array.isArray(raw) || raw.some((r) => typeof r !== "string"))
@@ -77,7 +77,7 @@ export function githubRoutes(deps: { db: Db; github: GitHub }) {
       if (!found) return invalid(`O repositório ${r} não está entre os que a instalação do GitHub alcança.`);
       if (!chosen.includes(found)) chosen.push(found);
     }
-    await github.restrict(id, chosen);
+    if (!(await github.restrict(id, chosen))) return c.json({ error: "not_found" }, 404);
     return c.json({ repositories: [...chosen].sort((a, b) => a.localeCompare(b)), available: list, failure: null });
   });
 

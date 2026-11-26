@@ -11,6 +11,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { AgentBudgetDto, AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import { keyCoverage } from "../src/key-budget";
 import { scriptedBrain } from "./fakes/scripted-brain";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
 
@@ -455,4 +456,17 @@ describe("o gasto na Chave conta o que a API informou", () => {
     },
     LONGO,
   );
+});
+
+describe("o que a Chave cobre", () => {
+  test("o Agente apagado com o orçamento estourado não conta: a Chave volta a cobrir todos", async () => {
+    const t = await testApp();
+    // Teto zero: estourado desde o começo do mês.
+    const { faro } = await workspace(t, { orcamento: 0 });
+    expect(await keyCoverage(t.db, t.clock.now())).toBe("some");
+
+    expect((await t.as(juliana).delete(`/api/agents/${faro.id}`)).status).toBe(204);
+
+    expect(await keyCoverage(t.db, t.clock.now())).toBe("all");
+  });
 });

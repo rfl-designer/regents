@@ -816,8 +816,8 @@ export function createExecutions(deps: {
    * Instalação, em saída estruturada, paga como qualquer execução, e guarda o que ela devolver,
    * cada item com a mensagem de pessoa que ele cita (criar, ou substituir um item que entrou na
    * resposta: `saveOperations`). O que ela descartou fica no motivo do fim (`done` com `reason`),
-   * à vista no Andamento. Os itens e o fim juntos: um cancelamento que chegou antes ganha, e nada
-   * fica guardado.
+   * à vista no Andamento. Os itens e o fim juntos: um cancelamento, a Memória desligada ou o
+   * Agente apagado que chegou antes ganha, e nada fica guardado.
    */
   async function extract(job: Row, payer: Choice, controller: AbortController) {
     const result = await byPayer(job, payer, controller, async (payer) => {
@@ -843,6 +843,14 @@ export function createExecutions(deps: {
         .where(eq(executions.id, job.id))
         .for("update");
       if (row?.state !== "running") return undefined;
+      // Travado, o Agente relido: o Admin que desligou a Memória (ou apagou o Agente) enquanto o
+      // modelo lia ganha, e nada fica guardado. A mudança que vier depois espera esta gravação.
+      const [owner] = await tx
+        .select({ memoryEnabled: agents.memoryEnabled })
+        .from(agents)
+        .where(and(eq(agents.id, job.agentId), isNull(agents.deletedAt)))
+        .for("share");
+      if (!owner || !remembers(owner)) return (await close(job, "done", {}, tx)) ? [] : undefined;
       const { changed, discarded } = await saveOperations(tx, {
         executionId: job.id,
         sourceExecutionId: job.sourceExecutionId!,

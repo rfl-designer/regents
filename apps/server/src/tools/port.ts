@@ -7,6 +7,7 @@ import type {
   ToolOrigin,
 } from "@shearim/contracts";
 import { and, asc, eq, inArray } from "drizzle-orm";
+import { lockLiveAgent } from "../agents";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
 
@@ -368,13 +369,18 @@ export function createToolPort(deps: {
       );
     },
 
-    async grant(agentId: string, toolId: string) {
+    /** Concede a Ferramenta. Devolve `false` se o Agente foi apagado (o DELETE ganhou a corrida). */
+    async grant(agentId: string, toolId: string): Promise<boolean> {
       const def = (await catalog()).find((d) => d.id === toolId);
-      if (!def) return;
-      await db
-        .insert(agentTools)
-        .values({ agentId, tool: toolId, connectorId: def.connector?.id ?? null, grantedAt: clock.now() })
-        .onConflictDoNothing();
+      if (!def) return true;
+      return db.transaction(async (tx) => {
+        if (!(await lockLiveAgent(tx, agentId))) return false;
+        await tx
+          .insert(agentTools)
+          .values({ agentId, tool: toolId, connectorId: def.connector?.id ?? null, grantedAt: clock.now() })
+          .onConflictDoNothing();
+        return true;
+      });
     },
 
     async revoke(agentId: string, toolId: string) {

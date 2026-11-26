@@ -12,7 +12,7 @@ import {
 } from "@shearim/contracts";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
-import { type Agent, findAgent } from "./agents";
+import { type Agent, findAgent, lockLiveAgent } from "./agents";
 import { addArticuladora } from "./articuladora";
 import type { Clock } from "./clock";
 import { type Db, isUuid, schema, type Tx } from "./db/client";
@@ -160,7 +160,13 @@ export function conversationRoutes(deps: {
     const [agent] = typeof input?.agentId === "string" ? await findAgent(db, input.agentId) : [];
     if (!agent) return c.json({ error: "invalid_input", message: "Esse Agente não existe no Workspace." }, 400);
 
-    if (await addAgent(db, channel.id, agent.id, clock.now())) await publishChannel(channel);
+    // Travado: um DELETE ao mesmo tempo espera e o tira do Canal, ou já o apagou.
+    const added = await db.transaction(async (tx) =>
+      (await lockLiveAgent(tx, agent.id)) ? addAgent(tx, channel.id, agent.id, clock.now()) : ("gone" as const),
+    );
+    if (added === "gone")
+      return c.json({ error: "invalid_input", message: "Esse Agente não existe no Workspace." }, 400);
+    if (added) await publishChannel(channel);
     return c.json(await toChannelDto(db, channel));
   });
 
