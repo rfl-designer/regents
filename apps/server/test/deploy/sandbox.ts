@@ -2,7 +2,7 @@
  * Caixa de areia dos scripts de `deploy/` (instalador, atualização, empacotamento da release).
  *
  * O script roda de verdade (`/bin/sh`), mas com um PATH fechado: os dublês de comando que o teste
- * escreve (`docker`, `gh`, `brew`, `colima`, `launchctl`, `pmset`, `uname`, `sudo`...) e uma lista
+ * escreve (`docker`, `curl`, `brew`, `colima`, `launchctl`, `pmset`, `uname`, `sudo`...) e uma lista
  * curta de utilitários inofensivos (sed, grep, tar...). Qualquer outro comando dá "not found": nada
  * de verdade é instalado, iniciado ou mudado na máquina. HOME, TMPDIR e as pastas de apps do Mac
  * ficam dentro da caixa.
@@ -26,7 +26,7 @@ import { onCleanup } from "../harness";
 
 export const REPO_ROOT = resolve(import.meta.dir, "../../../..");
 
-// Inofensivos e necessários aos scripts. Tudo que mexe na máquina (docker, gh, brew, sudo,
+// Inofensivos e necessários aos scripts. Tudo que mexe na máquina (docker, brew, sudo,
 // launchctl, pmset, caffeinate, open, systemctl, curl, sleep, uname...) só existe como dublê.
 const SAFE_TOOLS = [
   "sh",
@@ -74,7 +74,7 @@ export type Sandbox = {
   state: string;
   /** Escreve um dublê de comando: `body` é shell, roda depois de anotar a chamada. */
   fake(name: string, body?: string): void;
-  /** As chamadas aos dublês, em ordem ("gh auth status", "docker compose pull"...). */
+  /** As chamadas aos dublês, em ordem ("uname -s", "docker compose pull"...). */
   calls(): string[];
   run(script: string, args?: string[], opts?: RunOptions): Promise<RunResult>;
 };

@@ -1,15 +1,14 @@
 #!/bin/sh
-# Instalador de uma linha do Shearim (Spec, histórias 1 a 6 e 8; módulo 13). Em Mac ou Linux, com
-# o `gh` autenticado numa conta com acesso ao repositório:
+# Instalador de uma linha do Shearim (Spec, histórias 1 a 6 e 8; módulo 13). Em Mac ou Linux:
 #
-#   gh release download --repo rfl-designer/shearim --pattern install.sh --output - | sh
+#   curl -fsSL https://github.com/rfl-designer/shearim/releases/latest/download/install.sh | sh
 #
-# O que faz, nesta ordem:
-# 1. Confere o `gh` (logado, com a permissão read:packages para baixar a imagem do GHCR).
+# As releases e a imagem no GHCR são públicas: não precisa de conta no GitHub. O que faz, nesta ordem:
+# 1. Confere o `curl`.
 # 2. Garante o Docker. No Linux: o Docker Engine e o Compose (pelo script oficial, depois de
 #    perguntar). No Mac: o Docker que existe (Docker Desktop, OrbStack ou Colima) ou, depois de
 #    perguntar, o Colima pelo Homebrew.
-# 3. Baixa o compose da release em ~/shearim (--dir muda) e faz `docker login ghcr.io` com o token do gh.
+# 3. Baixa o compose da release em ~/shearim (--dir muda).
 # 4. Roda o deploy/setup.sh: pede só a auth key do Tailscale e um e-mail, gera os segredos e confere
 #    MagicDNS e HTTPS.
 # 5. `docker compose pull` e `docker compose up -d`, e espera o app responder.
@@ -34,6 +33,7 @@ RELEASE_TAG=""
 main() {
   set -eu
   REPO=${SHEARIM_REPO:-rfl-designer/shearim}
+  RELEASES=https://github.com/$REPO/releases
   ASSET=shearim-compose.tar.gz
   LABEL=com.shearim.acordado
   TTY=${SHEARIM_TTY:-/dev/tty}
@@ -81,11 +81,10 @@ main() {
     return
   fi
 
-  need_gh
+  need_curl
   need_answers
   ensure_docker
   download
-  ghcr_login
   run_setup
   if [ "$SETUP_OK" = 1 ]; then start_shearim; fi
   if [ "$OS" = Darwin ]; then keep_awake; fi
@@ -122,7 +121,7 @@ update() {
     fail "$DIR não parece uma Instalação do Shearim (falta compose.yaml ou .env). Para instalar, rode o instalador."
   # A tag gravada neste instalador é a da versão de agora: sem --version, a atualização vai para a última.
   if [ "$TAG_GIVEN" = 0 ]; then TAG=""; fi
-  need_gh
+  need_curl
   ensure_docker
   cd "$DIR"
   from=$(compose_version)
@@ -140,7 +139,6 @@ update() {
     say "AVISO: o .env fixa SHEARIM_VERSION=$pinned: sobe essa versão, não a da release. Apague a linha para seguir as releases."
   fi
 
-  ghcr_login
   start_shearim
   if [ "$HEALTHY" = 0 ]; then
     fail "o Shearim não respondeu em $WAIT_SECONDS s depois de atualizar. Veja 'docker compose logs app'."
@@ -148,8 +146,8 @@ update() {
   say "ok: Shearim atualizado de $from para $(compose_version)"
 }
 
-# A versão que o compose sobe por padrão (a da release).
-compose_version() { sed -n 's/.*SHEARIM_VERSION:-\([^}]*\)}.*/\1/p' compose.yaml | head -n 1; }
+# A versão que o compose (o da pasta, ou o arquivo dado) sobe por padrão: a da release.
+compose_version() { sed -n 's/.*SHEARIM_VERSION:-\([^}]*\)}.*/\1/p' "${1:-compose.yaml}" | head -n 1; }
 
 say() { printf '%s\n' "$*"; }
 fail() {
@@ -169,22 +167,10 @@ wait_until() {
   return 1
 }
 
-need_gh() {
-  command -v gh >/dev/null 2>&1 ||
-    fail "falta o gh (GitHub CLI): https://cli.github.com. Depois, 'gh auth login' e rode de novo."
-  status=$(gh auth status 2>&1) ||
-    fail "o gh não está logado. Rode 'gh auth login' (numa conta com acesso a $REPO) e rode de novo."
-  # A imagem do GHCR pede read:packages, que o `gh auth login` não dá por padrão. (Um token sem a
-  # linha "Token scopes", como um fine-grained, passa: o docker pull diz se faltar.)
-  case "$status" in
-    *"Token scopes:"*packages*) ;;
-    *"Token scopes:"*)
-      say "O gh precisa da permissão read:packages para baixar a imagem do Shearim do GHCR."
-      gh auth refresh -h github.com -s read:packages <&3 ||
-        fail "rode 'gh auth refresh -h github.com -s read:packages' e rode de novo."
-      ;;
-  esac
-  say "ok: gh logado"
+# O `curl | sh` já tem o curl, mas o `sh install.sh` e a atualização podem não ter.
+need_curl() {
+  command -v curl >/dev/null 2>&1 ||
+    fail "falta o curl. Instale o curl (no Linux: sudo apt-get install curl) e rode de novo."
 }
 
 # Sem terminal, o setup não tem a quem perguntar a auth key e o e-mail: só pelas variáveis (ou o que
@@ -334,23 +320,15 @@ linux_compose() {
   say "ok: Compose instalado"
 }
 
+# Das releases públicas: a da tag, ou (sem tag) a última, cuja tag vem do compose que ela traz.
 download() {
-  if [ -z "$TAG" ]; then
-    TAG=$(gh release view --repo "$REPO" --json tagName --jq .tagName) ||
-      fail "não consegui descobrir a última release de $REPO (o gh tem acesso ao repositório?)."
-  fi
-  gh release download "$TAG" --repo "$REPO" --pattern "$ASSET" --dir "$WORK" --clobber >/dev/null ||
-    fail "não consegui baixar o $ASSET da release $TAG de $REPO."
+  if [ -n "$TAG" ]; then url=$RELEASES/download/$TAG/$ASSET; else url=$RELEASES/latest/download/$ASSET; fi
+  curl -fsSL "$url" -o "$WORK/$ASSET" ||
+    fail "não consegui baixar $url (veja acima)."
   mkdir -p "$DIR"
   tar -xzf "$WORK/$ASSET" -C "$DIR"
+  if [ -z "$TAG" ]; then TAG=v$(compose_version "$DIR/compose.yaml"); fi
   say "ok: release $TAG em $DIR"
-}
-
-ghcr_login() {
-  user=$(gh api user --jq .login) || fail "o gh não disse qual é a sua conta (gh api user)."
-  gh auth token | docker login ghcr.io -u "$user" --password-stdin >/dev/null 2>&1 ||
-    fail "o 'docker login ghcr.io' falhou com o token do gh."
-  say "ok: docker login ghcr.io como $user"
 }
 
 run_setup() {

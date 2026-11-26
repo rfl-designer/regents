@@ -4,9 +4,9 @@
 #   sh deploy/update.sh            a última release
 #   sh deploy/update.sh v1.3.0     uma release em particular
 #
-# Baixa o compose da release com o `gh` (compose.yaml e deploy/ são trocados; o .env, ./secrets e
-# ./backups ficam como estão), confere que o compose novo fecha com o .env, faz `docker login
-# ghcr.io` e roda `docker compose pull && docker compose up -d`. Na subida, o app faz um dump antes
+# Baixa o compose da release pública com o `curl` (compose.yaml e deploy/ são trocados; o .env,
+# ./secrets e ./backups ficam como estão), confere que o compose novo fecha com o .env e roda
+# `docker compose pull && docker compose up -d`. Na subida, o app faz um dump antes
 # de migrar. É o deploy/install.sh --update.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
