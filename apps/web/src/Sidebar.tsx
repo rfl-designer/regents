@@ -33,6 +33,7 @@ export type AdminView =
   | "agents"
   | "skills"
   | "connectors"
+  | "wikis"
   | "key"
   | "github"
   | "installation";
@@ -44,6 +45,7 @@ const ADMIN_LINKS: [AdminView, string][] = [
   ["agents", "Agentes"],
   ["skills", "Habilidades"],
   ["connectors", "Conectores"],
+  ["wikis", "Wikis"],
   ["key", "Chave do Workspace"],
   ["github", "GitHub"],
   ["installation", "Instalação"],

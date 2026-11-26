@@ -56,6 +56,7 @@ import { localApiNodeKey, type NodeKeyPort, noNodeKey } from "./installation/nod
 import { memoryFromEnv } from "./memory/extraction";
 import { loadMasterKey, secretBox } from "./secrets";
 import { toolMaxTurnsFromEnv, toolTimeoutFromEnv } from "./tools/port";
+import { wikiFromEnv } from "./wiki/sources";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 
@@ -224,12 +225,14 @@ async function main(command: string | undefined) {
   let toolMaxTurns: number | undefined;
   let approvalTtlMs: number | undefined;
   let memory: ReturnType<typeof memoryFromEnv> = {};
+  let wiki: ReturnType<typeof wikiFromEnv> = {};
   try {
     limits = limitsFromEnv(process.env);
     toolTimeoutMs = toolTimeoutFromEnv(process.env);
     toolMaxTurns = toolMaxTurnsFromEnv(process.env);
     approvalTtlMs = approvalTtlFromEnv(process.env);
     memory = memoryFromEnv(process.env);
+    wiki = wikiFromEnv(process.env);
   } catch (err) {
     fail((err as Error).message);
   }
@@ -259,6 +262,8 @@ async function main(command: string | undefined) {
     approvals: { ttlMs: approvalTtlMs },
     // O modelo pequeno da extração da Memória (claude-haiku-5-5) e o orçamento do resumo (4000 caracteres).
     memory,
+    // O tamanho máximo de uma Fonte da Wiki (5 MB).
+    wiki,
   });
   // O par VAPID nasce na primeira subida (e daí em diante é sempre o mesmo, guardado no banco).
   await shearim.push.ensureKeys();

@@ -45,6 +45,7 @@ import { createToolPort, type ToolDefinition } from "./tools/port";
 import { agentToolRoutes } from "./tools/routes";
 import { WEB_TOOLS } from "./tools/web";
 import { WORKSPACE_TOOLS } from "./tools/workspace";
+import { wikiRoutes } from "./wiki/routes";
 import { workspaceContextRoutes } from "./workspace-context";
 import { workspaceKeyRoutes } from "./workspace-key";
 
@@ -91,6 +92,8 @@ export interface AppDeps {
    * orçamento do resumo em cada resposta, em caracteres (`SHEARIM_MEMORY_SUMMARY_CHARS`; padrão 4000).
    */
   memory?: { model?: string; summaryChars?: number };
+  /** A Wiki: o tamanho máximo de uma Fonte, em bytes (`SHEARIM_WIKI_SOURCE_MAX_MB`; padrão 5 MB). */
+  wiki?: { sourceMaxBytes?: number };
 }
 
 export type AppHooks = JoinRequestHooks & ExecutionHooks & KeyHooks & AccountHooks;
@@ -277,6 +280,7 @@ export function createApp(deps: AppDeps) {
   app.route("/api", skillRoutes({ db, clock }));
   app.route("/api", githubRoutes({ db, github }));
   app.route("/api", installation.routes);
+  app.route("/api", wikiRoutes({ db, clock, ...deps.wiki }));
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
 
