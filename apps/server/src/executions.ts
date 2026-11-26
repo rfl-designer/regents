@@ -44,7 +44,18 @@ import {
 import { publishMemory } from "./memory/items";
 import { recordMentions } from "./mentions";
 import { findMessage } from "./messages";
-import { failureOpts, failureReason, type Spent, STALL_MS, type StallWatch, streamCall } from "./model/call";
+import {
+  failureOpts,
+  failureReason,
+  finalReason,
+  MAX_ATTEMPTS,
+  RETRY_DELAY_MS,
+  type Spent,
+  STALL_MS,
+  STALL_TEXT,
+  type StallWatch,
+  streamCall,
+} from "./model/call";
 import { type ModelPort, type ModelRequest, NOT_STRUCTURED_REASON, type Payer } from "./model/port";
 import { outcomeOf, recordOutcome } from "./outcomes";
 import { audienceOf } from "./participation";
@@ -66,16 +77,12 @@ type Row = typeof executions.$inferSelect;
  */
 export type ExecutionKind = Row["kind"];
 
-export { STALL_MS };
+export { RETRY_DELAY_MS, STALL_MS };
 /** O motivo do que o Agente apagado tinha aberto, e do que chega para ele depois (#65). */
 export const AGENT_DELETED_REASON = "o Agente foi apagado";
-/** A nova tentativa automática sai 10 s depois da falha. */
-export const RETRY_DELAY_MS = 10_000;
 /** No `SIGTERM`, quanto o dreno espera o que está rodando terminar. */
 export const DRAIN_MS = 20_000;
 const DAY_MS = 24 * 60 * 60_000;
-/** A original e a nova tentativa automática. */
-const MAX_ATTEMPTS = 2;
 
 /** Os tetos de concorrência (Spec, módulo 6, Tetos), ajustáveis no `.env` (`main.ts`). */
 export interface ExecutionLimits {
@@ -113,11 +120,11 @@ export function limitsFromEnv(env: Record<string, string | undefined>): Partial<
 
 /** O motivo da vigia, por passo ("Faro não respondeu: ficou 2 minutos sem escrever nada"). */
 const STALL_REASON: Record<ExecutionStep, string> = {
-  deciding: "ficou 2 minutos sem dar o Desfecho",
-  writing: "ficou 2 minutos sem escrever nada",
+  deciding: `ficou ${STALL_TEXT} sem dar o Desfecho`,
+  writing: `ficou ${STALL_TEXT} sem escrever nada`,
   // Enquanto a Ferramenta roda, vale o prazo dela (a vigia espera); este só aparece se nada a encerra.
-  tool: "ficou 2 minutos sem escrever nada",
-  remembering: "ficou 2 minutos sem responder",
+  tool: `ficou ${STALL_TEXT} sem escrever nada`,
+  remembering: `ficou ${STALL_TEXT} sem responder`,
 };
 
 /**
@@ -619,7 +626,7 @@ export function createExecutions(deps: {
       return;
     }
     const repeated = job.attempt > 1 && job.reason === reason && job.authorReason === authorReason;
-    const twice = (r: string) => (repeated ? `${r}, nas duas tentativas` : r);
+    const twice = (r: string) => finalReason(r, repeated);
     const failed = await settle(job, "failed", {
       reason: twice(reason),
       ...(authorReason ? { authorReason: twice(authorReason) } : {}),

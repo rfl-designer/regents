@@ -220,7 +220,8 @@ const SPECS: ToolSpec[] = [
  * nenhuma execução e nunca são oferecidas a uma resposta em conversa. `current` é a Fonte nova da
  * chamada: uma página escrita sem `fontes` vem dela (mais as que já tinha). Sem `current` (a
  * remoção de uma Fonte, a revisão), uma página escrita sem `fontes` mantém as que já tinha; uma
- * página nova assim fica sem Fonte, e a conferência (#87) a põe no relatório.
+ * página nova assim (fora o índice) volta ao modelo como erro, com o motivo: toda página diz de
+ * onde veio.
  */
 export function draftTools(draft: Draft, current?: DraftSource): ExecutionTools {
   const ok = (content: string): ToolResult => ({ content, isError: false });
@@ -242,6 +243,9 @@ export function draftTools(draft: Draft, current?: DraftSource): ExecutionTools 
     let sources: string[];
     const kept = draft.pages.get(slug)?.sources ?? [];
     if (input.fontes === undefined) {
+      if (!current && !draft.pages.has(slug) && slug !== WIKI_INDEX_SLUG) {
+        return error(`a página ${slug} é nova: diga de quais Fontes ela veio (o nome do arquivo de cada uma)`);
+      }
       sources = [...new Set([...kept, ...(current ? [current.id] : [])])];
     } else {
       if (!Array.isArray(input.fontes) || input.fontes.length === 0) {

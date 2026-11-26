@@ -1,8 +1,9 @@
 /**
  * Importar um `SKILL.md` como Habilidade (spec #74, ticket #76): o Admin manda um `SKILL.md` (ou
- * um `.zip` de skill) e o Shearim lê o `name` e a `description` do frontmatter YAML e usa o resto
- * como corpo. Do `.zip`, só o `SKILL.md` vira Habilidade: os outros arquivos (scripts, referências,
- * assets) ficam de fora, porque os Agentes do Shearim não executam código, e a resposta os lista.
+ * um `.zip` ou a pasta de uma skill) e o Shearim lê o `name` e a `description` do frontmatter YAML
+ * e usa o resto como corpo. Do `.zip` e da pasta, só o `SKILL.md` vira Habilidade: os outros
+ * arquivos (scripts, referências, assets) ficam de fora, porque os Agentes do Shearim não executam
+ * código, e a resposta os lista.
  */
 import { describe, expect, test } from "bun:test";
 import type { ImportSkillResultDto, SkillDto } from "@shearim/contracts";
@@ -123,9 +124,67 @@ describe("importar um .zip de skill", () => {
   });
 });
 
-describe("a importação falha com o motivo, e nada é criado", () => {
-  const nada = async (t: TestApp) => expect(await (await t.as(juliana).get("/api/skills")).json()).toEqual([]);
+const nada = async (t: TestApp) => expect(await (await t.as(juliana).get("/api/skills")).json()).toEqual([]);
 
+/**
+ * Juliana escolhe a pasta da skill na tela: cada arquivo vai num campo `files`, com o caminho a
+ * partir da pasta escolhida no nome. Os de `soNome` vão só com o caminho, sem o conteúdo (como a
+ * tela manda o que não é `SKILL.md`).
+ */
+function importarPasta(t: TestApp, files: Record<string, string>, soNome: string[] = [], who: Person = juliana) {
+  const form = new FormData();
+  for (const [path, text] of Object.entries(files)) form.append("files", new File([text], path), path);
+  for (const path of soNome) form.append("files", path);
+  return t.as(who).request("/api/skills/import", { method: "POST", body: form });
+}
+
+describe("importar uma pasta de skill", () => {
+  test("só o SKILL.md vira Habilidade, e a resposta lista os arquivos ignorados", async () => {
+    const t = await admin();
+
+    const res = await importarPasta(
+      t,
+      {
+        "criar-carrossel/SKILL.md": SKILL_MD,
+        "criar-carrossel/referencia.md": "# Referência\n",
+        "criar-carrossel/.DS_Store": "lixo",
+      },
+      ["criar-carrossel/scripts/gerar.py", "criar-carrossel/assets/capa.png"],
+    );
+
+    expect(res.status).toBe(201);
+    const { skill, ignored }: ImportSkillResultDto = await res.json();
+    expect(skill.name).toBe("Criar carrossel");
+    expect(skill.body).toBe("# Criar carrossel\n\n1. Comece com um gancho.\n2. Uma ideia por slide.\n");
+    expect(skill.origin).toBe("imported");
+    expect(ignored).toEqual(["assets/capa.png", "referencia.md", "scripts/gerar.py"]);
+  });
+
+  test("uma pasta sem SKILL.md falha com o motivo, e nada é criado", async () => {
+    const t = await admin();
+
+    const res = await importarPasta(t, { "criar-carrossel/referencia.md": "# Referência\n" });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_skill", message: "A pasta não tem um SKILL.md." });
+    await nada(t);
+  });
+
+  test("uma pasta acima do limite é recusada", async () => {
+    const t = await admin();
+
+    const res = await importarPasta(t, {
+      "criar-carrossel/SKILL.md": SKILL_MD,
+      "criar-carrossel/video.mp4": "x".repeat(5 * 1024 * 1024),
+    });
+
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "file_too_large", message: "A pasta tem mais de 5 MB." });
+    await nada(t);
+  });
+});
+
+describe("a importação falha com o motivo, e nada é criado", () => {
   test("um SKILL.md sem name", async () => {
     const t = await admin();
 

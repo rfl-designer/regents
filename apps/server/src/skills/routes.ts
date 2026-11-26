@@ -14,7 +14,8 @@ import { findAgent, lockLiveAgent } from "../agents";
 import type { Clock } from "../clock";
 import { type Db, isUuid, schema } from "../db/client";
 import { adminOnly, type Env } from "../members";
-import { readSkillFile } from "./import";
+import { SYNC_SKILL } from "../wiki/rules";
+import { readSkillFile, readSkillFolder } from "./import";
 import { agentSkillsOf, selectSkills, skillById } from "./skills";
 
 const { skills, agentSkills } = schema;
@@ -26,7 +27,7 @@ const { skills, agentSkills } = schema;
  * O nome é único no Workspace sem diferenciar maiúsculas (`409 name_taken`); a descrição diz quando
  * usar e é obrigatória (`400 invalid_input`). Uma edição vale na próxima leitura; apagar tira a
  * Habilidade de todos os Agentes na hora. Importar um `SKILL.md` (ou um `.zip` de skill) cria a
- * Habilidade com as mesmas regras, marcada como importada.
+ * Habilidade com as mesmas regras, marcada como importada; uma pasta de skill também.
  */
 export function skillRoutes(deps: { db: Db; clock: Clock }) {
   const { db, clock } = deps;
@@ -39,8 +40,9 @@ export function skillRoutes(deps: { db: Db; clock: Clock }) {
     return skill ? c.json(skill) : c.json({ error: "not_found" }, 404);
   });
 
-  /** Cria a Habilidade, ou responde `409 name_taken`. */
+  /** Cria a Habilidade, ou responde `409 name_taken` (o nome já existe, ou é o da Habilidade do Shearim). */
   async function create(c: Context<Env>, input: CreateSkillInput, origin: SkillOrigin) {
+    if (reserved(input.name)) return reservedName(c);
     const now = clock.now();
     const id = crypto.randomUUID();
     const [created] = await db
@@ -62,12 +64,19 @@ export function skillRoutes(deps: { db: Db; clock: Clock }) {
     const invalid = (message: string) => c.json({ error: "invalid_skill", message }, 400);
     const form = await c.req.formData().catch(() => null);
     const file = form?.get("file");
-    if (!(file instanceof File)) return invalid("Mande o arquivo SKILL.md ou o .zip da skill no campo file.");
-    if (file.size > SKILL_IMPORT_MAX_BYTES) {
-      const mb = SKILL_IMPORT_MAX_BYTES / 1024 / 1024;
-      return c.json({ error: "file_too_large", message: `O arquivo tem mais de ${mb} MB.` }, 413);
+    // A pasta escolhida na tela: um campo `files` por arquivo, com o caminho no nome (ou só o
+    // caminho, em texto, para o que não é o `SKILL.md`).
+    const folder = (form?.getAll("files") ?? []).filter((f) => f instanceof File || (typeof f === "string" && f));
+    if (!(file instanceof File) && folder.length === 0) {
+      return invalid("Mande o SKILL.md ou o .zip com ele no campo file, ou a pasta com ele no campo files.");
     }
-    const read = await readSkillFile(file);
+    const size = file instanceof File ? file.size : folder.reduce((n, f) => n + (f instanceof File ? f.size : 0), 0);
+    if (size > SKILL_IMPORT_MAX_BYTES) {
+      const mb = SKILL_IMPORT_MAX_BYTES / 1024 / 1024;
+      const what = file instanceof File ? "O arquivo" : "A pasta";
+      return c.json({ error: "file_too_large", message: `${what} tem mais de ${mb} MB.` }, 413);
+    }
+    const read = file instanceof File ? await readSkillFile(file) : await readSkillFolder(folder);
     if ("error" in read) return invalid(read.error);
     const input = checkFields(read.input, { partial: false });
     if (typeof input === "string") return invalid(input);
@@ -80,6 +89,7 @@ export function skillRoutes(deps: { db: Db; clock: Clock }) {
     if (!current) return c.json({ error: "not_found" }, 404);
     const input = await fieldsOf(c, { partial: true });
     if (input instanceof Response) return input;
+    if (input.name !== undefined && reserved(input.name)) return reservedName(c);
     if (Object.keys(input).length) {
       try {
         await db
@@ -164,6 +174,12 @@ function checkFields(raw: Record<string, unknown> | null, opts: { partial: boole
   }
   return out;
 }
+
+/** O nome da Habilidade do Shearim (`SYNC_SKILL`), sem diferenciar maiúsculas: nenhuma outra o usa. */
+const reserved = (name: string) => name.trim().toLowerCase() === SYNC_SKILL.name.toLowerCase();
+
+const reservedName = (c: Context<Env>) =>
+  c.json({ error: "name_taken", message: `${SYNC_SKILL.name} é a Habilidade do Shearim: dê outro nome à sua.` }, 409);
 
 const nameTaken = (c: Context<Env>, name: string) =>
   c.json({ error: "name_taken", message: `Já existe uma Habilidade chamada ${name}.` }, 409);

@@ -56,3 +56,20 @@ export async function agentSkillsOf(db: Db, agentId: string, builtin = false): P
   const own = rows.map(({ activeIn, ...r }) => ({ ...r, active: activeIn !== null }));
   return builtin ? [{ ...SYNC_SKILL, active: true, builtin: true }, ...own] : own;
 }
+
+/**
+ * As Habilidades ativas agora em cada Agente de `agentIds` (sem eles, em todos), por nome: o nome e
+ * a descrição, nunca o corpo. É o que a lista de Agentes e o roteamento da Articuladora mostram.
+ */
+export async function activeSkillsByAgent(db: Db, agentIds?: readonly string[]) {
+  const byAgent = new Map<string, { name: string; description: string }[]>();
+  if (agentIds?.length === 0) return byAgent;
+  const rows = await db
+    .select({ agentId: agentSkills.agentId, name: skills.name, description: skills.description })
+    .from(agentSkills)
+    .innerJoin(skills, eq(skills.id, agentSkills.skillId))
+    .where(agentIds ? inArray(agentSkills.agentId, [...agentIds]) : undefined)
+    .orderBy(asc(sql`lower(${skills.name})`));
+  for (const { agentId, ...skill } of rows) byAgent.set(agentId, [...(byAgent.get(agentId) ?? []), skill]);
+  return byAgent;
+}

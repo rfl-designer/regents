@@ -1,4 +1,4 @@
-import { type WikiCitationDto, wikiCitationMarkers } from "@shearim/contracts";
+import { veiledWikiMarker, type WikiCitationDto, wikiCitationMarkers } from "@shearim/contracts";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { type Db, schema, type Tx } from "../db/client";
 import type { ToolRun } from "../tools/port";
@@ -43,18 +43,22 @@ export async function recordWikiCitations(
   if (rows.length) await tx.insert(messageWikiCitations).values(rows).onConflictDoNothing();
 }
 
+/** Uma resposta com citações, como quem vê a recebe: o corpo (sem o nome das Wikis que ele não lê) e as citações. */
+export type CitedReply = { body: string; citations: WikiCitationDto[] };
+
 /**
  * As citações de cada resposta, como `viewerId` as vê (sem ele, a cópia de todos: só as Wikis
- * públicas abrem). Uma por marcador, na ordem: com link quando quem vê lê a Wiki; sem link quando
- * não lê; "não consultada" (sem o nome da Wiki) quando a execução não leu a página.
+ * públicas abrem). Uma por marcador, na ordem: com link quando quem vê lê a Wiki; sem link e sem o
+ * nome quando não lê ou quando a Wiki foi apagada (o marcador do corpo também perde o nome); "não
+ * consultada" (sem o nome da Wiki) quando a execução não leu a página.
  */
 export async function wikiCitationsOf(
   db: Db,
   replies: { id: string; body: string }[],
   viewerId: string | null,
-): Promise<Map<string, WikiCitationDto[]>> {
+): Promise<Map<string, CitedReply>> {
   const withMarkers = replies.filter((r) => wikiCitationMarkers(r.body).length > 0);
-  const result = new Map<string, WikiCitationDto[]>();
+  const result = new Map<string, CitedReply>();
   if (withMarkers.length === 0) return result;
   const rows = await db
     .select({
@@ -68,9 +72,10 @@ export async function wikiCitationsOf(
       title: wikiPages.title,
     })
     .from(messageWikiCitations)
-    .innerJoin(wikis, eq(wikis.id, messageWikiCitations.wikiId))
-    .innerJoin(wikiVersions, eq(wikiVersions.id, messageWikiCitations.versionId))
-    .innerJoin(
+    // A Wiki apagada deixa a citação sem Wiki e sem versão (`set null`): ela fica sem link e sem nome.
+    .leftJoin(wikis, eq(wikis.id, messageWikiCitations.wikiId))
+    .leftJoin(wikiVersions, eq(wikiVersions.id, messageWikiCitations.versionId))
+    .leftJoin(
       wikiPages,
       and(eq(wikiPages.versionId, messageWikiCitations.versionId), eq(wikiPages.slug, messageWikiCitations.slug)),
     )
@@ -89,15 +94,27 @@ export async function wikiCitationsOf(
   };
   for (const reply of withMarkers) {
     const citations: WikiCitationDto[] = [];
+    let body = reply.body;
     for (const { marker } of wikiCitationMarkers(reply.body)) {
       const row = rows.find((r) => r.messageId === reply.id && r.marker === marker);
       if (!row) citations.push({ marker, state: "not_consulted" });
-      else if (await reads({ id: row.wikiId, scope: row.scope })) {
+      else if (
+        row.wikiId &&
+        row.wikiName &&
+        row.scope &&
+        row.version !== null &&
+        row.title !== null &&
+        (await reads({ id: row.wikiId, scope: row.scope }))
+      ) {
         const { wikiId, wikiName, slug, version, title } = row;
         citations.push({ marker, state: "linked", wikiId, wikiName, slug, version, title });
-      } else citations.push({ marker, state: "unlinked", wikiName: row.wikiName, slug: row.slug });
+      } else {
+        const veiled = veiledWikiMarker(row.slug);
+        body = body.replaceAll(marker, veiled);
+        citations.push({ marker: veiled, state: "unlinked", slug: row.slug });
+      }
     }
-    result.set(reply.id, citations);
+    result.set(reply.id, { body, citations });
   }
   return result;
 }

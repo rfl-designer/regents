@@ -11,6 +11,21 @@ import type { ModelEvent, ModelPort, ModelRequest, ModelUsage, TerminalModelEven
 /** Vigia (ADR 0003): quanto um passo pode ficar sem progresso antes de virar falha. */
 export const STALL_MS = 2 * 60_000;
 
+/** O prazo da vigia para gente ler, no motivo da falha ("ficou 2 minutos sem responder"). */
+export const STALL_TEXT = `${STALL_MS / 60_000} minutos`;
+
+/**
+ * A nova tentativa automática (ADR 0003), a mesma nas execuções e na Sincronização da Wiki: a
+ * original e mais uma, 10 s depois da falha.
+ */
+export const MAX_ATTEMPTS = 2;
+export const RETRY_DELAY_MS = 10_000;
+
+/** O motivo da falha que encerra: "<motivo>, nas duas tentativas" quando a nova tentativa falhou igual. */
+export function finalReason(reason: string, repeated: boolean) {
+  return repeated ? `${reason}, nas duas tentativas` : reason;
+}
+
 /** Contam como progresso para a vigia: texto, pensamento e nova tentativa da API (nunca `ping`). */
 export function isProgress(event: ModelEvent) {
   return (

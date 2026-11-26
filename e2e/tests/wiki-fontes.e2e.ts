@@ -40,3 +40,26 @@ describe("Wikis na administração", () => {
     await expect(fontes.getByRole("listitem")).toHaveCount(2);
   });
 });
+
+describe("Apagar uma Wiki", () => {
+  test("o Admin apaga uma Wiki depois de confirmar na tela, e ela sai da lista", {
+    timeout: 60_000,
+  }, async ({ app, screen }) => {
+    const nome = `Rascunho ${Date.now()}`;
+    await app.open("/wikis");
+    await screen.getByRole("textbox", "Nome da Wiki").fill(nome);
+    await screen.getByRole("textbox", "Descrição da Wiki").fill("Uma Wiki para apagar.");
+    await screen.getByRole("button", "Criar").tap();
+    const wiki = screen.getByRole("listitem", `Wiki ${nome}`);
+
+    await wiki.getByRole("button", "Apagar a Wiki").tap();
+    const confirmar = wiki.getByRole("region", `Apagar a Wiki ${nome}`);
+    await expect(confirmar).toContainText("Ela sai na hora de todos os Canais e Agentes");
+    await confirmar.getByRole("button", "Manter a Wiki").tap();
+    await expect(confirmar).toHaveCount(0);
+
+    await wiki.getByRole("button", "Apagar a Wiki").tap();
+    await confirmar.getByRole("button", "Apagar de vez").tap();
+    await expect(wiki).toHaveCount(0);
+  });
+});

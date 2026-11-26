@@ -274,15 +274,20 @@ describe("a revisão da Wiki (o lint)", () => {
 
 describe("a conferência em código", () => {
   test(
-    "põe no relatório os links quebrados, as páginas sem Fonte, as fora do índice e as sem link de entrada, e não impede a publicação",
+    "põe no relatório os links quebrados, as fora do índice e as sem link de entrada, e não impede a publicação",
     async () => {
       const t = await testApp();
       const wiki = await wikiCom(t, AULA_1(), AULA_2());
-      // A revisão não corrige o link quebrado e escreve um resumo sem Fonte, fora do índice.
+      // A revisão não corrige o link quebrado e escreve um resumo fora do índice.
       roteiroDasAulas(
         t,
         {
-          toolUse: [{ name: "escrever_pagina", input: { slug: "resumo", titulo: "Resumo", corpo: "Ganchos curtos." } }],
+          toolUse: [
+            {
+              name: "escrever_pagina",
+              input: { slug: "resumo", titulo: "Resumo", corpo: "Ganchos curtos.", fontes: ["aula-01.txt"] },
+            },
+          ],
         },
         { text: "Pronto." },
       );
@@ -292,7 +297,7 @@ describe("a conferência em código", () => {
       expect(sync).toMatchObject({ state: "done", version: 1 });
       const conferencia = {
         brokenLinks: [{ from: { slug: "ganchos", title: "ganchos" }, slug: "duracao" }],
-        withoutSources: [{ slug: "resumo", title: "Resumo" }],
+        withoutSources: [],
         outsideIndex: [{ slug: "resumo", title: "Resumo" }],
         orphans: [
           { slug: "duracao-do-gancho", title: "duracao-do-gancho" },
@@ -305,7 +310,39 @@ describe("a conferência em código", () => {
       // A versão sai com o que está quebrado: a conferência só avisa.
       const paginas = await paginasDe(t, wiki, 1);
       expect(paginas.map((p) => p.slug)).toEqual(["duracao-do-gancho", "ganchos", "index", "log", "resumo"]);
-      expect(paginas.find((p) => p.slug === "resumo")!.sources).toEqual([]);
+    },
+    LONGO,
+  );
+
+  test(
+    "uma página nova escrita na revisão sem fontes volta à Articuladora como erro, com o motivo; uma que já existe, reescrita sem fontes, mantém as dela",
+    async () => {
+      const t = await testApp();
+      const wiki = await wikiCom(t, AULA_1(), AULA_2());
+      roteiroDasAulas(
+        t,
+        {
+          toolUse: [
+            { name: "escrever_pagina", input: { slug: "resumo", titulo: "Resumo", corpo: "Ganchos curtos." } },
+            {
+              name: "escrever_pagina",
+              input: { slug: "ganchos", titulo: "Ganchos", corpo: "Os 3 primeiros segundos." },
+            },
+          ],
+        },
+        { text: "Pronto." },
+      );
+      await sincronizar(t, wiki);
+      const sync = await terminada(t, wiki);
+
+      const resultados = toolResults(t.anthropic.syncs[5]!.body);
+      expect(resultados.map((r) => r.is_error ?? false)).toEqual([true, false]);
+      expect(resultados[0]!.content).toContain("a página resumo é nova: diga de quais Fontes ela veio");
+      expect(sync).toMatchObject({ state: "done", version: 1 });
+      expect(sync.report!.check.withoutSources).toEqual([]);
+      const paginas = await paginasDe(t, wiki, 1);
+      expect(paginas.map((p) => p.slug)).not.toContain("resumo");
+      expect(paginas.find((p) => p.slug === "ganchos")!.sources.map((f) => f.fileName)).toEqual(["aula-01.txt"]);
     },
     LONGO,
   );

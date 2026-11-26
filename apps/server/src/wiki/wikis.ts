@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { type Db, isUuid, schema } from "../db/client";
 import { activeAdminIds } from "../members";
 import { inWikiList, wikiListIds } from "./reach";
+import { lockIdleWiki } from "./sources";
 import { lastSyncOf } from "./sync-state";
 import { currentVersionId, currentVersionSummary, sourcesOfVersion } from "./versions";
 
@@ -164,4 +165,18 @@ export async function wikiAudience(
 ): Promise<"everyone" | { members: string[] }> {
   if (wiki.scope === "public") return "everyone";
   return { members: [...new Set([...(await activeAdminIds(db)), ...(await wikiListIds(db, wiki.id))])] };
+}
+
+/**
+ * Apaga a Wiki (história 25), com tudo o que é dela: as Fontes, as versões, as Sincronizações e as
+ * ligações a Canais, Agentes e Membros (`on delete cascade`). As citações ficam, sem a Wiki
+ * (`set null`); o gasto das Sincronizações fica no orçamento da Articuladora (sem FK). Pela trava
+ * da Wiki: `"sync_running"` quando uma Sincronização começou depois do cancelamento.
+ */
+export async function deleteWiki(db: Db, wikiId: string): Promise<boolean | "sync_running"> {
+  return db.transaction(async (tx) => {
+    if (!(await lockIdleWiki(tx, wikiId))) return "sync_running";
+    const gone = await tx.delete(wikis).where(eq(wikis.id, wikiId)).returning({ id: wikis.id });
+    return gone.length > 0;
+  });
 }

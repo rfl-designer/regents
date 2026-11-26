@@ -130,6 +130,7 @@ export const wikiSyncs = pgTable(
   },
   (t) => [
     index().on(t.wikiId, t.seq),
+    // Os estados em curso (`WIKI_SYNC_OPEN_STATES`), escritos aqui porque a migração os guarda.
     uniqueIndex("wiki_syncs_one_open_per_wiki").on(t.wikiId).where(sql`${t.state} in ('queued', 'running')`),
   ],
 );
@@ -296,12 +297,12 @@ export const messageWikiCitations = pgTable(
       .references(() => messages.id, { onDelete: "cascade" }),
     /** O marcador exato, como está no corpo. */
     marker: text().notNull(),
-    wikiId: uuid()
-      .notNull()
-      .references(() => wikis.id, { onDelete: "cascade" }),
-    versionId: uuid()
-      .notNull()
-      .references(() => wikiVersions.id, { onDelete: "cascade" }),
+    /**
+     * A Wiki e a versão lidas; nulas depois que a Wiki é apagada: a citação fica, sem link e sem
+     * o nome dela (e não vira "não consultada").
+     */
+    wikiId: uuid().references(() => wikis.id, { onDelete: "set null" }),
+    versionId: uuid().references(() => wikiVersions.id, { onDelete: "set null" }),
     slug: text().notNull(),
   },
   (t) => [primaryKey({ columns: [t.messageId, t.marker] })],

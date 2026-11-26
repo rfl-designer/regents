@@ -4,6 +4,9 @@ import { type CreateSkillInput, SKILL_BODY_MAX } from "@shearim/contracts";
 /** O que sai de um `SKILL.md`: os campos da Habilidade (ainda sem conferir) e os arquivos ignorados. */
 export type SkillFile = { input: Partial<CreateSkillInput>; ignored: string[] } | { error: string };
 
+/** Um arquivo de dentro do pacote da skill (`.zip` ou pasta): o caminho e a leitura do texto. */
+type Entry = { name: string; read(): string | undefined | Promise<string | undefined> };
+
 /**
  * Lê o arquivo da importação: um `SKILL.md` (o frontmatter YAML dá o `name` e a `description`; o
  * resto é o corpo) ou um `.zip` de skill, com o `SKILL.md` na raiz ou numa pasta. Do `.zip`, os
@@ -16,21 +19,39 @@ export async function readSkillFile(file: File): Promise<SkillFile> {
   if (!isZip(bytes)) return fromSkillMd(new TextDecoder().decode(bytes), []);
   const entries = zipEntries(bytes);
   if (!entries) return { error: "Não foi possível ler o .zip: ele está corrompido ou usa um formato sem suporte." };
+  return fromPackage(entries, { what: "O .zip", from: "de dentro do .zip" });
+}
+
+/**
+ * Lê uma pasta de skill: cada arquivo com o caminho a partir da pasta escolhida no nome, ou só o
+ * caminho (texto), sem o conteúdo, para os arquivos que não precisam subir. Como no `.zip`, só o
+ * `SKILL.md` vira Habilidade, e os outros arquivos voltam em `ignored`.
+ */
+export function readSkillFolder(files: (File | string)[]): Promise<SkillFile> {
+  const entries = files.map((f) =>
+    typeof f === "string"
+      ? { name: f.replace(/^\/+/, ""), read: () => undefined }
+      : { name: f.name.replace(/^\/+/, ""), read: () => f.text() },
+  );
+  return fromPackage(entries, { what: "A pasta", from: "da pasta" });
+}
+
+async function fromPackage(entries: Entry[], words: { what: string; from: string }): Promise<SkillFile> {
   const files = entries.filter((e) => !e.name.endsWith("/") && !isJunk(e.name));
   const depth = (name: string) => name.split("/").length;
   const skills = files.filter((e) => /(^|\/)SKILL\.md$/i.test(e.name)).sort((a, b) => depth(a.name) - depth(b.name));
   const [skill, next] = skills;
-  if (!skill) return { error: "O .zip não tem um SKILL.md." };
+  if (!skill) return { error: `${words.what} não tem um SKILL.md.` };
   if (next && depth(next.name) === depth(skill.name)) {
-    return { error: "O .zip tem mais de um SKILL.md no mesmo nível: importe uma skill por vez." };
+    return { error: `${words.what} tem mais de um SKILL.md no mesmo nível: importe uma Habilidade por vez.` };
   }
   const folder = skill.name.slice(0, skill.name.length - "SKILL.md".length);
   const ignored = files
     .filter((e) => e !== skill)
     .map((e) => (e.name.startsWith(folder) ? e.name.slice(folder.length) : e.name))
     .sort();
-  const text = skill.read();
-  if (text === undefined) return { error: "Não foi possível ler o SKILL.md de dentro do .zip." };
+  const text = await skill.read();
+  if (text === undefined) return { error: `Não foi possível ler o SKILL.md ${words.from}.` };
   return fromSkillMd(text, ignored);
 }
 
@@ -88,8 +109,8 @@ function unquote(value: string): string {
 
 const isZip = (b: Uint8Array) => b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04;
 
-/** Lixo que o macOS põe nos `.zip`: não é arquivo da skill, nem entra na lista de ignorados. */
-const isJunk = (name: string) => name.startsWith("__MACOSX/") || /(^|\/)\.DS_Store$/.test(name);
+/** Lixo que o macOS põe nos `.zip` e nas pastas: não é arquivo da skill, nem entra na lista de ignorados. */
+const isJunk = (name: string) => /(^|\/)__MACOSX\//.test(name) || /(^|\/)\.DS_Store$/.test(name);
 
 /** O maior `SKILL.md` que se descomprime: o corpo cabe no limite da Habilidade, com folga para UTF-8. */
 const SKILL_MD_MAX_BYTES = SKILL_BODY_MAX * 4 + 64 * 1024;

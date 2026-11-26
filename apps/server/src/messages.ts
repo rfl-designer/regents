@@ -3,7 +3,7 @@ import { asc, eq } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { type Db, schema } from "./db/client";
 import { mentionsOf } from "./mentions";
-import { wikiCitationsOf } from "./wiki/citations";
+import { type CitedReply, wikiCitationsOf } from "./wiki/citations";
 
 const { messages, members, agents, executions } = schema;
 const origins = alias(messages, "origins");
@@ -45,11 +45,11 @@ type Row = Awaited<ReturnType<ReturnType<typeof selectMessages>["where"]>>[numbe
  * mensagem de origem; a citação da Wiki só abre para quem lê a Wiki.
  */
 function toDto(r: Row, extra: Extra, viewerId: string | null): MessageDto {
-  const wikiCitations = extra.citations.get(r.id);
+  const cited = extra.citations.get(r.id);
   return {
     id: r.id,
     channelId: r.channelId,
-    body: r.body,
+    body: cited?.body ?? r.body,
     author: r.agentId
       ? { kind: "agent", id: r.agentId, displayName: r.agentName!, photo: r.agentPhoto }
       : {
@@ -68,13 +68,13 @@ function toDto(r: Row, extra: Extra, viewerId: string | null): MessageDto {
     ...(r.payer === "key" && r.payerAccount && viewerId !== null && r.originAuthorId === viewerId
       ? { yourAccount: r.payerAccount }
       : {}),
-    ...(wikiCitations ? { wikiCitations } : {}),
+    ...(cited ? { wikiCitations: cited.citations } : {}),
   };
 }
 
 interface Extra {
   mentions: Map<string, MessageDto["mentions"]>;
-  citations: Map<string, NonNullable<MessageDto["wikiCitations"]>>;
+  citations: Map<string, CitedReply>;
 }
 
 /** As Menções e, nas respostas de Agente, as citações da Wiki como `viewerId` as vê. */

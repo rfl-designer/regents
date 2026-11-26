@@ -7,6 +7,7 @@ import {
   type WikiSourceDto,
   type WikiSyncDto,
   type WikiVersionDto,
+  wikiSyncOpen,
   wikiSyncPayerText,
   wikiSyncStepText,
 } from "@shearim/contracts";
@@ -59,6 +60,8 @@ export function WikisSettings() {
     if (event.type === "wiki.updated") {
       setWikis((list) => list?.map((w) => (w.id === event.wiki.id ? event.wiki : w)) ?? list);
     }
+    // Apagada (aqui ou por outro Admin): sai da lista.
+    if (event.type === "wiki.left") setWikis((list) => list?.filter((w) => w.id !== event.wikiId) ?? list);
   });
 
   return (
@@ -97,6 +100,9 @@ export function WikisSettings() {
             {w.id === openId && <WikiSources wiki={w} onChanged={load} />}
             {w.id === openId && <WikiReach wiki={w} />}
             {w.id === openId && <WikiChannels wiki={w} />}
+            {w.id === openId && (
+              <DeleteWiki wiki={w} onDeleted={() => setWikis((list) => list?.filter((x) => x.id !== w.id) ?? list)} />
+            )}
           </li>
         ))}
       </ul>
@@ -110,7 +116,57 @@ export function WikisSettings() {
   );
 }
 
-const open = (s: WikiSyncDto | null) => s?.state === "queued" || s?.state === "running";
+/**
+ * "Apagar a Wiki" (história 25), com a confirmação à vista: a Wiki sai na hora de todos os Canais
+ * e Agentes, e uma Sincronização em curso é cancelada antes.
+ */
+function DeleteWiki({ wiki, onDeleted }: { wiki: WikiDto; onDeleted(): void }) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function remove() {
+    setBusy(true);
+    setError(null);
+    try {
+      await wikiApi.remove(wiki.id);
+      onDeleted();
+    } catch (err) {
+      setError(messageOf(err, "A Wiki não foi apagada. Tente de novo."));
+      setBusy(false);
+    }
+  }
+
+  if (!asking) {
+    return (
+      <button type="button" className="link" onClick={() => setAsking(true)}>
+        Apagar a Wiki
+      </button>
+    );
+  }
+  return (
+    <section className="warning" aria-label={`Apagar a Wiki ${wiki.name}`}>
+      <p>
+        Apagar a Wiki {wiki.name}? Ela sai na hora de todos os Canais e Agentes, com as Fontes e as versões.
+        {wikiSyncOpen(wiki.lastSync) && " A Sincronização em curso é cancelada."} As citações antigas ficam sem link.
+        Não dá para desfazer.
+      </p>
+      <div className="row">
+        <button type="button" className="danger" disabled={busy} onClick={remove}>
+          Apagar de vez
+        </button>
+        <button type="button" className="link" disabled={busy} onClick={() => setAsking(false)}>
+          Manter a Wiki
+        </button>
+      </div>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
 
 /**
  * O estado da Sincronização para gente ler: o passo em curso, o fim ou o motivo da falha, com
@@ -141,7 +197,7 @@ function WikiSync({ wiki }: { wiki: WikiDto }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sync = wiki.lastSync;
-  const running = open(sync);
+  const running = wikiSyncOpen(sync);
 
   async function start() {
     setBusy(true);
@@ -359,7 +415,7 @@ function WikiSources({ wiki, onChanged }: { wiki: WikiDto; onChanged(): void }) 
             {s.state === "active" && (
               <button
                 type="button"
-                disabled={busy || open(wiki.lastSync)}
+                disabled={busy || wikiSyncOpen(wiki.lastSync)}
                 aria-label={`Remover ${s.fileName}`}
                 onClick={() => remove(s)}
               >

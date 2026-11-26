@@ -22,7 +22,7 @@ import type { Env } from "./members";
 import { forgetAgent } from "./memory/items";
 import { claimHandle, handleBase, releaseHandle } from "./mention-handles";
 import { audienceOf } from "./participation";
-import { activeSkillsByAgent } from "./skills/tool";
+import { activeSkillsByAgent } from "./skills/skills";
 import type { ToolPort } from "./tools/port";
 import { leaveAgentWikis } from "./wiki/reach";
 import { agentWikisReadableBy } from "./wiki/wikis";
@@ -58,9 +58,24 @@ export function agentRoutes(deps: {
   events: EventHub;
 }) {
   const { db, clock, ledger } = deps;
-  const toolsOf = async (id: string) => (await deps.tools.grantsOf([id])).get(id) ?? [];
-  const reposOf = async (ids?: readonly string[]) => (await deps.github?.agentRepositories(ids)) ?? new Map();
   const routes = new Hono<Env>();
+
+  /**
+   * O que cada Agente (`ids`, ou todos) tem, como `memberId` vê: as Ferramentas, as Habilidades
+   * ativas, as Wikis ligadas que ele lê e os repositórios do GitHub. Lido em lote.
+   */
+  async function capabilitiesOf(memberId: string, ids?: readonly string[]) {
+    const grants = await deps.tools.grantsOf(ids);
+    const repos = (await deps.github?.agentRepositories(ids)) ?? new Map<string, string[] | null>();
+    const skills = await activeSkillsByAgent(db, ids);
+    const wikis = await agentWikisReadableBy(db, memberId, ids);
+    return (id: string) => ({
+      tools: grants.get(id) ?? [],
+      skills: skills.get(id) ?? [],
+      wikis: wikis.get(id) ?? [],
+      githubRepositories: repos.get(id) ?? null,
+    });
+  }
 
   routes.get("/agents", async (c) => {
     const me = c.get("member");
@@ -70,16 +85,7 @@ export function agentRoutes(deps: {
       .from(agents)
       .innerJoin(mentionHandles, eq(mentionHandles.agentId, agents.id))
       .orderBy(desc(agents.builtin), asc(agents.createdAt), asc(agents.name));
-    const grants = await deps.tools.grantsOf();
-    const repos = await reposOf();
-    const skills = await activeSkillsByAgent(db);
-    const wikis = await agentWikisReadableBy(db, me.id);
-    const of = (id: string) => ({
-      tools: grants.get(id) ?? [],
-      skills: skills.get(id) ?? [],
-      wikis: wikis.get(id) ?? [],
-      githubRepositories: repos.get(id) ?? null,
-    });
+    const of = await capabilitiesOf(me.id);
     if (!admin) return c.json(all.map((a) => toAgentDto(a, { admin, ...of(a.id) })));
     const spend = await keySpend(db, monthOf(clock.now()));
     return c.json(all.map((a) => toAgentDto(a, { admin, ...of(a.id), keySpendUsd: spend.get(a.id) ?? 0 })));
@@ -126,10 +132,8 @@ export function agentRoutes(deps: {
       return { ...agent, handle };
     });
     if (!created) return c.json({ error: "name_taken", message: `Já existe um Agente chamado ${name}.` }, 409);
-    return c.json(
-      toAgentDto(created, { admin: true, tools: [], skills: [], wikis: [], githubRepositories: null, keySpendUsd: 0 }),
-      201,
-    );
+    const of = await capabilitiesOf(c.get("member").id, [created.id]);
+    return c.json(toAgentDto(created, { admin: true, ...of(created.id), keySpendUsd: 0 }), 201);
   });
 
   /**
@@ -227,16 +231,8 @@ export function agentRoutes(deps: {
     const budgetChanged = change.monthlyBudgetUsd !== undefined && change.monthlyBudgetUsd !== current.monthlyBudgetUsd;
     const budget = budgetChanged ? await ledger.budgetChanged(updated.id) : await ledger.budgetNow(updated.id);
     if (budgetChanged) deps.onBudgetChanged?.();
-    return c.json(
-      toAgentDto(updated, {
-        admin: true,
-        tools: await toolsOf(updated.id),
-        skills: (await activeSkillsByAgent(db, [updated.id])).get(updated.id) ?? [],
-        wikis: (await agentWikisReadableBy(db, c.get("member").id, [updated.id])).get(updated.id) ?? [],
-        githubRepositories: (await reposOf([updated.id])).get(updated.id) ?? null,
-        keySpendUsd: budget.keySpendUsd,
-      }),
-    );
+    const of = await capabilitiesOf(c.get("member").id, [updated.id]);
+    return c.json(toAgentDto(updated, { admin: true, ...of(updated.id), keySpendUsd: budget.keySpendUsd }));
   });
 
   /**
