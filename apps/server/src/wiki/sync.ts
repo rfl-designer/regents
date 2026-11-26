@@ -11,9 +11,18 @@ import { articuladoraOf } from "../articuladora";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
 import type { EventHub } from "../events";
-import { RETRY_DELAY_MS } from "../executions";
 import type { KeyLedger } from "../key-budget";
-import { failureReason, isRetryable, type Spent, STALL_MS, streamCall } from "../model/call";
+import {
+  failureReason,
+  finalReason,
+  isRetryable,
+  MAX_ATTEMPTS,
+  RETRY_DELAY_MS,
+  type Spent,
+  STALL_MS,
+  STALL_TEXT,
+  streamCall,
+} from "../model/call";
 import type { ModelPort, Payer, TerminalModelEvent } from "../model/port";
 import { accountCallEnded, accountOrKey, keyCallEnded, type PayingAccounts } from "../payer";
 import type { Push } from "../push";
@@ -33,13 +42,10 @@ const { wikiSyncs, wikiSources, members } = schema;
 export const DEFAULT_SYNC_MAX_TURNS = 40;
 
 /** O motivo da vigia numa chamada da Sincronização. */
-const SYNC_STALL_REASON = "a Articuladora ficou 2 minutos sem responder";
+const SYNC_STALL_REASON = `a Articuladora ficou ${STALL_TEXT} sem responder`;
 
 /** O motivo da Sincronização que o servidor encontrou em curso ao subir. */
 const RESTART_REASON = "o servidor reiniciou";
-
-/** Cada chamada tem uma nova tentativa automática: a segunda falha encerra a Sincronização. */
-const MAX_ATTEMPTS = 2;
 
 /**
  * O que uma chamada pede à Articuladora: o texto (montado antes da 1ª tentativa; a nova tentativa
@@ -329,7 +335,7 @@ export function createWikiSyncs(deps: {
         if (!(await waited)) return false;
         continue;
       }
-      await fail(sync.id, reason === previous ? `${reason}, nas duas tentativas` : reason);
+      await fail(sync.id, finalReason(reason, reason === previous));
       return false;
     }
   }
