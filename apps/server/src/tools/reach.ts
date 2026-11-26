@@ -1,11 +1,11 @@
 import { isChannelKind } from "@shearim/contracts";
-import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import { asc, eq, inArray, or, sql } from "drizzle-orm";
 import { type Db, isUuid, schema } from "../db/client";
-import { isActive } from "../members";
 import { participantsOf } from "../participation";
+import { viewersOf } from "../viewers";
 import type { ToolRun } from "./port";
 
-const { channels, channelParticipants, members, messages } = schema;
+const { channels, channelParticipants } = schema;
 
 /** Uma conversa dentro do alcance, com o nome que o modelo vê ("#geral", "DM com Ana e Faro"). */
 export interface ReachableConversation {
@@ -35,33 +35,24 @@ export interface Reach {
  *   todos os participantes (pessoas, sem quem saiu) e o autor participam. Numa DM só entre o
  *   autor e o Agente, isso é tudo o que o autor vê.
  *
- * Os Agentes não contam: participar de uma conversa não abre o alcance a ela.
+ * Os Agentes não contam: participar de uma conversa não abre o alcance a ela. Quem vê a conversa
+ * vem de `viewersOf`, a mesma peça do alcance da Wiki.
  */
 export async function reachOf(db: Db, run: Pick<ToolRun, "channelId" | "originMessageId">): Promise<Reach> {
-  const [here] = await db.select({ kind: channels.kind }).from(channels).where(eq(channels.id, run.channelId));
-  const [origin] = await db
-    .select({ author: messages.authorMemberId })
-    .from(messages)
-    .where(eq(messages.id, run.originMessageId));
-  if (!here || !origin) return reachFrom([]);
+  const viewers = await viewersOf(db, run);
+  if (!viewers) return reachFrom([]);
 
   const publicOnly = eq(channels.kind, "public");
   let where = publicOnly;
-  if (here.kind !== "public") {
-    const people = await db
-      .select({ id: channelParticipants.memberId })
-      .from(channelParticipants)
-      .innerJoin(members, eq(members.id, channelParticipants.memberId))
-      .where(and(eq(channelParticipants.channelId, run.channelId), isActive));
-    const viewers = [...new Set([...people.map((p) => p.id), ...(origin.author ? [origin.author] : [])])];
+  if (viewers !== "everyone" && viewers.length) {
     // As conversas em que todos os que veem esta participam.
     const shared = db
       .select({ id: channelParticipants.channelId })
       .from(channelParticipants)
-      .where(inArray(channelParticipants.memberId, viewers))
+      .where(inArray(channelParticipants.memberId, [...viewers]))
       .groupBy(channelParticipants.channelId)
       .having(sql`count(distinct ${channelParticipants.memberId}) = ${viewers.length}`);
-    where = viewers.length ? or(publicOnly, inArray(channels.id, shared))! : publicOnly;
+    where = or(publicOnly, inArray(channels.id, shared))!;
   }
   const rows = await db
     .select({ id: channels.id, kind: channels.kind, name: channels.name })

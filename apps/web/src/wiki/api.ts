@@ -1,8 +1,10 @@
 import type {
   CreateWikiInput,
+  SetWikiReachInput,
   WikiChannelDto,
   WikiDto,
   WikiPageViewDto,
+  WikiReachDto,
   WikiSourceDto,
   WikiSyncDto,
   WikiVersionDto,
@@ -29,6 +31,11 @@ export const wikiApi = {
   /** Liga ou desliga a Wiki de um Canal; devolve a lista nova. */
   setChannel: (wikiId: string, channelId: string, linked: boolean) =>
     call<WikiChannelDto[]>(`/api/wikis/${wikiId}/channels/${channelId}`, { method: linked ? "PUT" : "DELETE" }),
+  /** O alcance: pública, ou restrita à lista (os Membros ativos, com a marca). */
+  reach: (wikiId: string) => call<WikiReachDto>(`/api/wikis/${wikiId}/reach`),
+  /** Troca o alcance e a lista inteira; devolve a tela nova. */
+  setReach: (wikiId: string, input: SetWikiReachInput) =>
+    call<WikiReachDto>(`/api/wikis/${wikiId}/reach`, json("PUT", input)),
   /** As Wikis que o Membro lê (a barra lateral): o servidor decide pelo alcance. */
   list: () => call<WikiDto[]>("/api/wikis"),
   /** Uma página da versão atual, para ler. */

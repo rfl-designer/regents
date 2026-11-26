@@ -3,6 +3,7 @@ import {
   type WikiChannelDto,
   type WikiDto,
   type WikiPageRefDto,
+  type WikiReachDto,
   type WikiSourceDto,
   type WikiSyncDto,
   type WikiVersionDto,
@@ -87,12 +88,13 @@ export function WikisSettings() {
                 aria-expanded={w.id === openId}
                 onClick={() => setOpenId(w.id === openId ? null : w.id)}
               >
-                {w.id === openId ? "Fechar" : "Fontes e Canais"}
+                {w.id === openId ? "Fechar" : "Fontes, alcance e Canais"}
               </button>
             </div>
             <p className="hint">{w.description}</p>
             <WikiSync wiki={w} />
             {w.id === openId && <WikiSources wiki={w} onChanged={load} />}
+            {w.id === openId && <WikiReach wiki={w} />}
             {w.id === openId && <WikiChannels wiki={w} />}
           </li>
         ))}
@@ -271,6 +273,90 @@ function WikiSources({ wiki, onChanged }: { wiki: WikiDto; onChanged(): void }) 
         </span>
       )}
     </section>
+  );
+}
+
+/**
+ * O alcance da Wiki (#83): pública (todo Membro) ou restrita a uma lista de Membros. A restrita só
+ * é lida numa resposta em que o autor e todos os que veem a conversa estão na lista, e só eles a
+ * veem na barra lateral. O Admin a mantém aqui mesmo fora da lista.
+ */
+function WikiReach({ wiki }: { wiki: WikiDto }) {
+  const [reach, setReach] = useState<WikiReachDto | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    wikiApi.reach(wiki.id).then(setReach, () => setError("Não foi possível carregar o alcance."));
+  }, [wiki.id]);
+
+  async function save(next: WikiReachDto) {
+    setBusy(true);
+    setError(null);
+    try {
+      setReach(
+        await wikiApi.setReach(wiki.id, {
+          scope: next.scope,
+          memberIds: next.members.filter((m) => m.inList).map((m) => m.id),
+        }),
+      );
+    } catch (err) {
+      setError(messageOf(err, "O alcance da Wiki não mudou. Tente de novo."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const toggle = (id: string) =>
+    reach && save({ ...reach, members: reach.members.map((m) => (m.id === id ? { ...m, inList: !m.inList } : m)) });
+
+  return (
+    <fieldset aria-label={`Alcance de ${wiki.name}`}>
+      <legend>Alcance</legend>
+      {reach === null && !error && <p className="hint">Carregando…</p>}
+      {reach && (
+        <>
+          <label className="hint">
+            <input
+              type="radio"
+              name={`alcance-${wiki.id}`}
+              checked={reach.scope === "public"}
+              disabled={busy}
+              onChange={() => save({ ...reach, scope: "public" })}
+            />{" "}
+            Pública: todo Membro
+          </label>
+          <label className="hint">
+            <input
+              type="radio"
+              name={`alcance-${wiki.id}`}
+              checked={reach.scope === "restricted"}
+              disabled={busy}
+              onChange={() => save({ ...reach, scope: "restricted" })}
+            />{" "}
+            Restrita a uma lista de Membros
+          </label>
+          {reach.scope === "restricted" && (
+            <>
+              <p className="hint">
+                Só quem está na lista a vê na barra lateral. Um Agente só a lê numa resposta em que quem escreveu e
+                todos os que veem a conversa estão na lista; num Canal público, nunca.
+              </p>
+              {reach.members.map((m) => (
+                <label key={m.id} className="hint">
+                  <input type="checkbox" checked={m.inList} disabled={busy} onChange={() => toggle(m.id)} /> {m.name}
+                </label>
+              ))}
+            </>
+          )}
+        </>
+      )}
+      {error && (
+        <span className="error" role="alert">
+          {error}
+        </span>
+      )}
+    </fieldset>
   );
 }
 

@@ -296,7 +296,7 @@ export function createApp(deps: AppDeps) {
   app.route("/api", skillRoutes({ db, clock }));
   app.route("/api", githubRoutes({ db, github }));
   app.route("/api", installation.routes);
-  app.route("/api", wikiRoutes({ db, clock, syncs, sourceMaxBytes: deps.wiki?.sourceMaxBytes }));
+  app.route("/api", wikiRoutes({ db, clock, events, syncs, sourceMaxBytes: deps.wiki?.sourceMaxBytes }));
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
 
