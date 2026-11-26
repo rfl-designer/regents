@@ -44,7 +44,7 @@ export async function migrateSafely(deps: CommandDeps): Promise<void> {
   if (state.kind === "behind") {
     let saved: { file: string };
     try {
-      saved = await dumpNow(deps, "shearim-pre-migracao");
+      saved = await dumpNow(deps, "regents-pre-migracao");
     } catch (err) {
       throw new DumpBeforeMigrationError(
         `não consegui guardar o dump de antes da migração em ${deps.backupsDir} (${(err as Error).message}). ` +
@@ -61,7 +61,10 @@ export class RestoreError extends Error {
   override name = "RestoreError";
 }
 
-/** O arquivo como o Admin escreveu, ou pelo nome dentro de `./backups` (`restore shearim-...dump`). */
+/**
+ * O arquivo como o Admin escreveu, ou pelo nome dentro de `./backups` (`restore regents-...dump`).
+ * Vale também um `shearim-*` de antes do nome Regents: o nome do arquivo não é conferido.
+ */
 export function findBackup(arg: string, backupsDir: string): string | undefined {
   for (const candidate of [resolve(arg), join(backupsDir, basename(arg))]) {
     if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
@@ -82,7 +85,7 @@ export async function restoreFrom(deps: CommandDeps, arg: string, opts: { withCo
   let copy: string | undefined;
   if (opts.withCopy && state.kind !== "empty") {
     try {
-      copy = (await dumpNow(deps, "shearim-pre-restauracao")).file;
+      copy = (await dumpNow(deps, "regents-pre-restauracao")).file;
       deps.log(`cópia do banco de antes da restauração em ${copy}`);
     } catch (err) {
       throw new RestoreError(

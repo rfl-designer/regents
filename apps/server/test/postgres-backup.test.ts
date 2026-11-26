@@ -103,6 +103,7 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
       await t.as(juliana).post("/api/channels", { name: "vendas", kind: "public" })
     ).json();
     await t.as(juliana).post(`/api/channels/${channel.id}/messages`, { body: "antes do backup" });
+    // Um backup com o nome da versão Shearim: a restauração aceita os dois prefixos.
     const backup = await dumpNow({ conn, clock: systemClock, backupsDir, log: () => {} }, "shearim");
     await t.as(juliana).post(`/api/channels/${channel.id}/messages`, { body: "depois do backup" });
     await t.shutdown();
@@ -113,7 +114,7 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
     expect(run.stderr).toBe("");
     expect(run.code).toBe(0);
     expect(backup.file).toEndWith(".dump");
-    expect(readdirSync(backupsDir).filter((f) => f.startsWith("shearim-pre-restauracao-"))).toHaveLength(1);
+    expect(readdirSync(backupsDir).filter((f) => f.startsWith("regents-pre-restauracao-"))).toHaveLength(1);
     const again = connect({ DATABASE_URL: url, pgliteDir: "" });
     onCleanup(() => again.close());
     const t2 = await testApp({ db: again.db });
@@ -121,7 +122,7 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
     expect(messages.map((m) => m.body)).toEqual(["antes do backup"]);
     // Em dia com as migrações: subir de novo não pede dump nem migração.
     expect((await runApp(["migrate"], env)).code).toBe(0);
-    expect(readdirSync(backupsDir).filter((f) => f.startsWith("shearim-pre-migracao-"))).toEqual([]);
+    expect(readdirSync(backupsDir).filter((f) => f.startsWith("regents-pre-migracao-"))).toEqual([]);
   }, 120_000);
 
   test("arquivo que não é dump: `restore --sem-copia` sai com erro e não apaga o banco", async () => {
