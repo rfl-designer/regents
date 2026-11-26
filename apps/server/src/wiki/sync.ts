@@ -491,7 +491,7 @@ export function createWikiSyncs(deps: {
         .where(and(eq(wikiSyncs.wikiId, wikiId), inArray(wikiSyncs.state, [...WIKI_SYNC_OPEN_STATES])))
         .returning({ id: wikiSyncs.id });
       if (!canceled) return undefined;
-      running.get(canceled.id)?.controller.abort("cancelled");
+      running.get(canceled.id)?.controller.abort("canceled");
       await publish(canceled.id);
       return syncDto(db, canceled.id);
     },
