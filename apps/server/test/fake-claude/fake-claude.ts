@@ -333,7 +333,11 @@ async function mcpClient() {
   );
   const { tools } = await client.listTools();
   mcp = { name: server.name, client, tools: tools.map((t) => t.name) };
-  logMcp({ listed: mcp.tools });
+  const info = client.getServerVersion();
+  logMcp({
+    listed: mcp.tools,
+    ...(info ? { server: { name: info.name, ...(info.title ? { title: info.title } : {}) } } : {}),
+  });
   return mcp;
 }
 

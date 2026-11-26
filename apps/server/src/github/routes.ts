@@ -101,7 +101,7 @@ export function githubRoutes(deps: { db: Db; github: GitHub }) {
       return c.json({ error: "invalid_input", message: "O nome da organização não é válido." }, 400);
     const state = await github.begin({ origin });
     const manifest = {
-      name: `Shearim ${new URL(origin).hostname.split(".")[0]}`.slice(0, 34),
+      name: `Regents ${new URL(origin).hostname.split(".")[0]}`.slice(0, 34),
       url: origin,
       public: false,
       redirect_url: `${origin}/api/github/manifest/callback`,
