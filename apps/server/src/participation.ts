@@ -1,9 +1,9 @@
 import type { ConversationKind, ParticipantDto } from "@shearim/contracts";
-import { and, asc, eq, inArray } from "drizzle-orm";
-import { type Db, schema } from "./db/client";
+import { type AnyColumn, and, asc, eq, inArray, or, type SQL } from "drizzle-orm";
+import { type Db, schema, type Tx } from "./db/client";
 import type { Audience } from "./events";
 
-const { channelAgents, channelParticipants, members, agents } = schema;
+const { channelAgents, channelParticipants, members, agents, channels } = schema;
 
 /**
  * O que a participação precisa saber de uma conversa: o id e o tipo.
@@ -72,6 +72,24 @@ export async function isParticipant(db: Db, conversationId: string, memberId: st
  */
 export async function canSee(db: Db, memberId: string, conversation: Conversation) {
   return conversation.kind === "public" || isParticipant(db, conversation.id, memberId);
+}
+
+/**
+ * A condição "o Membro vê a conversa" sobre uma coluna com o id dela, para filtrar uma lista em
+ * SQL: a mesma regra de `canSee` (o Canal público, ou a conversa fechada de que ele participa).
+ */
+export function seenBy(db: Db | Tx, memberId: string, conversationId: AnyColumn): SQL {
+  const mine = db
+    .select({ id: channelParticipants.channelId })
+    .from(channelParticipants)
+    .where(eq(channelParticipants.memberId, memberId));
+  return inArray(
+    conversationId,
+    db
+      .select({ id: channels.id })
+      .from(channels)
+      .where(or(eq(channels.kind, "public"), inArray(channels.id, mine))),
+  );
 }
 
 /** Quem recebe os eventos da conversa: a mesma regra de `canSee`, do lado do `EventHub`. */

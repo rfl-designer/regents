@@ -13,7 +13,7 @@ import { agentToolsText } from "./agent-tools";
 import { api, messageOf } from "./api";
 import { dateTimeShort } from "./format";
 import { INCIDENT_TEXT, usd } from "./KeyBanners";
-import { useServerEvents } from "./live";
+import { useDropDeletedAgents, useServerEvents } from "./live";
 
 const MODEL_LABEL: Record<AgentModel, string> = {
   "claude-opus-5-5": "Claude Opus 5.5",
@@ -112,6 +112,7 @@ export function AgentsSettings() {
   useEffect(() => {
     api.agents().then(setAgents, () => setLoadError(true));
   }, []);
+  useDropDeletedAgents(setAgents);
   // O gasto na Chave anda a cada resposta que ela paga.
   useServerEvents((event) => {
     if (event.type !== "agent_budget.updated") return;
@@ -144,8 +145,8 @@ export function AgentsSettings() {
 }
 
 /**
- * Um Agente da lista, com "Editar". A Articuladora (`builtin`) muda só o nome, a foto e o modelo:
- * a descrição e as instruções dela são do Shearim.
+ * Um Agente da lista, com "Editar". Da Articuladora (`builtin`), a descrição e as instruções são
+ * do Shearim; o resto, inclusive a Memória ligada, o Admin muda.
  */
 function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: AgentDto): void }) {
   const [editing, setEditing] = useState(false);
@@ -164,6 +165,7 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
         </div>
         <p className="body">{a.description || "Sem descrição."}</p>
         <p className="hint">{agentToolsText(a)}</p>
+        <p className="hint">{a.memoryEnabled ? "Memória ligada" : "Memória desligada: não guarda nem lê"}</p>
         <p className={a.overBudget ? "error" : "hint"}>
           Gasto na Chave este mês: {usd.format(a.keySpendUsd ?? 0)}
           {a.monthlyBudgetUsd === null || a.monthlyBudgetUsd === undefined
@@ -202,6 +204,7 @@ function EditAgent({ agent, onSaved }: { agent: AgentDto; onSaved(agent: AgentDt
   const [instructions, setInstructions] = useState(agent.instructions ?? "");
   const [model, setModel] = useState<AgentModel>(agent.model);
   const [budget, setBudget] = useState(budgetField(agent.monthlyBudgetUsd));
+  const [memoryEnabled, setMemoryEnabled] = useState(agent.memoryEnabled);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -214,7 +217,7 @@ function EditAgent({ agent, onSaved }: { agent: AgentDto; onSaved(agent: AgentDt
     setError(null);
     try {
       const own = agent.builtin ? {} : { description, instructions };
-      onSaved(await api.updateAgent(agent.id, { name, photo, model, monthlyBudgetUsd, ...own }));
+      onSaved(await api.updateAgent(agent.id, { name, photo, model, monthlyBudgetUsd, memoryEnabled, ...own }));
     } catch (err) {
       setError(messageOf(err, "O Agente não foi salvo. Tente de novo."));
     } finally {
@@ -259,6 +262,15 @@ function EditAgent({ agent, onSaved }: { agent: AgentDto; onSaved(agent: AgentDt
         </select>
       </label>
       <BudgetField value={budget} onChange={setBudget} />
+      <label className="hint">
+        <input type="checkbox" checked={memoryEnabled} onChange={(e) => setMemoryEnabled(e.target.checked)} /> Memória
+        ligada
+        <br />
+        <small>
+          Desligada, o Agente não guarda nem lê a Memória. O que ele já guardou continua na conversa para os outros
+          Agentes.
+        </small>
+      </label>
       <div className="row">
         <button type="submit" disabled={busy || !name.trim()}>
           Salvar

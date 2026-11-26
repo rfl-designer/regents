@@ -11,6 +11,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { AgentBudgetDto, AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import { keyCoverage } from "../src/key-budget";
 import { scriptedBrain } from "./fakes/scripted-brain";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
 
@@ -168,7 +169,17 @@ describe("estouro de orçamento", () => {
       const { faro, geral } = await workspace(t, { orcamento: 3 });
       const daJuliana = await t.socket(juliana, "aba da Juliana (Admin)");
       const doBruno = await t.socket(bruno, "aba do Bruno");
-      const orcamento = async () => (await daJuliana.next("agent_budget.updated", ESPERA)).budget;
+      // A extração da Memória também passa pela Chave (de graça, no falso): o orçamento que ela
+      // anuncia é o mesmo, e aqui conta o próximo que mudou.
+      let visto: AgentBudgetDto | undefined;
+      const orcamento = async () => {
+        for (;;) {
+          const { budget } = await daJuliana.next("agent_budget.updated", ESPERA);
+          if (Bun.deepEquals(budget, visto)) continue;
+          visto = budget;
+          return budget;
+        }
+      };
       t.anthropic.reply({ text: "Um.", usage: DOIS_DOLARES }, { text: "Dois.", usage: DOIS_DOLARES });
 
       expect((await fim(doBruno, await enviar(t, geral.id, "@Faro um"))).state).toBe("done");
@@ -360,9 +371,8 @@ describe("a fila decide de novo quando o orçamento muda", () => {
 
       // Até o fim de novembro, continua na fila.
       t.clock.set("2026-11-30T23:59:00.000Z");
-      expect((await (await t.as(juliana).get(`/api/channels/${geral.id}/executions`)).json())[0]).toMatchObject({
-        held: true,
-      });
+      const abertas: ExecutionDto[] = await (await t.as(juliana).get(`/api/channels/${geral.id}/executions`)).json();
+      expect(abertas.find((e) => e.originMessageId === origem.id)).toMatchObject({ held: true });
       t.clock.advance(60_000);
 
       expect((await respostaA(t, geral.id, origem)).body).toBe("Mês novo.");
@@ -446,4 +456,17 @@ describe("o gasto na Chave conta o que a API informou", () => {
     },
     LONGO,
   );
+});
+
+describe("o que a Chave cobre", () => {
+  test("o Agente apagado com o orçamento estourado não conta: a Chave volta a cobrir todos", async () => {
+    const t = await testApp();
+    // Teto zero: estourado desde o começo do mês.
+    const { faro } = await workspace(t, { orcamento: 0 });
+    expect(await keyCoverage(t.db, t.clock.now())).toBe("some");
+
+    expect((await t.as(juliana).delete(`/api/agents/${faro.id}`)).status).toBe(204);
+
+    expect(await keyCoverage(t.db, t.clock.now())).toBe("all");
+  });
 });

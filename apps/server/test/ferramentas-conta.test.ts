@@ -40,6 +40,9 @@ async function workspace(t: TestApp, opts: { ferramenta?: boolean } = {}) {
   const [geral] = (await (await t.as(juliana).get("/api/channels")).json()) as ChannelDto[];
   await t.as(juliana).post(`/api/channels/${geral!.id}/agents`, { agentId: faro.id });
   await t.linkAccount(juliana);
+  // Com a Memória ligada, o Faro teria "buscar na Memória" sem concessão (#69): desligada, o pedido
+  // leva só as Ferramentas concedidas, que são o assunto aqui.
+  await t.as(juliana).patch(`/api/agents/${faro.id}`, { memoryEnabled: false });
   return { faro, geral: geral! };
 }
 

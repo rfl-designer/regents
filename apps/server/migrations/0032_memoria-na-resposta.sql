@@ -1,0 +1,1 @@
+ALTER TABLE "executions" ADD COLUMN "memory_item_ids" uuid[] DEFAULT '{}'::uuid[] NOT NULL;

@@ -49,7 +49,7 @@ const when = (at: Date) => `${at.toISOString().slice(0, 16).replace("T", " ")} U
 const author = (m: MessageLine) => (m.agentName ? `${m.agentName} (Agente)` : `${m.memberName ?? "Alguém"} (pessoa)`);
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
 /** `%` e `_` do texto pedido valem como eles mesmos no `ilike`. */
-const likeEscape = (text: string) => text.replace(/[\\%_]/g, (c) => `\\${c}`);
+export const likeEscape = (text: string) => text.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 /**
  * Onde a Ferramenta busca ou lê, para o rótulo do Andamento ("em #produto", "na DM com Ana, Bruno"):

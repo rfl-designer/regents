@@ -409,6 +409,11 @@ export interface AgentDto {
    * "acessa CRM com a credencial do Workspace".
    */
   reach: string[];
+  /**
+   * A Memória do Agente ligada, para todo Membro (spec #60, #67). Vem ligada, inclusive na
+   * Articuladora; só o Admin muda. Desligada, ele não guarda nem lê Memória.
+   */
+  memoryEnabled: boolean;
   instructions?: string;
   /** Só para o Admin: os repositórios do GitHub a que o Agente está restrito (nulo: todos os da instalação). */
   githubRepositories?: string[] | null;
@@ -439,10 +444,13 @@ export interface CreateAgentInput {
 
 /**
  * Corpo de `PATCH /api/agents/:id` (só Admin). Campo ausente fica. Da Articuladora (`builtin`),
- * só `name`, `photo` e `model`: `description` e `instructions` dão `403 builtin_locked`.
- * Trocar o nome troca o identificador de Menção (`handle`).
+ * só `name`, `photo`, `model`, `monthlyBudgetUsd` e `memoryEnabled`: `description` e
+ * `instructions` dão `403 builtin_locked`. Trocar o nome troca o identificador de Menção (`handle`).
  */
-export type UpdateAgentInput = Partial<CreateAgentInput>;
+export type UpdateAgentInput = Partial<CreateAgentInput> & {
+  /** Liga ou desliga a Memória do Agente (#67). */
+  memoryEnabled?: boolean;
+};
 
 // ---------- GitHub, o Conector embutido (ADR 0010) ----------
 
@@ -805,9 +813,10 @@ export const OPEN_STATES: readonly ExecutionState[] = ["queued", "running", "ret
 /**
  * O passo de uma execução em andamento. `writing` é a bolha "escrevendo"; `deciding` é o
  * roteamento da Articuladora ("Sophya decidindo quem responde"); `tool` é uma Ferramenta rodando
- * (o rótulo dela, "listando os Agentes", está no último item de `ExecutionDto.tools`).
+ * (o rótulo dela, "listando os Agentes", está no último item de `ExecutionDto.tools`);
+ * `remembering` é a extração da Memória lendo a troca (não aparece no Andamento).
  */
-export type ExecutionStep = "deciding" | "writing" | "tool";
+export type ExecutionStep = "deciding" | "writing" | "tool" | "remembering";
 
 /**
  * O Andamento de uma execução, como todos que veem a conversa o veem.
@@ -816,10 +825,12 @@ export type ExecutionStep = "deciding" | "writing" | "tool";
  */
 /**
  * Por que a execução existe: `mention` (Menção), `dm` (o Agente de uma DM com Agente), `route` (o
- * roteamento da Articuladora: "Sophya decidindo quem responde"), `reply` (ela responde) ou
- * `delegated` (um Agente a quem ela passou a mensagem).
+ * roteamento da Articuladora: "Sophya decidindo quem responde"), `reply` (ela responde),
+ * `delegated` (um Agente a quem ela passou a mensagem) ou `memory` (a extração da Memória, depois
+ * de entregue a resposta do Agente: ADR 0013). A extração só aparece no Andamento quando não
+ * guardou (`failed`, `not_acting`); o que ela guardou chega como `memory.updated`.
  */
-export type ExecutionKind = "mention" | "dm" | "route" | "reply" | "delegated";
+export type ExecutionKind = "mention" | "dm" | "route" | "reply" | "delegated" | "memory";
 
 export interface ExecutionDto {
   id: string;
@@ -846,7 +857,9 @@ export interface ExecutionDto {
   /**
    * Motivo da falha (em `retrying` e `failed`), de "Agentes não agem" ou do cancelamento que não foi
    * de quem escreveu (`cancelled`, ex. "quem escreveu saiu do Workspace"), em pt-BR, para completar
-   * a frase "Faro não respondeu: …". Nulo nos outros estados e no cancelamento por quem escreveu.
+   * a frase "Faro não respondeu: …". Na extração da Memória (`memory`) em `done`, o que ela
+   * devolveu e não foi guardado ("não guardou na Memória: …"), nulo quando guardou tudo. Nulo nos
+   * outros estados e no cancelamento por quem escreveu.
    * Quando o motivo é estado da Conta do autor (ex. "a sua Conta do Claude não pode ser usada
    * agora"), só a cópia do autor o traz; os outros veem um motivo que não fala da Conta.
    */
@@ -881,6 +894,46 @@ export interface ExecutionDto {
    * Agente responde com o que tem, numa última chamada sem Ferramentas (#53).
    */
   toolLimit: boolean;
+}
+
+// ---------- Memória (spec #60) ----------
+
+/**
+ * O escopo de um item de Memória: `conversation` (a Memória da Conversa: os fatos e as decisões
+ * de um Canal ou DM, com as Threads), `agent` (a Memória do Agente) ou `workspace`.
+ */
+export type MemoryScope = "workspace" | "conversation" | "agent";
+
+/**
+ * Um item de Memória, como quem vê a conversa de origem o vê (ADR 0012). Item de
+ * `GET /api/conversations/:id/memory`, de `GET /api/agents/:id/memory` e de `memory.updated`.
+ */
+export interface MemoryItemDto {
+  id: string;
+  scope: MemoryScope;
+  /** A conversa de origem. Nula só no item que um Admin escreveu direto na Memória do Workspace. */
+  conversationId: string | null;
+  /**
+   * A mensagem de origem: a mensagem de pessoa da troca que gerou o item, com a Thread dela e um
+   * trecho, para a lista mostrar de onde veio e saltar até ela. Nula como `conversationId`.
+   */
+  origin: { messageId: string; threadRootId: string | null; author: string; excerpt: string } | null;
+  /**
+   * Na Memória do Agente (`scope: "agent"`): de quem é a lição (o Andamento mostra "guardou na
+   * Memória de Faro: …"). Nulo nos outros escopos.
+   */
+  agent: { id: string; name: string } | null;
+  text: string;
+  /**
+   * Quem guardou: a extração (o Shearim, ao fim da resposta de um Agente: o Andamento da mensagem
+   * de origem mostra "guardou na Memória: …"), um Membro ou um Admin.
+   */
+  createdBy: "extraction" | "member" | "admin";
+  /** `archived`: desfeito ou substituído por `replacedById`. Nada é apagado. */
+  state: "active" | "archived";
+  replacedById: string | null;
+  createdAt: string;
+  archivedAt: string | null;
 }
 
 /**
@@ -1180,6 +1233,17 @@ export type ServerEvent =
    * para quem vê a conversa. Quando termina, a resposta chega antes como `message.created`.
    */
   | { type: "execution.updated"; execution: ExecutionDto }
+  /**
+   * Um item de Memória foi criado ou mudou (arquivado, substituído), para quem vê a conversa de
+   * origem (ADR 0012). O cliente trata como "insere ou troca pelo `id`".
+   */
+  | { type: "memory.updated"; item: MemoryItemDto }
+  /**
+   * O Admin apagou um Agente (#65), para todos: ele sai das listas e dos Canais, e a Memória do
+   * Agente dele sai junto (o cliente tira os itens com `agent.id` igual). A Memória da Conversa que
+   * ele gerou e as mensagens dele ficam.
+   */
+  | { type: "agent.deleted"; agentId: string }
   /** A Articuladora deu o Desfecho de uma mensagem, para quem vê a conversa. */
   | { type: "outcome.created"; outcome: OutcomeDto }
   /** Um Pedido de aprovação novo, ou que mudou de estado: para quem vê a conversa. */

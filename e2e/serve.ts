@@ -27,6 +27,13 @@
  * O roteamento da Articuladora (o pedido com `output_config`) nunca falha: uma mensagem com
  * `[delegar]` é passada aos dois primeiros Agentes do Canal; as outras recebem o Desfecho "nenhum".
  *
+ * A extração da Memória (reconhecida pelo schema, `operacoes`) não guarda nada, a não ser que a
+ * mensagem de pessoa que o Agente respondeu traga `[lembrar: <texto>]`: aí ela guarda o texto na
+ * Memória da Conversa. Com `[substituir: <trecho> => <texto>]`, ela substitui o item da Memória que
+ * entrou na resposta e contém o trecho. Com `[lição: <texto>]`, guarda o texto na Memória do Agente
+ * que respondeu (#65). Com `[sem citar: <texto>]`, devolve também o texto sem citar mensagem
+ * nenhuma, que o Shearim descarta e mostra no Andamento.
+ *
  * O GitHub é o falso dos testes do servidor (`test/fakes/github-api.ts`), com `time/site` e
  * `time/infra` na conta do time: criar o App e instalá-lo passam por ele (o "navegador do Admin"
  * pode ser um `fetch` que segue os redirecionamentos à mão).
@@ -71,6 +78,7 @@ writeFileSync(`.e2e/crm-${process.env.PORT}.json`, JSON.stringify({ url: crm.url
 const delayMs = Number(process.env.FAKE_MESSAGES_API_DELAY_MS ?? 400);
 const failures = new Map<string, number>();
 const anthropic = await startFakeMessagesApi({
+  defaultExtraction: lembrar,
   defaultReply: (req) => {
     if (req.body.output_config) return desfecho(req);
     const [resultado] = toolResults(req.body);
@@ -108,6 +116,35 @@ const anthropic = await startFakeMessagesApi({
     return { text: "Oi! Tudo certo por aqui: o prazo é sexta-feira.", delayMs };
   },
 });
+/**
+ * A extração da Memória: guarda o `[lembrar: …]` da última mensagem de pessoa da troca (a que o
+ * Agente respondeu). A entrada traz as mensagens de pessoa, uma por parágrafo, antes da resposta.
+ * A citação dessa mensagem, a Messages API falsa põe sozinha (`memory-citation.ts`).
+ */
+function lembrar(req: RecordedRequest): FakeReply {
+  const pessoas = lastUserText(req.body).split("## A resposta de")[0] ?? "";
+  const ultima = pessoas.trim().split("\n\n").at(-1) ?? "";
+  const texto = ultima.match(/\[lembrar: ([^\]]+)\]/)?.[1];
+  // `[lição: …]`: uma correção ao Agente que respondeu, na Memória do Agente (#65).
+  const licao = ultima.match(/\[lição: ([^\]]+)\]/)?.[1];
+  if (licao) return { json: { operacoes: [{ acao: "criar", escopo: "agente", texto: licao }] }, delayMs: 0 };
+  const troca = ultima.match(/\[substituir: ([^\]]+?) => ([^\]]+)\]/);
+  if (troca) {
+    // A Memória que entrou na resposta vem como "- [id] texto", antes das mensagens.
+    const memoria = lastUserText(req.body).split("## Mensagens de pessoa")[0] ?? "";
+    const linha = memoria.split("\n").find((l) => l.includes(troca[1]!));
+    const id = linha?.match(/^- \[([^\]]+)\]/)?.[1];
+    return { json: { operacoes: id ? [{ acao: "substituir", id, texto: troca[2] }] : [] }, delayMs: 0 };
+  }
+  // `[sem citar: …]`: uma operação sem citação, que o Shearim descarta (e mostra no Andamento).
+  const semCitar = ultima.match(/\[sem citar: ([^\]]+)\]/)?.[1];
+  const operacoes = [
+    ...(texto ? [{ acao: "criar", texto }] : []),
+    ...(semCitar ? [{ acao: "criar", texto: semCitar, mensagem: "" }] : []),
+  ];
+  return { json: { operacoes }, delayMs: 0 };
+}
+
 /** O Desfecho do roteamento, pelo marcador no texto da mensagem e pelos Agentes do Canal no `system`. */
 function desfecho(req: RecordedRequest): FakeReply {
   const system = typeof req.body.system === "string" ? req.body.system : "";

@@ -27,6 +27,7 @@ import type {
   MeDto,
   MemberRole,
   MemberSummaryDto,
+  MemoryItemDto,
   MessageDto,
   MyConnectorDto,
   MyJoinRequestDto,
@@ -163,11 +164,28 @@ export const api = {
       `/api/conversations/${conversationId}/approvals/${approvalId}/reject`,
       json("POST", reason.trim() ? { reason } : {}),
     ),
+  /** A Memória da Conversa (com as Threads): ativos e arquivados, do mais novo ao mais velho. */
+  memory: (conversationId: string) => call<MemoryItemDto[]>(`/api/conversations/${conversationId}/memory`),
+  /** Desfaz um item da Memória (qualquer escopo): ele fica arquivado. Devolve o item. */
+  undoMemory: (itemId: string) => call<MemoryItemDto>(`/api/memory/${itemId}/undo`, { method: "POST" }),
+  /** Corrige um item da Memória: devolve a versão nova (a anterior fica arquivada e chega por evento). */
+  correctMemory: (itemId: string, text: string) =>
+    call<MemoryItemDto>(`/api/memory/${itemId}/correct`, json("POST", { text })),
+  /** Só o Admin: promove um item de Canal público ao Workspace. Devolve a versão do Workspace. */
+  promoteMemory: (itemId: string) => call<MemoryItemDto>(`/api/memory/${itemId}/promote`, { method: "POST" }),
+  /** A Memória do Workspace (todo Membro vê): ativos e arquivados, do mais novo ao mais velho. */
+  workspaceMemory: () => call<MemoryItemDto[]>("/api/workspace-memory"),
+  /** Só o Admin: escreve um item direto na Memória do Workspace. */
+  writeWorkspaceMemory: (text: string) => call<MemoryItemDto>("/api/workspace-memory", json("POST", { text })),
   /** Os Desfechos da Articuladora numa conversa (uma DM não tem). */
   outcomes: (conversationId: string) => call<OutcomeDto[]>(`/api/conversations/${conversationId}/outcomes`),
   updateAgent: (agentId: string, input: UpdateAgentInput) =>
     call<AgentDto>(`/api/agents/${agentId}`, json("PATCH", input)),
   agents: () => call<AgentDto[]>("/api/agents"),
+  /** A Memória do Agente: só os itens cuja conversa de origem quem olha vê (#65). */
+  agentMemory: (agentId: string) => call<MemoryItemDto[]>(`/api/agents/${agentId}/memory`),
+  /** Só o Admin: a Memória do Agente sai junto; as mensagens e a Memória da Conversa ficam. */
+  deleteAgent: (agentId: string) => call<void>(`/api/agents/${agentId}`, { method: "DELETE" }),
   agentTools: (agentId: string) => call<AgentToolDto[]>(`/api/agents/${agentId}/tools`),
   setAgentTool: (agentId: string, toolId: string, granted: boolean) =>
     call<AgentToolDto[]>(`/api/agents/${agentId}/tools/${toolId}`, { method: granted ? "PUT" : "DELETE" }),

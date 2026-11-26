@@ -5,9 +5,9 @@ import {
   type GitHubManifestDto,
   type StartGitHubManifestInput,
 } from "@shearim/contracts";
-import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { type Db, isUuid, schema } from "../db/client";
+import { findAgent } from "../agents";
+import type { Db } from "../db/client";
 import { adminOnly, type Env } from "../members";
 import { ToolFailure } from "../tools/port";
 import { APP_PERMISSIONS, type GitHub } from "./connector";
@@ -25,11 +25,8 @@ export function githubRoutes(deps: { db: Db; github: GitHub }) {
   const { db, github } = deps;
   const routes = new Hono<Env>();
 
-  async function agentExists(id: string) {
-    if (!isUuid(id)) return false;
-    const [row] = await db.select({ id: schema.agents.id }).from(schema.agents).where(eq(schema.agents.id, id));
-    return Boolean(row);
-  }
+  // O Agente apagado não existe aqui: gravar a lista dele recriaria o que o DELETE limpou.
+  const agentExists = async (id: string) => (await findAgent(db, id)).length > 0;
 
   /** Os repositórios que a instalação alcança, ou o motivo de não saber (sem instalação, instalação removida). */
   async function available(): Promise<{ list: string[]; failure: string | null }> {
@@ -63,7 +60,7 @@ export function githubRoutes(deps: { db: Db; github: GitHub }) {
     const invalid = (message: string) => c.json({ error: "invalid_input", message }, 400);
     const raw = input?.repositories;
     if (raw === null) {
-      await github.restrict(id, null);
+      if (!(await github.restrict(id, null))) return c.json({ error: "not_found" }, 404);
       return c.json(await agentGitHub(id));
     }
     if (!Array.isArray(raw) || raw.some((r) => typeof r !== "string"))
@@ -80,7 +77,7 @@ export function githubRoutes(deps: { db: Db; github: GitHub }) {
       if (!found) return invalid(`O repositório ${r} não está entre os que a instalação do GitHub alcança.`);
       if (!chosen.includes(found)) chosen.push(found);
     }
-    await github.restrict(id, chosen);
+    if (!(await github.restrict(id, chosen))) return c.json({ error: "not_found" }, 404);
     return c.json({ repositories: [...chosen].sort((a, b) => a.localeCompare(b)), available: list, failure: null });
   });
 

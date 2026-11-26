@@ -27,6 +27,9 @@
  * - `SHEARIM_VERSION`: a versão que aparece na seção Instalação (a imagem traz a tag).
  * - `SHEARIM_VAPID_CONTACT`: o `sub` do VAPID (`mailto:` com domínio real; o `deploy/setup.sh`
  *   grava no `.env`). Sem ela, só em desenvolvimento, um `mailto:` de exemplo.
+ * - `SHEARIM_MEMORY_MODEL`: o modelo pequeno da extração da Memória (padrão `claude-haiku-5-5`).
+ * - `SHEARIM_MEMORY_SUMMARY_CHARS`: o orçamento do resumo da Memória que entra em cada resposta,
+ *   em caracteres (padrão 4000). Um valor que não é inteiro maior que zero impede o servidor de subir.
  */
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -50,6 +53,7 @@ import {
 } from "./installation/commands";
 import { migrationState, NewerDatabaseError } from "./installation/migrations";
 import { localApiNodeKey, type NodeKeyPort, noNodeKey } from "./installation/node-key";
+import { memoryFromEnv } from "./memory/extraction";
 import { loadMasterKey, secretBox } from "./secrets";
 import { toolMaxTurnsFromEnv, toolTimeoutFromEnv } from "./tools/port";
 
@@ -219,11 +223,13 @@ async function main(command: string | undefined) {
   let toolTimeoutMs: number | undefined;
   let toolMaxTurns: number | undefined;
   let approvalTtlMs: number | undefined;
+  let memory: ReturnType<typeof memoryFromEnv> = {};
   try {
     limits = limitsFromEnv(process.env);
     toolTimeoutMs = toolTimeoutFromEnv(process.env);
     toolMaxTurns = toolMaxTurnsFromEnv(process.env);
     approvalTtlMs = approvalTtlFromEnv(process.env);
+    memory = memoryFromEnv(process.env);
   } catch (err) {
     fail((err as Error).message);
   }
@@ -251,6 +257,8 @@ async function main(command: string | undefined) {
     tools: { timeoutMs: toolTimeoutMs, maxTurns: toolMaxTurns },
     // O prazo do Pedido de aprovação (24 h).
     approvals: { ttlMs: approvalTtlMs },
+    // O modelo pequeno da extração da Memória (claude-haiku-5-5) e o orçamento do resumo (4000 caracteres).
+    memory,
   });
   // O par VAPID nasce na primeira subida (e daí em diante é sempre o mesmo, guardado no banco).
   await shearim.push.ensureKeys();

@@ -14,6 +14,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileS
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { citeLastPerson } from "../fakes/memory-citation";
 import {
   DEFAULT_FAKE_ACCOUNT,
   FAKE_ACCESS_TOKEN,
@@ -35,7 +36,17 @@ if (flag !== "--fake-home" || !home) {
 
 const isPrint = argv.includes("-p") || argv.includes("--print");
 
-/** Registra o start. O `-p` lê o stdin até o fim antes (o prompt chega por ali). */
+/** A extração da Memória: o `--json-schema` pede `operacoes` (o roteamento pede `decisao`). */
+const isExtraction = (() => {
+  const raw = argv.includes("--json-schema") ? argv[argv.indexOf("--json-schema") + 1] : undefined;
+  try {
+    return Boolean(raw && "operacoes" in (JSON.parse(raw).properties ?? {}));
+  } catch {
+    return false;
+  }
+})();
+
+/** Registra o start. O `-p` lê o stdin até o fim antes (o prompt chega por ali). A extração vai a um log à parte. */
 function logCall(stdin?: string) {
   const call: FakeClaudeCall = {
     pid: process.pid,
@@ -44,7 +55,7 @@ function logCall(stdin?: string) {
     cwd: process.cwd(),
     env: Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)),
   };
-  appendFileSync(join(home!, "calls.jsonl"), `${JSON.stringify(call)}\n`);
+  appendFileSync(join(home!, isExtraction ? "extractions.jsonl" : "calls.jsonl"), `${JSON.stringify(call)}\n`);
 }
 if (!isPrint) logCall();
 
@@ -175,6 +186,20 @@ const usage = { input_tokens: 10, output_tokens: 1 };
 
 /** O próximo roteiro do `-p`: o primeiro da fila `runs` (que sai do arquivo), ou `run`. */
 function nextRun(): FakeRun {
+  if (isExtraction) {
+    const queued = script.memoryRuns?.[0];
+    if (queued) {
+      writeFileSync(scriptFile, JSON.stringify({ ...script, memoryRuns: script.memoryRuns!.slice(1) }));
+      return queued;
+    }
+    return (
+      script.memoryRun ?? {
+        kind: "steps",
+        steps: [{ thinking: true }],
+        end: { result: "success", text: "", structuredOutput: { operacoes: [] } },
+      }
+    );
+  }
   const queued = script.runs?.[0];
   if (queued) {
     writeFileSync(scriptFile, JSON.stringify({ ...script, runs: script.runs!.slice(1) }));
@@ -235,6 +260,9 @@ function errorEnd(end: Extract<FakeEnd, { result: "error" }>): number {
   return 1;
 }
 
+/** O prompt do `-p` (a entrada da extração, para a citação padrão). */
+let prompt = "";
+
 function successEnd(end: Extract<FakeEnd, { result: "success" }>, text: string): number {
   line({
     type: "result",
@@ -247,7 +275,9 @@ function successEnd(end: Extract<FakeEnd, { result: "success" }>, text: string):
     total_cost_usd: end.costUsd ?? 0.0001,
     usage: end.usage ?? usage,
     ...(end.credentialExpiresAt ? { credential_expires_at: end.credentialExpiresAt } : {}),
-    ...(end.structuredOutput !== undefined ? { structured_output: end.structuredOutput } : {}),
+    ...(end.structuredOutput !== undefined
+      ? { structured_output: isExtraction ? citeLastPerson(end.structuredOutput, prompt) : end.structuredOutput }
+      : {}),
   });
   return 0;
 }
@@ -351,7 +381,13 @@ async function toolStep(step: { name: string; input?: Record<string, unknown> })
 }
 
 /** Uma tool nativa (`{ native }`): o mesmo desenho do `tool_use`/`tool_result` das do MCP. */
-function nativeStep(step: { name: string; input?: Record<string, unknown>; error?: string; hang?: true }) {
+function nativeStep(step: {
+  name: string;
+  input?: Record<string, unknown>;
+  error?: string;
+  hang?: true;
+  result?: string;
+}) {
   const input = step.input ?? {};
   const id = `toolu_fake_${blockIndex}`;
   const index = blockIndex++;
@@ -374,7 +410,7 @@ function nativeStep(step: { name: string; input?: Record<string, unknown>; error
   const error = tools.includes(step.name)
     ? step.error
     : `<tool_use_error>Error: No such tool available: ${step.name}</tool_use_error>`;
-  lastToolResult = error ?? `Resultado de ${step.name}.`;
+  lastToolResult = error ?? step.result ?? `Resultado de ${step.name}.`;
   line({
     type: "user",
     message: {
@@ -444,6 +480,7 @@ async function steps(run: Extract<FakeRun, { kind: "steps" }>): Promise<number> 
 async function print(): Promise<number> {
   // O prompt chega pelo stdin (ou como argumento, na validação); lê até o fim antes de começar.
   const stdin = await new Response(Bun.stdin.stream()).text();
+  prompt = stdin;
   const run: FakeRun = loggedInAccount()
     ? nextRun()
     : { kind: "error", error: "authentication_failed", apiErrorStatus: 401, message: "Not logged in" };

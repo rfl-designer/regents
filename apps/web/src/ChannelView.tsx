@@ -6,6 +6,7 @@ import {
   joinPt,
   type MeDto,
   type MemberSummaryDto,
+  type MemoryItemDto,
   type MessageDto,
   MY_CONNECTORS_PATH,
   mentionPattern,
@@ -25,12 +26,15 @@ import {
   useRef,
   useState,
 } from "react";
+import { AgentPanel } from "./AgentView";
 import { Avatar } from "./Avatar";
 import { agentToolsText } from "./agent-tools";
 import { api } from "./api";
 import { hourMinute, weekdayShort } from "./format";
-import { useServerEvents } from "./live";
+import { useDropDeletedAgents, useServerEvents } from "./live";
+import { MemoryArchived, MemoryItem, sortMemory } from "./Memory";
 import { downLabel, upLabel, useReading } from "./reading";
+import { useAction } from "./use-action";
 
 /** "15:45" hoje; "qui., 15:45" em outro dia (Spec, história 78). */
 function untilLabel(iso: string, now = new Date()) {
@@ -52,10 +56,13 @@ function append(prev: MessageDto[] | null, arrived: MessageDto[]) {
   return [...(prev ?? []), ...arrived.filter((m) => !have.has(m.id))];
 }
 
-/** O Andamento que ainda aparece: o que virou resposta sai (a resposta toma o lugar dele). */
+/**
+ * O Andamento que ainda aparece: o que virou resposta sai (a resposta toma o lugar dele). A
+ * extração da Memória que descartou algo fica, com o motivo.
+ */
 function upsertExecution(prev: Record<string, ExecutionDto>, e: ExecutionDto) {
   const next = { ...prev };
-  if (e.state === "done") delete next[e.id];
+  if (e.state === "done" && !(e.kind === "memory" && e.reason)) delete next[e.id];
   else next[e.id] = e;
   return next;
 }
@@ -105,14 +112,27 @@ interface Props {
 
 export function ChannelView({ channel, me, onChanged, focus }: Props) {
   const joined = channel.participants.some((p) => p.kind === "member" && p.id === me.id);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState<string | null>(null);
   return (
     <main className="channel">
-      <ChannelHeader channel={channel} joined={joined} onChanged={onChanged} />
+      <ChannelHeader
+        channel={channel}
+        joined={joined}
+        onChanged={onChanged}
+        onMemory={() => setMemoryOpen((v) => !v)}
+        onAgent={(id) => setAgentOpen((v) => (v === id ? null : id))}
+      />
       <Conversation
         conversationId={channel.id}
         label={`#${channel.name}`}
         me={me}
         focus={focus}
+        memoryOpen={memoryOpen}
+        onCloseMemory={() => setMemoryOpen(false)}
+        agentOpen={agentOpen}
+        onCloseAgent={() => setAgentOpen(null)}
+        promotable={channel.kind === "public"}
         // Escrever num Canal público é entrar nele; o `channel.updated` também chega, mas a tela não espera.
         onSent={() => {
           if (!joined) api.channel(channel.id).then(onChanged, () => {});
@@ -136,12 +156,25 @@ export function Conversation({
   me,
   onSent,
   focus,
+  memoryOpen = false,
+  onCloseMemory,
+  agentOpen = null,
+  onCloseAgent,
+  promotable = false,
 }: {
   conversationId: string;
   label: string;
   /** Quem está vendo: a mensagem que o menciona aparece destacada. */
   me: MeDto;
   onSent?(): void;
+  /** A lista "Memória" da conversa aberta ao lado (o botão fica no cabeçalho do Canal ou da DM). */
+  memoryOpen?: boolean;
+  onCloseMemory?(): void;
+  /** A tela do Agente aberta ao lado (#65), pelo id: o cabeçalho do Canal ou da DM a abre. */
+  agentOpen?: string | null;
+  onCloseAgent?(): void;
+  /** Os itens da Memória daqui podem ir ao Workspace (Canal público): o Admin vê "Promover ao Workspace". */
+  promotable?: boolean;
   /**
    * A mensagem para onde a notificação levou (a da falha, com "Tentar de novo"): quando ela
    * chega, vem para o meio da tela e pisca; numa Thread, a Thread abre.
@@ -154,6 +187,8 @@ export function Conversation({
   const [outcomes, setOutcomes] = useState<Record<string, OutcomeDto>>({});
   /** Os Pedidos de aprovação da conversa, pelo id. */
   const [approvals, setApprovals] = useState<Record<string, ApprovalRequestDto>>({});
+  /** A Memória da Conversa (com as Threads), pelo id do item. */
+  const [memory, setMemory] = useState<Record<string, MemoryItemDto>>({});
   /** As Threads desta conversa que quem vê segue, pela raiz. */
   const [followed, setFollowed] = useState<ReadonlySet<string>>(new Set());
   /** A raiz da Thread aberta no painel. */
@@ -174,13 +209,15 @@ export function Conversation({
       api.outcomes(conversationId),
       api.followedThreads(),
       api.approvals(conversationId),
+      api.memory(conversationId),
     ]).then(
-      ([list, running, unread, decided, threads, asked]) => {
+      ([list, running, unread, decided, threads, asked, remembered]) => {
         setLoadError(false);
         setMessages((prev) => append(list, prev ?? []));
         setExecutions(Object.fromEntries(running.map((e) => [e.id, e])));
         setOutcomes(Object.fromEntries(decided.map((o) => [o.messageId, o])));
         setApprovals(Object.fromEntries(asked.map((a) => [a.id, a])));
+        setMemory(Object.fromEntries(remembered.map((i) => [i.id, i])));
         setFollowed(
           new Set(threads.filter((th) => th.conversationId === conversationId).map((th) => th.rootMessageId)),
         );
@@ -233,6 +270,14 @@ export function Conversation({
       const { approval } = event;
       setApprovals((prev) => ({ ...prev, [approval.id]: approval }));
     }
+    if (event.type === "memory.updated" && event.item.conversationId === conversationId) {
+      const { item } = event;
+      setMemory((prev) => ({ ...prev, [item.id]: item }));
+    }
+    // O Agente apagado leva a Memória do Agente dele junto; a da Conversa fica.
+    if (event.type === "agent.deleted") {
+      setMemory((prev) => Object.fromEntries(Object.entries(prev).filter(([, i]) => i.agent?.id !== event.agentId)));
+    }
     if (event.type === "outcome.created" && event.outcome.channelId === conversationId) {
       const { outcome } = event;
       setOutcomes((prev) => ({ ...prev, [outcome.messageId]: outcome }));
@@ -278,6 +323,14 @@ export function Conversation({
       deciding.set(e.originMessageId, e);
     } else pending.set(e.originMessageId, [...(pending.get(e.originMessageId) ?? []), e]);
   }
+  // O que a extração guardou fica no Andamento da mensagem de origem ("guardou na Memória: …").
+  const remembered = new Map<string, MemoryItemDto[]>();
+  const { all: items, active, archived } = sortMemory(Object.values(memory));
+  for (const i of [...items].reverse()) {
+    if (i.createdBy !== "extraction" || !i.origin) continue;
+    remembered.set(i.origin.messageId, [...(remembered.get(i.origin.messageId) ?? []), i]);
+  }
+  const replaced = new Set(items.flatMap((i) => (i.replacedById ? [i.replacedById] : [])));
   // Os Pedidos de aprovação ficam sob a mensagem de origem, onde a resposta vai chegar.
   const asked = new Map<string, ApprovalRequestDto[]>();
   for (const a of Object.values(approvals)) asked.set(a.originMessageId, [...(asked.get(a.originMessageId) ?? []), a]);
@@ -291,12 +344,20 @@ export function Conversation({
     deciding,
     outcomes,
     approvals: asked,
+    remembered,
+    replaced,
     now,
     showExecution: (e) => setExecutions((prev) => upsertExecution(prev, e)),
     showApproval: (a) => setApprovals((prev) => ({ ...prev, [a.id]: a })),
     find: (id) => messages?.find((m) => m.id === id),
   };
   const root = openThread ? messages?.find((m) => m.id === openThread) : undefined;
+  /** Leva à mensagem de origem de um item de Memória desta conversa (na Thread, se nasceu numa). */
+  const openOrigin = (item: MemoryItemDto) => {
+    if (!item.origin) return;
+    if (item.origin.threadRootId) setOpenThread(item.origin.threadRootId);
+    else reading.jump(item.origin.messageId);
+  };
 
   return (
     <div className="conversation-view">
@@ -325,6 +386,29 @@ export function Conversation({
           }}
         />
       </div>
+      {memoryOpen && (
+        <MemoryPanel
+          label={label}
+          items={items}
+          active={active}
+          archived={archived}
+          isAdmin={me.role === "admin"}
+          promotable={promotable && me.role === "admin"}
+          onChanged={(item) => setMemory((prev) => ({ ...prev, [item.id]: item }))}
+          onOpen={openOrigin}
+          onClose={() => onCloseMemory?.()}
+        />
+      )}
+      {agentOpen && (
+        <AgentPanel
+          key={agentOpen}
+          agentId={agentOpen}
+          me={me}
+          conversationId={conversationId}
+          onOpen={openOrigin}
+          onClose={() => onCloseAgent?.()}
+        />
+      )}
       {root && messages && (
         <ThreadPanel
           key={root.id}
@@ -353,6 +437,10 @@ interface GroupContext {
   outcomes: Record<string, OutcomeDto>;
   /** Os Pedidos de aprovação, pela mensagem de origem, do mais antigo ao mais novo. */
   approvals: Map<string, ApprovalRequestDto[]>;
+  /** O que a extração guardou na Memória, pela mensagem de origem, do mais antigo ao mais novo. */
+  remembered: Map<string, MemoryItemDto[]>;
+  /** Os itens que substituíram outro (a extração mostra "atualizou na Memória: …"). */
+  replaced: ReadonlySet<string>;
   now: number;
   showExecution(e: ExecutionDto): void;
   showApproval(a: ApprovalRequestDto): void;
@@ -426,12 +514,15 @@ function MessageGroups({
     const answers = (replies.get(m.id) ?? []).filter((r) => ids.has(r.id));
     const running = pending.get(m.id) ?? [];
     const asked = ctx.approvals.get(m.id) ?? [];
+    const saved = ctx.remembered.get(m.id) ?? [];
     const mine = m.author.kind === "member" && m.author.id === me.id;
-    const cancellable = mine && running.some((e) => OPEN_STATES.includes(e.state));
+    // A extração da Memória não se cancela: a resposta dela já foi entregue.
+    const cancellable = mine && running.some((e) => e.kind !== "memory" && OPEN_STATES.includes(e.state));
     const cancel = () => api.cancelMessage(conversationId, m.id).then((list) => list.forEach(showExecution));
     // "⚠ pela Chave do Workspace" fica sob a mensagem; o autor vê também o porquê, enquanto a
-    // resposta sai (no Andamento) e depois dela (na própria resposta).
-    const byKey = running.find((e) => e.payer === "key");
+    // resposta sai (no Andamento) e depois dela (na própria resposta). A extração da Memória não
+    // conta: ela pode rodar pela Chave quando a resposta saiu pela Conta.
+    const byKey = running.find((e) => e.kind !== "memory" && e.payer === "key");
     const paidAnswer = answers.find((r) => r.payer === "key");
     const paid =
       byKey || paidAnswer
@@ -455,7 +546,7 @@ function MessageGroups({
             now={now}
             onCancel={mine && !cancellable ? cancel : undefined}
           />
-          {(answers.length > 0 || running.length > 0 || asked.length > 0) && (
+          {(answers.length > 0 || running.length > 0 || asked.length > 0 || saved.length > 0) && (
             <ul className="anchored" aria-label={`Respostas a ${m.author.displayName}`}>
               {answers.map((r) => (
                 <Fragment key={r.id}>
@@ -474,6 +565,14 @@ function MessageGroups({
                     onApprove={() => api.approveRequest(conversationId, a.id).then(showApproval)}
                     onReject={(reason) => api.rejectRequest(conversationId, a.id, reason).then(showApproval)}
                   />
+                </li>
+              ))}
+              {saved.map((i) => (
+                <li key={i.id}>
+                  <p className="memory-line" role="status">
+                    {ctx.replaced.has(i.id) ? "atualizou" : "guardou"} na Memória
+                    {i.agent ? ` de ${i.agent.name}` : ""}: {i.text}
+                  </p>
                 </li>
               ))}
               {running.map((e) => (
@@ -779,6 +878,16 @@ function Progress({
   onRetry?(): Promise<void>;
 }) {
   const name = e.agent.displayName;
+  if (e.kind === "memory") {
+    // A extração só aparece quando não guardou (tudo ou parte, em `done` com motivo): a resposta já
+    // chegou, então sem "Tentar de novo".
+    if (e.state !== "failed" && e.state !== "not_acting" && !(e.state === "done" && e.reason)) return null;
+    return (
+      <p className="memory-line failed" role="status">
+        não guardou na Memória: {e.reason ?? "erro desconhecido"}
+      </p>
+    );
+  }
   if (e.state === "awaiting_approval") {
     // A execução terminou no Pedido; a resposta continua depois da decisão (o cartão, acima).
     return (
@@ -893,24 +1002,6 @@ function Progress({
   );
 }
 
-/** Um botão que espera a chamada e mostra o erro dela, sem travar a tela. */
-function useAction(run: () => Promise<void>) {
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
-  async function act() {
-    setBusy(true);
-    setFailed(false);
-    try {
-      await run();
-    } catch {
-      setFailed(true);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return { busy, failed, act };
-}
-
 /**
  * O cartão do Pedido de aprovação (ADR 0011), ancorado sob a mensagem de origem: o que o Agente
  * quer fazer, exatamente, e o que aconteceu com o Pedido. Todos veem; só o autor (`mine`) aprova
@@ -1023,10 +1114,80 @@ function CancelButton({ onCancel }: { onCancel(): Promise<void> }) {
   );
 }
 
-function ChannelHeader({ channel, joined, onChanged }: Omit<Props, "me"> & { joined: boolean }) {
+/**
+ * A lista "Memória" da conversa, ao lado (no celular, por cima): o que os Agentes sabem dali, cada
+ * item com a mensagem de origem (que leva até ela, na Thread se nasceu numa), com Desfazer e
+ * Corrigir. Quem vê a lista vê a conversa, e quem vê a conversa desfaz e corrige; o item promovido
+ * à Memória do Workspace só o Admin. Num Canal público, o Admin tem "Promover ao Workspace"
+ * (`promotable`). Os arquivados (desfeitos, substituídos ou promovidos) ficam à parte, embaixo.
+ */
+function MemoryPanel({
+  label,
+  items,
+  active,
+  archived,
+  isAdmin,
+  promotable,
+  onOpen,
+  onChanged,
+  onClose,
+}: {
+  label: string;
+  /** Todos, os ativos e os arquivados (`sortMemory`). */
+  items: MemoryItemDto[];
+  active: MemoryItemDto[];
+  archived: MemoryItemDto[];
+  isAdmin: boolean;
+  /** Os itens daqui vão ao Workspace: o Admin num Canal público. */
+  promotable: boolean;
+  onOpen(item: MemoryItemDto): void;
+  /** O item que a ação devolveu (o evento `memory.updated` também chega). */
+  onChanged(item: MemoryItemDto): void;
+  onClose(): void;
+}) {
+  return (
+    <aside className="thread-panel memory-panel" aria-label={`Memória de ${label}`}>
+      <header className="thread-head">
+        <strong>Memória</strong>
+        <span className="muted">o que os Agentes sabem daqui</span>
+        <button type="button" className="link" onClick={onClose}>
+          Fechar
+        </button>
+      </header>
+      <div className="memory-body">
+        {active.length === 0 ? (
+          <p className="notice">Nada guardado ainda. O que as pessoas decidirem com um Agente aparece aqui.</p>
+        ) : (
+          <ul className="memory-items" aria-label="Itens da Memória">
+            {active.map((i) => (
+              <MemoryItem
+                key={i.id}
+                item={i}
+                editable={i.scope !== "workspace" || isAdmin}
+                onPromote={promotable && i.scope === "conversation" ? () => api.promoteMemory(i.id) : undefined}
+                onOpen={onOpen}
+                onChanged={onChanged}
+              />
+            ))}
+          </ul>
+        )}
+        <MemoryArchived archived={archived} all={items} />
+      </div>
+    </aside>
+  );
+}
+
+function ChannelHeader({
+  channel,
+  joined,
+  onChanged,
+  onMemory,
+  onAgent,
+}: Omit<Props, "me"> & { joined: boolean; onMemory(): void; onAgent(agentId: string): void }) {
   const [adding, setAdding] = useState<"person" | "agent" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const names = channel.participants.map((p) => p.displayName).join(", ");
+  const channelAgents = channel.participants.filter((p) => p.kind === "agent");
   const toggle = (what: "person" | "agent") => setAdding((v) => (v === what ? null : what));
 
   async function act(run: () => Promise<ChannelDto>) {
@@ -1054,6 +1215,9 @@ function ChannelHeader({ channel, joined, onChanged }: Omit<Props, "me"> & { joi
         <span className="hint" title={names}>
           {channel.participants.length === 1 ? "1 participante" : `${channel.participants.length} participantes`}
         </span>
+        <button type="button" className="link" onClick={onMemory}>
+          Memória
+        </button>
         {joined ? (
           <>
             <button type="button" className="link" onClick={() => toggle("person")}>
@@ -1071,6 +1235,19 @@ function ChannelHeader({ channel, joined, onChanged }: Omit<Props, "me"> & { joi
           )
         )}
       </div>
+      {channelAgents.length > 0 && (
+        <p className="hint agent-link">
+          Agentes:{" "}
+          {channelAgents.map((p, n) => (
+            <span key={p.id}>
+              {n > 0 && ", "}
+              <button type="button" className="link-quiet" onClick={() => onAgent(p.id)}>
+                {p.displayName}
+              </button>
+            </span>
+          ))}
+        </p>
+      )}
       {channel.instructions && (
         <p className="instructions">
           <strong>Instruções do Canal:</strong> {channel.instructions}
@@ -1170,6 +1347,7 @@ function AddAgent({
   useEffect(() => {
     api.agents().then(setAgents, () => setAgents([]));
   }, []);
+  useDropDeletedAgents(setAgents);
 
   const inside = new Set(channel.participants.filter((p) => p.kind === "agent").map((p) => p.id));
   const outside = agents?.filter((a) => !inside.has(a.id)) ?? [];

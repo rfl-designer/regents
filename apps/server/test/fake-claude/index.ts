@@ -29,6 +29,8 @@ export interface FakeClaude {
   calls(): FakeClaudeCall[];
   /** Os starts de um subcomando: `"auth login"`, `"auth status"`, `"auth logout"` ou `"-p"`. */
   callsOf(kind: "auth login" | "auth status" | "auth logout" | "-p"): FakeClaudeCall[];
+  /** Os starts do `-p` da extração da Memória (fora de `calls` e `callsOf("-p")`). */
+  extractions(): FakeClaudeCall[];
   /** Os sinais que os `-p` levaram, em ordem (de um só processo, com `pid`). */
   signals(pid?: number): FakeClaudeSignal[];
   /** O que os `-p` fizeram como clientes MCP (`{ tool }`), em ordem. */
@@ -50,6 +52,14 @@ export function fakeClaude(script: FakeClaudeScript = {}): FakeClaude {
     script: (s) => writeFileSync(join(home, "script.json"), JSON.stringify(s)),
     calls() {
       const log = join(home, "calls.jsonl");
+      if (!existsSync(log)) return [];
+      return readFileSync(log, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as FakeClaudeCall);
+    },
+    extractions() {
+      const log = join(home, "extractions.jsonl");
       if (!existsSync(log)) return [];
       return readFileSync(log, "utf8")
         .split("\n")

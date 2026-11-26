@@ -3,6 +3,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { agentToolsText } from "./agent-tools";
 import { ApiFailure, api } from "./api";
 import { dmTitle } from "./DmView";
+import { useDropDeletedAgents } from "./live";
 
 interface Props {
   me: MeDto;
@@ -20,6 +21,9 @@ interface Props {
   /** Uma DM foi aberta (nova ou a que já existia). */
   onDmOpened(dm: DmDto): void;
   onOpenAdmin(view: AdminView): void;
+  /** A Memória do Workspace está aberta (todo Membro a vê). */
+  workspaceMemoryOpen: boolean;
+  onOpenWorkspaceMemory(): void;
 }
 
 export type AdminView =
@@ -119,6 +123,14 @@ export function Sidebar(props: Props) {
           + Nova DM
         </button>
       )}
+      <button
+        type="button"
+        className="link"
+        aria-current={props.workspaceMemoryOpen ? "page" : undefined}
+        onClick={props.onOpenWorkspaceMemory}
+      >
+        Memória do Workspace
+      </button>
       {props.isAdmin &&
         ADMIN_LINKS.map(([view, label]) => (
           <button
@@ -220,6 +232,7 @@ function NewDm({ me, onCancel, onOpened }: { me: MeDto; onCancel(): void; onOpen
   useEffect(() => {
     api.agents().then(setAgents, () => setError("Não foi possível carregar os Agentes. Tente de novo."));
   }, []);
+  useDropDeletedAgents(setAgents);
 
   function toggle(id: string) {
     setChosen((prev) => {

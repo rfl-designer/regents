@@ -25,6 +25,8 @@ import { type JoinRequestHooks, joinRequestAdminRoutes, myJoinRequestRoutes } fr
 import { createKeyLedger, type KeyHooks } from "./key-budget";
 import { memberAdminRoutes } from "./member-admin";
 import { type Env, listMembers, memberFor } from "./members";
+import { memoryRoutes } from "./memory/routes";
+import { SEARCH_MEMORY } from "./memory/search";
 import { accountBrain } from "./model/account";
 import { keyBrain } from "./model/key";
 import { createModelPort, type ModelBrain } from "./model/port";
@@ -82,6 +84,11 @@ export interface AppDeps {
   github?: Partial<GitHubConfig>;
   /** O Pedido de aprovação: o prazo até expirar (`SHEARIM_APPROVAL_TTL_H`; padrão 24 h). */
   approvals?: { ttlMs?: number };
+  /**
+   * A Memória: o modelo pequeno da extração (`SHEARIM_MEMORY_MODEL`; padrão `claude-haiku-5-5`) e o
+   * orçamento do resumo em cada resposta, em caracteres (`SHEARIM_MEMORY_SUMMARY_CHARS`; padrão 4000).
+   */
+  memory?: { model?: string; summaryChars?: number };
 }
 
 export type AppHooks = JoinRequestHooks & ExecutionHooks & KeyHooks & AccountHooks;
@@ -155,6 +162,8 @@ export function createApp(deps: AppDeps) {
     clock,
     definitions: [...(deps.tools?.definitions ?? [...WORKSPACE_TOOLS, ...WEB_TOOLS]), ...githubTools(github)],
     extra: connectors.definitions,
+    // Sem concessão do Admin: "buscar na Memória" vem com a Memória ligada (#69).
+    automatic: [SEARCH_MEMORY],
     timeoutMs: deps.tools?.timeoutMs,
   });
   // As mensagens novas (de pessoa e as respostas de Agente) vão ao push pelo mesmo `messageCreated`.
@@ -173,6 +182,8 @@ export function createApp(deps: AppDeps) {
     limits: deps.limits,
     maxToolTurns: deps.tools?.maxTurns,
     approvalTtlMs: deps.approvals?.ttlMs,
+    memoryModel: deps.memory?.model,
+    memorySummaryChars: deps.memory?.summaryChars,
   });
   // A volta da Conta (ou a troca da Chave, ou do orçamento) solta quem espera por ela na fila.
   const reconsider = (memberId?: string) => void executions.reconsider(memberId).catch(() => {});
@@ -239,7 +250,10 @@ export function createApp(deps: AppDeps) {
   app.route("/api", reading.routes);
   app.route("/api", threadRoutes({ db }));
   app.route("/api", accounts.routes);
-  app.route("/api", agentRoutes({ db, clock, ledger, tools, github, onBudgetChanged: () => reconsider() }));
+  app.route(
+    "/api",
+    agentRoutes({ db, clock, ledger, tools, github, executions, events, onBudgetChanged: () => reconsider() }),
+  );
   app.route("/api", agentToolRoutes({ db, tools }));
   app.route("/api", connectors.routes);
   app.route(
@@ -256,6 +270,7 @@ export function createApp(deps: AppDeps) {
   );
   app.route("/api", workspaceKeyRoutes({ db, clock, secrets, onChanged: () => reconsider() }));
   app.route("/api", workspaceContextRoutes({ db }));
+  app.route("/api", memoryRoutes({ db, clock, events }));
   app.route("/api", githubRoutes({ db, github }));
   app.route("/api", installation.routes);
 

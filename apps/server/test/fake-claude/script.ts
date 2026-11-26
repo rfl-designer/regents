@@ -49,9 +49,18 @@ export type FakeStep =
    * Usa uma tool nativa do Claude Code (`WebSearch`, `WebFetch`): o `tool_use` com o nome dela no
    * `stream-json`, o `tool_result` (com `is_error` e o texto de `error`, se veio) e um turno novo.
    * Fora do `--tools`, o resultado é o erro "No such tool available", como no real. `hang`: depois
-   * do `tool_use`, fica mudo para sempre (a tool travou), até levar sinal.
+   * do `tool_use`, fica mudo para sempre (a tool travou), até levar sinal. `result`: o texto que a
+   * tool trouxe (padrão "Resultado de <nome>.").
    */
-  | { native: { name: "WebSearch" | "WebFetch"; input?: Record<string, unknown>; error?: string; hang?: true } }
+  | {
+      native: {
+        name: "WebSearch" | "WebFetch";
+        input?: Record<string, unknown>;
+        error?: string;
+        hang?: true;
+        result?: string;
+      };
+    }
   /** Um bloco de pensamento (`thinking` vazio, como nos modelos atuais). */
   | { thinking: true }
   /** Fica mudo por um tempo (de verdade: é um processo). */
@@ -138,6 +147,13 @@ export interface FakeClaudeScript {
    * Para "a 1ª tentativa trava, a 2ª responde".
    */
   runs?: FakeRun[];
+  /**
+   * A extração da Memória (ADR 0013), reconhecida pelo `--json-schema` que pede `operacoes`: fila
+   * própria, um por start, que não come `runs`. Vazia, vale `memoryRun`, e sem ele a extração não
+   * guarda nada (`structuredOutput: { operacoes: [] }`).
+   */
+  memoryRuns?: FakeRun[];
+  memoryRun?: FakeRun;
 }
 
 export const FAKE_LOGIN_CODE = "codigo-da-pagina-da-anthropic";

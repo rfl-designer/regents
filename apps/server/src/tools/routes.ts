@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { type Db, isUuid, schema } from "../db/client";
+import { findAgent } from "../agents";
+import type { Db } from "../db/client";
 import { adminOnly, type Env } from "../members";
 import type { ToolPort } from "./port";
 
@@ -12,11 +12,7 @@ export function agentToolRoutes(deps: { db: Db; tools: ToolPort }) {
   const { db, tools } = deps;
   const routes = new Hono<Env>();
 
-  async function agentExists(id: string) {
-    if (!isUuid(id)) return false;
-    const [row] = await db.select({ id: schema.agents.id }).from(schema.agents).where(eq(schema.agents.id, id));
-    return Boolean(row);
-  }
+  const agentExists = async (id: string) => (await findAgent(db, id)).length > 0;
 
   routes.get("/agents/:id/tools", adminOnly, async (c) => {
     const id = c.req.param("id");
@@ -29,8 +25,9 @@ export function agentToolRoutes(deps: { db: Db; tools: ToolPort }) {
       const id = c.req.param("id");
       const tool = c.req.param("tool");
       if (!(await agentExists(id)) || !(await tools.exists(tool))) return c.json({ error: "not_found" }, 404);
-      if (method === "put") await tools.grant(id, tool);
-      else await tools.revoke(id, tool);
+      if (method === "put") {
+        if (!(await tools.grant(id, tool))) return c.json({ error: "not_found" }, 404);
+      } else await tools.revoke(id, tool);
       return c.json(await tools.forAgent(id));
     });
   }

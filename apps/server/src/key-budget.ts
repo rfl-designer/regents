@@ -39,7 +39,11 @@ export async function keySpend(db: Db, month: string, agentIds?: readonly string
  */
 export async function keyCoverage(db: Db, now: Date): Promise<"all" | "some" | "none"> {
   if (!(await hasWorkspaceKey(db))) return "none";
-  const all = await db.select({ id: agents.id, budget: agents.monthlyBudgetUsd }).from(agents);
+  // O Agente apagado não recebe mais mensagem: o orçamento dele não conta.
+  const all = await db
+    .select({ id: agents.id, budget: agents.monthlyBudgetUsd })
+    .from(agents)
+    .where(isNull(agents.deletedAt));
   const spend = await keySpend(db, monthOf(now));
   const over = all.filter((a) => a.budget !== null && (spend.get(a.id) ?? 0) >= a.budget).length;
   if (over === 0) return "all";

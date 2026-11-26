@@ -12,7 +12,7 @@ import {
 } from "@shearim/contracts";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
-import type { Agent } from "./agents";
+import { type Agent, findAgent, lockLiveAgent } from "./agents";
 import { addArticuladora } from "./articuladora";
 import type { Clock } from "./clock";
 import { type Db, isUuid, schema, type Tx } from "./db/client";
@@ -156,11 +156,17 @@ export function conversationRoutes(deps: {
     const channel = await findVisibleChannel(db, c.get("member"), c.req.param("id"));
     if (!channel) return c.json({ error: "not_found" }, 404);
     const input = (await c.req.json().catch(() => null)) as Partial<AddAgentInput> | null;
-    const agentId = typeof input?.agentId === "string" && isUuid(input.agentId) ? input.agentId : undefined;
-    const [agent] = agentId ? await db.select({ id: agents.id }).from(agents).where(eq(agents.id, agentId)) : [];
+    // O Agente apagado (#65) não entra mais em Canal.
+    const [agent] = typeof input?.agentId === "string" ? await findAgent(db, input.agentId) : [];
     if (!agent) return c.json({ error: "invalid_input", message: "Esse Agente não existe no Workspace." }, 400);
 
-    if (await addAgent(db, channel.id, agent.id, clock.now())) await publishChannel(channel);
+    // Travado: um DELETE ao mesmo tempo espera e o tira do Canal, ou já o apagou.
+    const added = await db.transaction(async (tx) =>
+      (await lockLiveAgent(tx, agent.id)) ? addAgent(tx, channel.id, agent.id, clock.now()) : ("gone" as const),
+    );
+    if (added === "gone")
+      return c.json({ error: "invalid_input", message: "Esse Agente não existe no Workspace." }, 400);
+    if (added) await publishChannel(channel);
     return c.json(await toChannelDto(db, channel));
   });
 
@@ -281,12 +287,14 @@ export function conversationRoutes(deps: {
     const id = c.req.param("executionId");
     if (!conversation || !isUuid(id)) return c.json({ error: "not_found" }, 404);
     const [execution] = await db
-      .select({ id: schema.executions.id, authorMemberId: messages.authorMemberId })
+      .select({ id: schema.executions.id, kind: schema.executions.kind, authorMemberId: messages.authorMemberId })
       .from(schema.executions)
       .innerJoin(messages, eq(messages.id, schema.executions.originMessageId))
       .where(and(eq(schema.executions.id, id), eq(schema.executions.channelId, conversation.id)));
     if (!execution) return c.json({ error: "not_found" }, 404);
     if (execution.authorMemberId !== c.get("member").id) return c.json({ error: "not_author" }, 403);
+    // A extração da Memória não tem "Tentar de novo": a resposta já foi entregue (ADR 0013).
+    if (execution.kind === "memory") return c.json({ error: "not_retryable" }, 409);
     const queued = await executions.retry(execution.id);
     if (!queued) return c.json({ error: "not_failed" }, 409);
     return c.json(queued);
