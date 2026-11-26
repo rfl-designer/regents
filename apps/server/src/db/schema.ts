@@ -1022,3 +1022,6 @@ export const agentSkills = pgTable(
   },
   (t) => [primaryKey({ columns: [t.agentId, t.skillId] }), index().on(t.skillId)],
 );
+
+// A Wiki (spec #74) tem as tabelas num módulo próprio.
+export * from "../wiki/schema";

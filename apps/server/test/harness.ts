@@ -423,6 +423,8 @@ export async function testApp(
     approvals?: AppDeps["approvals"];
     /** A Memória: o modelo da extração e o orçamento do resumo (padrão: os da Instalação). */
     memory?: AppDeps["memory"];
+    /** A Wiki: o tamanho máximo de uma Fonte (padrão: o da Instalação). */
+    wiki?: AppDeps["wiki"];
   } = {},
 ) {
   const db = opts.db ?? (await testDb()).db;
@@ -450,6 +452,7 @@ export async function testApp(
       github: opts.github,
       approvals: opts.approvals,
       memory: opts.memory,
+      wiki: opts.wiki,
     });
     await built.start();
     return built;

@@ -14,6 +14,7 @@ import {
   NO_IDENTITY_TEXT,
   SW_NAVIGATE_MESSAGE,
   type UnreadDto,
+  WIKIS_PATH,
   WORKSPACE_KEY_PATH,
 } from "@shearim/contracts";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
@@ -43,6 +44,7 @@ import { type AdminView, Sidebar } from "./Sidebar";
 import { SkillsSettings } from "./SkillsAdmin";
 import { WorkspaceContextSettings } from "./WorkspaceContext";
 import { WorkspaceMemory } from "./WorkspaceMemory";
+import { WikisSettings } from "./wiki/WikisAdmin";
 
 type State =
   | { kind: "loading" }
@@ -98,6 +100,7 @@ const SCREENS: Record<Screen, { path?: string; admin?: true; render(ctx: ScreenC
   agents: { path: AGENTS_PATH, admin: true, render: () => <AgentsSettings /> },
   skills: { admin: true, render: () => <SkillsSettings /> },
   connectors: { path: CONNECTORS_PATH, admin: true, render: () => <ConnectorsSettings /> },
+  wikis: { path: WIKIS_PATH, admin: true, render: () => <WikisSettings /> },
   key: { path: WORKSPACE_KEY_PATH, admin: true, render: () => <WorkspaceKeySettings /> },
   github: { path: GITHUB_PATH, admin: true, render: () => <GitHubSettings /> },
   installation: {
