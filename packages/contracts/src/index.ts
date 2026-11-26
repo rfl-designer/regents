@@ -3,7 +3,7 @@
  * Só tipos (e constantes pequenas). Nada de runtime pesado aqui.
  */
 
-import type { WikiServerEvent } from "./wiki";
+import type { WikiCitationDto, WikiServerEvent } from "./wiki";
 
 // ---------- identidade e Membros ----------
 
@@ -303,6 +303,12 @@ export interface MessageDto {
    * pagar, que fica com a resposta). Ausente para os outros e quando a Conta não explica nada.
    */
   yourAccount?: YourAccountDto;
+  /**
+   * Só na resposta de Agente com marcadores `[[wiki:<nome>/<slug>]]`: uma citação por marcador,
+   * como quem recebe a vê (#85). O cliente troca cada marcador pelo link, pela citação sem link ou
+   * por "não consultada".
+   */
+  wikiCitations?: WikiCitationDto[];
 }
 
 /** Corpo de `POST /api/conversations/:id/messages` (e de `/api/channels/:id/messages`). */

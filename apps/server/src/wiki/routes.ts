@@ -19,7 +19,7 @@ import {
 } from "./reach";
 import { addSources, DEFAULT_SOURCE_MAX_BYTES, listSources, readUploads } from "./sources";
 import type { WikiSyncs } from "./sync";
-import { listVersions, pageDtos, readPage, versionNumbered } from "./versions";
+import { listVersions, pageDtos, readPage, versionNumbered, versionNumberOf } from "./versions";
 import {
   createWiki,
   findWiki,
@@ -72,13 +72,40 @@ export function wikiRoutes(deps: {
   routes.get("/wikis/:id/pages/:slug", async (c) => {
     const wiki = await readableWiki(db, c.req.param("id"), c.get("member").id);
     if (!wiki?.currentVersionId) return c.json({ error: "not_found", message: "Essa Wiki não existe." }, 404);
-    const read = await readPage(db, wiki.currentVersionId, c.req.param("slug"));
-    if (!read) {
-      return c.json({ error: "not_found", message: `Essa página não existe na Wiki ${wiki.name}.` }, 404);
-    }
-    const dto = await toWikiDto(db, wiki);
-    return c.json({ wiki: dto, version: dto.currentVersion!.number, ...read } satisfies WikiPageViewDto);
+    const view = await pageView(wiki, wiki.currentVersionId, c.req.param("slug"));
+    return view ? c.json(view) : c.json({ error: "not_found", message: noPage(wiki) }, 404);
   });
+
+  /**
+   * Uma página de uma versão, que a citação abre (#85): a versão lida, mesmo que haja uma mais nova
+   * ou que a página não exista mais na atual. O mesmo alcance da versão atual.
+   */
+  routes.get("/wikis/:id/versions/:number/pages/:slug", async (c) => {
+    const wiki = await readableWiki(db, c.req.param("id"), c.get("member").id);
+    if (!wiki?.currentVersionId) return c.json({ error: "not_found", message: "Essa Wiki não existe." }, 404);
+    const versionId = await versionNumbered(db, wiki.id, Number(c.req.param("number")));
+    const view = versionId && (await pageView(wiki, versionId, c.req.param("slug")));
+    return view ? c.json(view) : c.json({ error: "not_found", message: noPage(wiki) }, 404);
+  });
+
+  const noPage = (wiki: { name: string }) => `Essa página não existe na Wiki ${wiki.name}.`;
+
+  /** A página `slug` da versão, para o Membro ler, e se ela existe na versão atual. */
+  async function pageView(
+    wiki: NonNullable<Awaited<ReturnType<typeof readableWiki>>>,
+    versionId: string,
+    slug: string,
+  ): Promise<WikiPageViewDto | undefined> {
+    const read = await readPage(db, versionId, slug);
+    const currentId = wiki.currentVersionId;
+    if (!read || !currentId) return undefined;
+    return {
+      wiki: await toWikiDto(db, wiki),
+      version: await versionNumberOf(db, versionId),
+      inCurrentVersion: versionId === currentId || (await readPage(db, currentId, slug)) !== undefined,
+      ...read,
+    };
+  }
 
   routes.post("/wikis", adminOnly, async (c) => {
     const input = ((await c.req.json().catch(() => null)) ?? {}) as Partial<Record<keyof CreateWikiInput, unknown>>;

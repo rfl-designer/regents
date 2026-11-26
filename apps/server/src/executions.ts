@@ -55,6 +55,7 @@ import { buildRouting, parseDecision, ROUTING_SCHEMA } from "./routing";
 import type { SecretBox } from "./secrets";
 import { recordFollows } from "./threads";
 import { type ToolPort, toolCallsOf, withoutConnect } from "./tools/port";
+import { recordWikiCitations } from "./wiki/citations";
 
 const { executions, agents, channels, messages, accounts, approvalRequests, executionToolCalls } = schema;
 type Row = typeof executions.$inferSelect;
@@ -701,6 +702,12 @@ export function createExecutions(deps: {
         createdAt: reply.createdAt,
       });
       const mentions = await recordMentions(tx, reply.id, channel, text.trim());
+      await recordWikiCitations(tx, {
+        messageId: reply.id,
+        executionId: job.id,
+        attempt: job.attempt,
+        body: text.trim(),
+      });
       const followed = threadRootId
         ? await recordFollows(tx, {
             conversationId: job.channelId,
@@ -722,7 +729,13 @@ export function createExecutions(deps: {
       .select({ authorId: messages.authorMemberId })
       .from(messages)
       .where(eq(messages.id, job.originMessageId));
-    if (authorId && reaches(audience, authorId)) {
+    if (replyDto.wikiCitations && typeof audience === "object" && "members" in audience) {
+      // A citação da Wiki só abre para quem lê a Wiki (#85): cada participante recebe a sua cópia.
+      for (const memberId of audience.members) {
+        const message = (await findMessage(db, reply.id, memberId))!;
+        events.publish({ members: [memberId] }, { type: "message.created", message });
+      }
+    } else if (authorId && reaches(audience, authorId)) {
       events.publish(without(audience, authorId), { type: "message.created", message: replyDto });
       const forAuthor = (await findMessage(db, reply.id, authorId))!;
       events.publish({ members: [authorId] }, { type: "message.created", message: forAuthor });

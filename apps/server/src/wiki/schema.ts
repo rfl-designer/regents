@@ -14,7 +14,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { agents, channels, members } from "../db/schema";
+import { agents, channels, executions, members, messages } from "../db/schema";
 
 // As tabelas da Wiki (spec #74, ADR 0014 e 0015). Reexportadas por `db/schema.ts`, para o
 // drizzle-kit e o `schema` do cliente as verem.
@@ -254,4 +254,52 @@ export const wikiMembers = pgTable(
     addedAt: timestamp({ withTimezone: true }).notNull(),
   },
   (t) => [primaryKey({ columns: [t.wikiId, t.memberId] }), index().on(t.memberId)],
+);
+
+/**
+ * As páginas que uma execução leu por "ler a Wiki" (#85), por tentativa, com a versão lida: o que
+ * confere os marcadores de citação da resposta. Só a leitura que deu certo entra.
+ */
+export const wikiReads = pgTable(
+  "wiki_reads",
+  {
+    id: uuid().primaryKey(),
+    seq: bigint({ mode: "number" }).generatedAlwaysAsIdentity(),
+    executionId: uuid()
+      .notNull()
+      .references(() => executions.id, { onDelete: "cascade" }),
+    attempt: integer().notNull(),
+    wikiId: uuid()
+      .notNull()
+      .references(() => wikis.id, { onDelete: "cascade" }),
+    versionId: uuid()
+      .notNull()
+      .references(() => wikiVersions.id, { onDelete: "cascade" }),
+    slug: text().notNull(),
+  },
+  (t) => [index().on(t.executionId, t.attempt)],
+);
+
+/**
+ * As citações válidas de uma resposta (#85): um marcador `[[wiki:<nome>/<slug>]]` do corpo que bate
+ * com uma página que a execução leu, com a Wiki, o slug e a versão lida. Um marcador sem linha
+ * aqui é "não consultada".
+ */
+export const messageWikiCitations = pgTable(
+  "message_wiki_citations",
+  {
+    messageId: uuid()
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    /** O marcador exato, como está no corpo. */
+    marker: text().notNull(),
+    wikiId: uuid()
+      .notNull()
+      .references(() => wikis.id, { onDelete: "cascade" }),
+    versionId: uuid()
+      .notNull()
+      .references(() => wikiVersions.id, { onDelete: "cascade" }),
+    slug: text().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.messageId, t.marker] })],
 );

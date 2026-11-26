@@ -1168,3 +1168,20 @@ a.wiki-link {
   padding-left: 20px;
   font-size: 0.85rem;
 }
+/* A citação da Wiki na mensagem e o aviso de versão antiga (#85). */
+.wiki-citation {
+  font-size: 0.85em;
+}
+.wiki-citation.not-consulted {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.wiki-old {
+  margin: 8px 16px;
+  padding: 8px 12px;
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-radius: 6px;
+}
