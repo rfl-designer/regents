@@ -6,7 +6,7 @@
 /** A Wiki na administração (#78) e, depois, no PWA. */
 export const WIKIS_PATH = "/wikis";
 
-/** Pública: todo Membro. Restrita: só uma lista de Membros (a lista vem num ticket próximo). */
+/** Pública: todo Membro. Restrita: só uma lista de Membros (`WikiReachDto`). */
 export type WikiScope = "public" | "restricted";
 
 /** A versão atual da Wiki: a que a última Sincronização concluída publicou. */
@@ -53,6 +53,30 @@ export interface WikiChannelDto {
   name: string;
   kind: "public" | "private";
   linked: boolean;
+}
+
+/** Um Membro na tela do alcance da Wiki, com a marca de quem está na lista. */
+export interface WikiReachMemberDto {
+  id: string;
+  name: string;
+  inList: boolean;
+}
+
+/**
+ * O alcance da Wiki (#83): `GET /api/wikis/:id/reach` e a resposta de `PUT` (só Admin). Lista os
+ * Membros ativos, por nome, com a marca de quem está na lista. A restrita só é lida numa resposta
+ * em que o autor e todos os que veem a conversa estão na lista; na pública, a lista não conta.
+ * Fora de `WikiDto` de propósito: a lista é só da administração.
+ */
+export interface WikiReachDto {
+  scope: WikiScope;
+  members: WikiReachMemberDto[];
+}
+
+/** `PUT /api/wikis/:id/reach` (só Admin): troca o alcance e a lista inteira. */
+export interface SetWikiReachInput {
+  scope: WikiScope;
+  memberIds: string[];
 }
 
 export type WikiSourceFormat = "txt" | "md";
@@ -235,7 +259,12 @@ export type WikiServerEvent =
   /** O estado ou o passo de uma Sincronização mudou (relido na hora: chega em ordem). */
   | { type: "wiki_sync.updated"; sync: WikiSyncDto }
   /** A Wiki mudou (uma versão nova, as pendências). */
-  | { type: "wiki.updated"; wiki: WikiDto };
+  | { type: "wiki.updated"; wiki: WikiDto }
+  /**
+   * A Wiki saiu do alcance de quem recebe (o Admin a restringiu a uma lista sem ele): a barra
+   * lateral se relê. Só o id, para não contar nada da Wiki a quem não a vê mais.
+   */
+  | { type: "wiki.left"; wikiId: string };
 
 /** O passo para gente ler: "em curso: Fonte 1 de 2", "revisando a Wiki", "publicando". */
 export function wikiSyncStepText(step: WikiSyncStepDto): string {

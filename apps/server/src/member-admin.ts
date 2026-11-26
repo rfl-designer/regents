@@ -12,6 +12,7 @@ import { type Env, isActiveAdmin, memberById, toMemberDto } from "./members";
 import { audienceOf } from "./participation";
 import type { Push } from "./push";
 import { forgetMemberCredentials } from "./tools/connectors";
+import { leaveWikiLists } from "./wiki/reach";
 
 const { members, channels, channelParticipants, threadFollows } = schema;
 
@@ -87,6 +88,8 @@ export function memberAdminRoutes(deps: {
       await tx.update(members).set({ leftAt: clock.now(), role: "member" }).where(eq(members.id, id));
       // As credenciais dele nos Conectores vão junto: quem volta liga de novo.
       await forgetMemberCredentials(tx, id);
+      // E sai das listas das Wikis restritas: quem volta, volta fora delas.
+      await leaveWikiLists(tx, id);
       return { kind: "removed" as const, left: await leaveClosedConversations(tx, id) };
     });
     if (result.kind === "not_admin") return c.json({ error: "not_admin" }, 403);

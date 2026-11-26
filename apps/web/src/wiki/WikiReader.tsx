@@ -25,7 +25,7 @@ export function useReadableWikis(enabled: boolean) {
     if (enabled) load();
   }, [enabled, load]);
   useServerEvents((event) => {
-    if (event.type === "ready" || event.type === "wiki.updated") load();
+    if (event.type === "ready" || event.type === "wiki.updated" || event.type === "wiki.left") load();
   }, enabled);
   return wikis;
 }
@@ -67,7 +67,8 @@ export function WikiReader({
 
   const shown = loaded.kind === "ready" ? loaded.view : null;
   useServerEvents((event) => {
-    if (event.type === "ready") load();
+    // A Wiki saiu do alcance (o Admin a restringiu): a página se relê e diz que ela não existe.
+    if (event.type === "ready" || (event.type === "wiki.left" && event.wikiId === wikiId)) load();
     if (event.type === "wiki_sync.updated" && event.sync.wikiId === wikiId) {
       const { sync } = event;
       setLoaded((l) =>

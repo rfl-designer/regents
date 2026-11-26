@@ -1,23 +1,57 @@
-import type { CreateWikiInput, WikiPageViewDto } from "@shearim/contracts";
+import type { CreateWikiInput, SetWikiReachInput, WikiPageViewDto, WikiScope } from "@shearim/contracts";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
 import { type Db, isUuid } from "../db/client";
+import type { Audience, EventHub } from "../events";
 import { adminOnly, type Env } from "../members";
-import { channelForLink, linkWikiToChannel, unlinkWikiFromChannel, wikiChannelsFor } from "./reach";
+import {
+  channelForLink,
+  linkWikiToChannel,
+  setWikiReach,
+  unknownMembers,
+  unlinkWikiFromChannel,
+  wikiChannelsFor,
+  wikiReachFor,
+} from "./reach";
 import { addSources, DEFAULT_SOURCE_MAX_BYTES, listSources, readUploads } from "./sources";
 import type { WikiSyncs } from "./sync";
 import { listVersions, pageDtos, readPage, versionNumbered } from "./versions";
-import { createWiki, findWiki, listReadableWikis, listWikis, readableWiki, toWikiDto, wikiNamed } from "./wikis";
+import {
+  createWiki,
+  findWiki,
+  listReadableWikis,
+  listWikis,
+  readableWiki,
+  toWikiDto,
+  wikiAudience,
+  wikiNamed,
+} from "./wikis";
 
 const NAME_MAX = 80;
+const SCOPES: readonly WikiScope[] = ["public", "restricted"];
+
+/** Quem estava na audiência `before` e ficou fora de `after`: a Wiki saiu do alcance deles. */
+function leftOut(before: Audience, after: Audience): Audience | undefined {
+  if (after === "everyone" || "everyoneBut" in after) return undefined;
+  if (before === "everyone") return { everyoneBut: after.members };
+  if ("everyoneBut" in before) return undefined;
+  const gone = before.members.filter((id) => !after.members.includes(id));
+  return gone.length ? { members: gone } : undefined;
+}
 
 /**
  * As rotas da Wiki na administração (#78). Só o Admin cria, sobe Fontes e vê a lista inteira,
  * mesmo as Wikis restritas a uma lista sem ele (`403 not_admin` para os outros). Isso não dá a ele
  * leitura delas nas conversas: ali vale o alcance (ADR 0014).
  */
-export function wikiRoutes(deps: { db: Db; clock: Clock; syncs: WikiSyncs; sourceMaxBytes?: number }) {
-  const { db, clock } = deps;
+export function wikiRoutes(deps: {
+  db: Db;
+  clock: Clock;
+  events: EventHub;
+  syncs: WikiSyncs;
+  sourceMaxBytes?: number;
+}) {
+  const { db, clock, events } = deps;
   const sourceMaxBytes = deps.sourceMaxBytes ?? DEFAULT_SOURCE_MAX_BYTES;
   const routes = new Hono<Env>();
 
@@ -149,6 +183,40 @@ export function wikiRoutes(deps: { db: Db; clock: Clock; syncs: WikiSyncs; sourc
       return c.json(await wikiChannelsFor(db, wiki.id, me));
     });
   }
+
+  /** O alcance da Wiki (#83): pública, ou restrita a uma lista de Membros ativos. */
+  routes.get("/wikis/:id/reach", adminOnly, async (c) => {
+    const wiki = await findWiki(db, c.req.param("id"));
+    if (!wiki) return c.json({ error: "not_found" }, 404);
+    return c.json(await wikiReachFor(db, wiki));
+  });
+
+  /**
+   * Troca o alcance e a lista inteira; vale na próxima resposta e na próxima leitura. Quem passa a
+   * ver a Wiki recebe `wiki.updated`; quem deixa de ver recebe só `wiki.left`, com o id.
+   */
+  routes.put("/wikis/:id/reach", adminOnly, async (c) => {
+    const wiki = await findWiki(db, c.req.param("id"));
+    if (!wiki) return c.json({ error: "not_found" }, 404);
+    const input = ((await c.req.json().catch(() => null)) ?? {}) as Partial<Record<keyof SetWikiReachInput, unknown>>;
+    const invalid = (message: string) => c.json({ error: "invalid_input", message }, 400);
+    const scope = SCOPES.find((s) => s === input.scope);
+    if (!scope) return invalid("O alcance da Wiki é público ou restrito a uma lista de Membros.");
+    const ids = input.memberIds ?? [];
+    if (!Array.isArray(ids) || !ids.every((id): id is string => typeof id === "string" && isUuid(id))) {
+      return invalid("A lista da Wiki é uma lista de Membros do Workspace.");
+    }
+    if ((await unknownMembers(db, ids)).length) return invalid("Alguém na lista não é Membro do Workspace.");
+
+    const before = await wikiAudience(db, wiki);
+    await setWikiReach(db, wiki.id, { scope, memberIds: ids, now: clock.now() });
+    const changed = (await findWiki(db, wiki.id))!;
+    const after = await wikiAudience(db, changed);
+    const gone = leftOut(before, after);
+    if (gone) events.publish(gone, { type: "wiki.left", wikiId: wiki.id });
+    events.publish(after, { type: "wiki.updated", wiki: await toWikiDto(db, changed) });
+    return c.json(await wikiReachFor(db, changed));
+  });
 
   return routes;
 }

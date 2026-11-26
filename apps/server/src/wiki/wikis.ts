@@ -2,6 +2,7 @@ import type { WikiDto, WikiSourcePending, WikiSourceState } from "@shearim/contr
 import { asc, eq, isNotNull, sql } from "drizzle-orm";
 import { type Db, isUuid, schema } from "../db/client";
 import { activeAdminIds } from "../members";
+import { inWikiList, wikiListIds } from "./reach";
 import { lastSyncOf } from "./sync-state";
 import { currentVersionId, currentVersionSummary, sourcesOfVersion } from "./versions";
 
@@ -72,15 +73,15 @@ export async function listWikis(db: Db): Promise<WikiDto[]> {
 
 /**
  * Se o Membro lê a Wiki fora da administração (a barra lateral e a leitura das páginas): o ponto
- * único do alcance (ADR 0014). A pública, todo Membro; a restrita, por ora ninguém (#83: a lista
- * de Membros dela). O Admin não lê uma restrita por ser Admin: só na administração.
+ * único do alcance (ADR 0014). A pública, todo Membro; a restrita, só quem está na lista. O Admin
+ * não lê uma restrita por ser Admin: só na administração.
  */
 export async function readableBy(
-  _db: Db,
+  db: Db,
   wiki: Pick<typeof wikis.$inferSelect, "id" | "scope">,
-  _memberId: string,
+  memberId: string,
 ): Promise<boolean> {
-  return wiki.scope === "public";
+  return wiki.scope === "public" || inWikiList(db, wiki.id, memberId);
 }
 
 /** A Wiki que o Membro lê: no alcance dele e com versão publicada. Fora disso, nada. */
@@ -122,10 +123,14 @@ export async function createWiki(
 }
 
 /**
- * Quem vê a Wiki, para os eventos em tempo real: a pública, todo Membro; a restrita, os Admins
- * (que veem toda Wiki na administração). A lista de Membros da restrita entra com o alcance.
+ * Quem vê a Wiki, para os eventos em tempo real: a pública, todo Membro; a restrita, os Membros da
+ * lista (a barra lateral e a leitura) e os Admins (que veem toda Wiki na administração). Quem está
+ * fora não recebe nada dela, nem o nome.
  */
-export async function wikiAudience(db: Db, wiki: Pick<typeof wikis.$inferSelect, "scope">) {
-  if (wiki.scope === "public") return "everyone" as const;
-  return { members: await activeAdminIds(db) };
+export async function wikiAudience(
+  db: Db,
+  wiki: Pick<typeof wikis.$inferSelect, "id" | "scope">,
+): Promise<"everyone" | { members: string[] }> {
+  if (wiki.scope === "public") return "everyone";
+  return { members: [...new Set([...(await activeAdminIds(db)), ...(await wikiListIds(db, wiki.id))])] };
 }
