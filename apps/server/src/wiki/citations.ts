@@ -1,4 +1,4 @@
-import { veiledWikiMarker, type WikiCitationDto, wikiCitationMarkers } from "@shearim/contracts";
+import { veiledWikiMarker, type WikiCitationDto, wikiCitationMarkers } from "@regents/contracts";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { type Db, schema, type Tx } from "../db/client";
 import type { ToolRun } from "../tools/port";

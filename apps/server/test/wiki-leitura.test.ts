@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { WikiDto, WikiPageViewDto } from "@shearim/contracts";
+import type { WikiDto, WikiPageViewDto } from "@regents/contracts";
 import { scriptedBrain } from "./fakes/scripted-brain";
 import { eventually, type TestApp, testApp } from "./harness";
 

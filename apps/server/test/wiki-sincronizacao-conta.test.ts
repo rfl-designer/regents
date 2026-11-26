@@ -6,7 +6,7 @@ import {
   type WikiPageDto,
   type WikiSyncDto,
   wikiSyncPayerText,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { RETRY_DELAY_MS } from "../src/executions";
 import { STALL_MS } from "../src/model/call";
 import type { FakeClaudeCall, FakeRun } from "./fake-claude";
@@ -110,7 +110,7 @@ describe("a Conta do Admin paga a Sincronização", () => {
       // A pasta da Conta de quem clicou, e só o endpoint do Shearim como servidor MCP.
       expect(chamada!.env.CLAUDE_CONFIG_DIR).toBeTruthy();
       expect(chamada!.argv).toContain("--strict-mcp-config");
-      expect(flag(chamada!, "--allowedTools")).toBe("mcp__shearim");
+      expect(flag(chamada!, "--allowedTools")).toBe("mcp__regents");
       const mcp = t.claude.mcp().filter((e) => e.pid === chamada!.pid);
       expect(mcp[0]).toMatchObject({ listed: ["ler_pagina", "escrever_pagina", "remover_pagina"] });
       expect(mcp[1]).toMatchObject({ called: "escrever_pagina", result: { isError: false } });
@@ -261,7 +261,7 @@ function sessaoDe(c: FakeClaudeCall) {
   const config = JSON.parse(flag(c, "--mcp-config")!) as {
     mcpServers: Record<string, { url: string; headers: Record<string, string> }>;
   };
-  const servidor = config.mcpServers.shearim!;
+  const servidor = config.mcpServers.regents!;
   return { url: servidor.url, token: servidor.headers.Authorization!.replace(/^Bearer /, "") };
 }
 

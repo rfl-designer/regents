@@ -1,4 +1,4 @@
-import type { YourAccountDto } from "@shearim/contracts";
+import type { YourAccountDto } from "@regents/contracts";
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,

@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { AccountDto, AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import type { AccountDto, AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@regents/contracts";
 import { ROUTING_MODEL } from "../src/articuladora";
 import { ROUTING_SCHEMA } from "../src/routing";
 import type { FakeClaudeCall, FakeRun } from "./fake-claude";

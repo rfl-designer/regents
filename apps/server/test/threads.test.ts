@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, FollowedThreadDto, MessageDto, UnreadDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, FollowedThreadDto, MessageDto, UnreadDto } from "@regents/contracts";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 
 /** Estes testes passam por várias execuções em série; com a máquina carregada, levam tempo. */

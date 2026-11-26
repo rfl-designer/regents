@@ -10,7 +10,7 @@
  * - "Na fila" e "Agentes não agem" não geram push.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@regents/contracts";
 import { PUSH_TTL_SECONDS } from "../src/push";
 import type { FakeRun } from "./fake-claude";
 import { type EventSocket, type Person, type TestApp, testApp } from "./harness";

@@ -4,7 +4,7 @@ import {
   type GitHubInstallDto,
   type GitHubManifestDto,
   type StartGitHubManifestInput,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { Hono } from "hono";
 import { findAgent } from "../agents";
 import type { Db } from "../db/client";
@@ -130,7 +130,7 @@ export function githubRoutes(deps: { db: Db; github: GitHub }) {
     try {
       await github.convert(code);
     } catch (err) {
-      console.error("shearim: a criação do GitHub App falhou", err);
+      console.error("regents: a criação do GitHub App falhou", err);
       return c.redirect(backToPwa({ error: "O GitHub não criou o GitHub App. Comece de novo." }));
     }
     return c.redirect(backToPwa({ ok: "created" }));
@@ -154,7 +154,7 @@ export function githubRoutes(deps: { db: Db; github: GitHub }) {
     try {
       await github.link(id);
     } catch (err) {
-      console.error("shearim: a instalação do GitHub App não foi confirmada", err);
+      console.error("regents: a instalação do GitHub App não foi confirmada", err);
       return c.redirect(backToPwa({ error: "O GitHub não confirmou a instalação. Instale de novo." }));
     }
     return c.redirect(backToPwa({ ok: "installed" }));

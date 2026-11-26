@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@regents/contracts";
 import { sql } from "drizzle-orm";
 import { scriptedBrain } from "./fakes/scripted-brain";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";

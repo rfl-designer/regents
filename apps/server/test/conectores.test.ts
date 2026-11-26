@@ -19,7 +19,7 @@ import type {
   ConnectorDto,
   ExecutionDto,
   MessageDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import type { ToolDefinition } from "../src/tools/port";
 import { WORKSPACE_TOOLS } from "../src/tools/workspace";
 import type { FakeClaudeCall } from "./fake-claude";
@@ -296,7 +296,7 @@ describe("pela Conta", () => {
         .at(-1)!;
       const config = resposta.argv[resposta.argv.indexOf("--mcp-config") + 1]!;
       // O endereço e o token do CRM nunca vão ao processo do modelo.
-      expect(Object.keys(JSON.parse(config).mcpServers)).toEqual(["shearim"]);
+      expect(Object.keys(JSON.parse(config).mcpServers)).toEqual(["regents"]);
       expect(config).not.toContain(crm.url);
       expect(resposta.argv.join(" ")).not.toContain(TOKEN);
       expect(crm.calls).toEqual([{ name: "buscar_cliente", arguments: { nome: "Acme" }, token: TOKEN }]);

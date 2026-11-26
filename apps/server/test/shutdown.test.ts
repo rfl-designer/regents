@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { EVENTS_CLOSE_UPDATING, EVENTS_PATH } from "@shearim/contracts";
+import { EVENTS_CLOSE_UPDATING, EVENTS_PATH } from "@regents/contracts";
 import { onCleanup, throwawayAccounts } from "./harness";
 
 const MAIN = resolve(import.meta.dir, "../src/main.ts");

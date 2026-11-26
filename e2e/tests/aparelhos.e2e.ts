@@ -1,5 +1,5 @@
 import { test as base, describe } from "@e2e-dev/web";
-import type { DmDto, MeDto, PushSubscriptionInput } from "@shearim/contracts";
+import type { DmDto, MeDto, PushSubscriptionInput } from "@regents/contracts";
 import { expect } from "e2e";
 import { addMember, as, type DevPerson, jsonBody, newPerson } from "../support/people";
 import { type FakePushService, startFakePushService } from "../support/push-service";

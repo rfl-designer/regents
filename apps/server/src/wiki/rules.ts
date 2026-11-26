@@ -1,4 +1,4 @@
-import { WIKI_INDEX_SLUG, WIKI_LOG_SLUG } from "@shearim/contracts";
+import { WIKI_INDEX_SLUG, WIKI_LOG_SLUG } from "@regents/contracts";
 
 /**
  * As regras da Wiki (o schema do padrão LLM Wiki, ADR 0014 e 0015): texto fixo do Shearim, como

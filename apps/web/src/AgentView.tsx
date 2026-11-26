@@ -1,4 +1,4 @@
-import { type AgentDto, conversationPath, type MeDto, type MemoryItemDto } from "@shearim/contracts";
+import { type AgentDto, conversationPath, type MeDto, type MemoryItemDto } from "@regents/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
 import { api } from "./api";

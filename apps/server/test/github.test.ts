@@ -21,7 +21,7 @@ import type {
   ExecutionDto,
   GitHubDto,
   MessageDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { schema } from "../src/db/client";
 import type { FakeGitHub } from "./fakes/github-api";
 import { toolResults } from "./fakes/messages-api";

@@ -9,7 +9,7 @@ import type {
   WikiSourceDto,
   WikiSyncDto,
   WikiVersionDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { call, json } from "../api";
 
 /** As chamadas da Wiki (spec #74). */

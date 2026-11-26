@@ -4,7 +4,7 @@ import {
   type ExecutionStep,
   OPEN_STATES,
   type YourAccountDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import {
   type AnyColumn,
   and,
@@ -1182,7 +1182,7 @@ export function createExecutions(deps: {
         await run(job, agent, payer, controller);
       } catch (err) {
         if (!controller.signal.aborted) {
-          console.error("shearim: execução falhou", err);
+          console.error("regents: execução falhou", err);
           await fail(job, "erro inesperado no Shearim").catch(() => {});
         }
       } finally {
@@ -1240,7 +1240,7 @@ export function createExecutions(deps: {
         if (await armRetryAlarm(now)) continue;
       } catch (err) {
         if (stopping) break;
-        console.error("shearim: a fila de execuções falhou ao pegar trabalho", err);
+        console.error("regents: a fila de execuções falhou ao pegar trabalho", err);
         await pause(1_000);
         continue;
       }
@@ -1288,7 +1288,7 @@ export function createExecutions(deps: {
         const current = monthOf(clock.now());
         if (current !== month) {
           month = current;
-          void reconsider().catch((err) => console.error("shearim: a fila falhou ao virar o mês", err));
+          void reconsider().catch((err) => console.error("regents: a fila falhou ao virar o mês", err));
         }
         arm();
       });
@@ -1320,7 +1320,7 @@ export function createExecutions(deps: {
     try {
       await expireApprovals();
     } catch (err) {
-      console.error("shearim: a expiração dos Pedidos falhou; tenta de novo em 1 min", err);
+      console.error("regents: a expiração dos Pedidos falhou; tenta de novo em 1 min", err);
       armExpiry(new Date(clock.now().getTime() + EXPIRY_RETRY_MS));
     }
   }

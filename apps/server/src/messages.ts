@@ -1,4 +1,4 @@
-import type { MessageDto } from "@shearim/contracts";
+import type { MessageDto } from "@regents/contracts";
 import { asc, eq } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { type Db, schema } from "./db/client";

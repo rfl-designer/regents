@@ -1,4 +1,4 @@
-import type { AgentSkillDto, SkillDto } from "@shearim/contracts";
+import type { AgentSkillDto, SkillDto } from "@regents/contracts";
 import { and, asc, eq, inArray, type SQL, sql } from "drizzle-orm";
 import { type Db, isUuid, schema } from "../db/client";
 import { SYNC_SKILL } from "../wiki/rules";

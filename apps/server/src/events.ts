@@ -1,4 +1,4 @@
-import { EVENTS_CLOSE_UPDATING, type ServerEvent } from "@shearim/contracts";
+import { EVENTS_CLOSE_UPDATING, type ServerEvent } from "@regents/contracts";
 import type { MiddlewareHandler } from "hono";
 import { upgradeWebSocket } from "hono/bun";
 import type { Member } from "./members";

@@ -7,7 +7,7 @@ import type {
   WikiPageViewDto,
   WikiSourceDto,
   WikiVersionDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { toolResults } from "./fakes/messages-api";
 import { scriptedBrain } from "./fakes/scripted-brain";
 import { eventually, type TestApp, testApp } from "./harness";

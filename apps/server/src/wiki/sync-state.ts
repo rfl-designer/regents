@@ -1,4 +1,4 @@
-import type { WikiSyncDto } from "@shearim/contracts";
+import type { WikiSyncDto } from "@regents/contracts";
 import { desc, eq, type SQL } from "drizzle-orm";
 import { type Db, schema } from "../db/client";
 

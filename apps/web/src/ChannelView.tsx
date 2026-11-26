@@ -14,7 +14,7 @@ import {
   OPEN_STATES,
   type OutcomeDto,
   type YourAccountDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import {
   type FormEvent,
   Fragment,

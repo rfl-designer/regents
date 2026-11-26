@@ -1,4 +1,4 @@
-import type { MeDto, MemberRole, MemberSummaryDto } from "@shearim/contracts";
+import type { MeDto, MemberRole, MemberSummaryDto } from "@regents/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
 import { ApiFailure, api } from "./api";

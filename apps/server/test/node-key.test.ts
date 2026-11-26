@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { InstallationDto } from "@shearim/contracts";
+import type { InstallationDto } from "@regents/contracts";
 import { createNightlyBackups } from "../src/installation/backups";
 import { localApiNodeKey } from "../src/installation/node-key";
 import { fakeLocalApi, recordedStatus } from "./fake-localapi";

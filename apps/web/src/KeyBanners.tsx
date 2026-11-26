@@ -1,4 +1,4 @@
-import type { AgentBudgetDto, KeyIncidentDto } from "@shearim/contracts";
+import type { AgentBudgetDto, KeyIncidentDto } from "@regents/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { dateTimeShort } from "./format";

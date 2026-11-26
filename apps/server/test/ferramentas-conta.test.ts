@@ -9,7 +9,7 @@
  * - Na troca da Conta para a Chave no meio, a resposta refeita tem as mesmas Ferramentas.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@regents/contracts";
 import { STALL_MS } from "../src/executions";
 import { type ToolDefinition, ToolFailure } from "../src/tools/port";
 import { WORKSPACE_TOOLS } from "../src/tools/workspace";
@@ -106,13 +106,13 @@ describe("a linha de comando pela Conta", () => {
       expect(flag(resposta!, "--tools")).toBe("");
       expect(resposta!.argv).toContain("--strict-mcp-config");
       const config = mcpConfig(resposta!)!;
-      expect(Object.keys(config.mcpServers)).toEqual(["shearim"]);
-      const servidor = config.mcpServers.shearim!;
+      expect(Object.keys(config.mcpServers)).toEqual(["regents"]);
+      const servidor = config.mcpServers.regents!;
       expect(servidor.type).toBe("http");
       expect(new URL(servidor.url).hostname).toBe("127.0.0.1");
       expect(servidor.headers?.Authorization).toMatch(/^Bearer \S{20,}$/);
       // As Ferramentas do Shearim são liberadas sem pergunta de permissão; nenhuma outra.
-      expect(flag(resposta!, "--allowedTools")).toBe("mcp__shearim");
+      expect(flag(resposta!, "--allowedTools")).toBe("mcp__regents");
     },
     LONGO,
   );
@@ -179,7 +179,7 @@ async function listarNoEndpoint(url: string, token: string) {
 }
 
 const endpointDe = (c: FakeClaudeCall) => {
-  const servidor = mcpConfig(c)!.mcpServers.shearim!;
+  const servidor = mcpConfig(c)!.mcpServers.regents!;
   return { url: servidor.url, token: servidor.headers!.Authorization!.replace(/^Bearer /, "") };
 };
 

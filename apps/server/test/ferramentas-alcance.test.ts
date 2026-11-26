@@ -10,7 +10,7 @@
  * O que está fora do alcance não aparece nem pelo nome, nem no resultado, nem no Andamento.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, DmDto, MeDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, DmDto, MeDto, MessageDto } from "@regents/contracts";
 import { toolResults } from "./fakes/messages-api";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 

@@ -1,4 +1,4 @@
-import { isChannelKind } from "@shearim/contracts";
+import { isChannelKind } from "@regents/contracts";
 import { asc, eq, inArray, or, sql } from "drizzle-orm";
 import { type Db, isUuid, schema } from "../db/client";
 import { participantsOf } from "../participation";

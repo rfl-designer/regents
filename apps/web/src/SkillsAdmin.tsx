@@ -4,7 +4,7 @@ import {
   SKILL_DESCRIPTION_MAX,
   SKILL_NAME_MAX,
   type SkillDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { api, messageOf } from "./api";
 import { dateTimeShort } from "./format";

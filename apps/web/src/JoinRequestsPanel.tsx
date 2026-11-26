@@ -1,4 +1,4 @@
-import type { JoinRequestAdminDto } from "@shearim/contracts";
+import type { JoinRequestAdminDto } from "@regents/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
 import { api } from "./api";

@@ -8,7 +8,7 @@ import {
   type AgentWikiDto,
   type ToolOrigin,
   type WorkspaceKeyDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
 import { agentCapabilitiesText } from "./agent-tools";

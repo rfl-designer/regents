@@ -10,7 +10,7 @@ import {
   wikiSyncOpen,
   wikiSyncPayerText,
   wikiSyncStepText,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { type ChangeEvent, type FormEvent, useCallback, useEffect, useState } from "react";
 import { messageOf } from "../api";
 import { dateTimeShort } from "../format";

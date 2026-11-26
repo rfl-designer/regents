@@ -1,4 +1,4 @@
-import { WIKI_INDEX_SLUG } from "@shearim/contracts";
+import { WIKI_INDEX_SLUG } from "@regents/contracts";
 import type { Db } from "../db/client";
 import { type AutomaticTool, ToolFailure } from "../tools/port";
 import { input } from "../tools/workspace-read";

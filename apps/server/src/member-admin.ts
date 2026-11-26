@@ -1,4 +1,4 @@
-import { MEMBER_REMOVED_CLOSE_CODE, type MemberRole, type UpdateMemberRoleInput } from "@shearim/contracts";
+import { MEMBER_REMOVED_CLOSE_CODE, type MemberRole, type UpdateMemberRoleInput } from "@regents/contracts";
 import { and, count, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { createAccounts } from "./accounts";
@@ -150,7 +150,7 @@ async function leaveClosedConversations(tx: Tx, memberId: string) {
  * e que o alvo é Membro. Devolve quantos Admins há agora.
  */
 async function lockAdmins(tx: Tx, actorId: string, targetId: string) {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtext('shearim:admins'))`);
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext('regents:admins'))`);
   const actor = await memberById(tx, actorId);
   if (!actor || actor.leftAt || actor.role !== "admin") return { kind: "not_admin" as const };
   const target = isUuid(targetId) ? await memberById(tx, targetId) : undefined;

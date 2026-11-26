@@ -10,7 +10,7 @@ import {
   type WikiSyncDto,
   type WikiVersionDto,
   wikiSyncStepText,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { wikiFromEnv } from "../src/wiki/sources";
 import { lastUserText, type RecordedRequest, toolResults } from "./fakes/messages-api";
 import { scriptedBrain } from "./fakes/scripted-brain";

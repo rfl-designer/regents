@@ -9,7 +9,7 @@
  * roteiriza pela Chave, `memoryRuns` a roteiriza no `fake-claude`, e sem roteiro ela não guarda nada.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ExecutionDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, ExecutionDto, MemoryItemDto, MessageDto } from "@regents/contracts";
 import { DEFAULT_MEMORY_MODEL, MEMORY_SCHEMA, memoryFromEnv } from "../src/memory/extraction";
 import { type ScriptedRun, scriptedBrain } from "./fakes/scripted-brain";
 import { type EventSocket, eventually, type Person, type TestApp, testApp } from "./harness";

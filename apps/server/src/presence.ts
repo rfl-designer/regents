@@ -1,4 +1,4 @@
-import type { SetPresenceInput } from "@shearim/contracts";
+import type { SetPresenceInput } from "@regents/contracts";
 import { Hono } from "hono";
 import { findVisibleConversation } from "./conversations";
 import type { Db } from "./db/client";

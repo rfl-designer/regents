@@ -9,7 +9,7 @@
  * para a Memória do Agente e a do Workspace.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, MemoryItemDto, MessageDto } from "@regents/contracts";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };

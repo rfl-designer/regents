@@ -1,5 +1,5 @@
 import { inflateRawSync } from "node:zlib";
-import { type CreateSkillInput, SKILL_BODY_MAX } from "@shearim/contracts";
+import { type CreateSkillInput, SKILL_BODY_MAX } from "@regents/contracts";
 
 /** O que sai de um `SKILL.md`: os campos da Habilidade (ainda sem conferir) e os arquivos ignorados. */
 export type SkillFile = { input: Partial<CreateSkillInput>; ignored: string[] } | { error: string };

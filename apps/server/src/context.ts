@@ -1,4 +1,4 @@
-import { isChannelKind } from "@shearim/contracts";
+import { isChannelKind } from "@regents/contracts";
 import { and, asc, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import type { Agent } from "./agents";
 import { withBuiltinText } from "./articuladora";

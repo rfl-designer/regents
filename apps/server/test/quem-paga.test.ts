@@ -14,7 +14,7 @@
  * dele (`yourAccount`) e a hora em que ela volta.
  */
 import { describe, expect, test } from "bun:test";
-import type { AccountDto, AgentDto, ChannelDto, ExecutionDto, MessageDto, YourAccountDto } from "@shearim/contracts";
+import type { AccountDto, AgentDto, ChannelDto, ExecutionDto, MessageDto, YourAccountDto } from "@regents/contracts";
 import type { FakeClaudeCall, FakeRun } from "./fake-claude";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
 

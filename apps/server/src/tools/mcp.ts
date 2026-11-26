@@ -15,8 +15,8 @@ import { timingSafeEqual } from "node:crypto";
 import type { Server } from "bun";
 import type { ExecutionTools } from "./port";
 
-/** O nome do servidor no `--mcp-config`: as Ferramentas chegam ao modelo como `mcp__shearim__<id>`. */
-export const MCP_SERVER_NAME = "shearim";
+/** O nome do servidor no `--mcp-config`: as Ferramentas chegam ao modelo como `mcp__regents__<id>`. */
+export const MCP_SERVER_NAME = "regents";
 
 /** As versões do protocolo que o endpoint fala; a primeira é a que ele propõe. */
 const PROTOCOL_VERSIONS = ["2025-06-18", "2025-11-25", "2025-03-26", "2024-11-05"];

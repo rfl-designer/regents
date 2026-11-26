@@ -1,4 +1,4 @@
-import { normalizeHandle } from "@shearim/contracts";
+import { normalizeHandle } from "@regents/contracts";
 import { eq, inArray } from "drizzle-orm";
 import { type Db, schema } from "./db/client";
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ExecutionDto, MentionDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, ExecutionDto, MentionDto, MessageDto } from "@regents/contracts";
 import { schema } from "../src/db/client";
 import { eventually, type TestApp, testApp } from "./harness";
 

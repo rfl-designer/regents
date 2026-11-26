@@ -1,4 +1,4 @@
-import { AGENT_MODELS } from "@shearim/contracts";
+import { AGENT_MODELS } from "@regents/contracts";
 import { and, desc, eq, gt, inArray, notInArray, or } from "drizzle-orm";
 import { type ModelContext, recentMessages } from "../context";
 import { type Db, schema, type Tx } from "../db/client";

@@ -1,4 +1,4 @@
-import type { NodeKeyDto } from "@shearim/contracts";
+import type { NodeKeyDto } from "@regents/contracts";
 
 /** De onde vem o vencimento da chave do nó da Instalação na tailnet. */
 export interface NodeKeyPort {

@@ -18,7 +18,7 @@ import type {
   ExecutionDto,
   MessageDto,
   MyConnectorDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import type { FakeRemoteMcp, FakeRemoteTool } from "./fakes/remote-mcp";
 import { type EventSocket, eventually, type Person, remoteMcp, type TestApp, testApp } from "./harness";
 

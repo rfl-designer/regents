@@ -5,7 +5,7 @@
  * no mesmo teste fala com o servidor por `fetch`, com o cookie dela. Sem cookie, quem fala
  * é a "Pessoa Dev", a Admin da execução (a primeira a chegar na Instalação vazia).
  */
-import type { JoinRequestAdminDto, JoinRequestDto, MeDto } from "@shearim/contracts";
+import type { JoinRequestAdminDto, JoinRequestDto, MeDto } from "@regents/contracts";
 
 export interface DevPerson {
   /** `UserProfile.ID` de mentira. Use um único por teste (`Date.now()`): o banco é da execução. */

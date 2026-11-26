@@ -1,4 +1,4 @@
-import type { CreateWikiInput, SetWikiReachInput, WikiPageViewDto, WikiScope } from "@shearim/contracts";
+import type { CreateWikiInput, SetWikiReachInput, WikiPageViewDto, WikiScope } from "@regents/contracts";
 import { Hono } from "hono";
 import { findAgent, lockLiveAgent } from "../agents";
 import type { Clock } from "../clock";
