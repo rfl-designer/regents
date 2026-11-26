@@ -4,8 +4,8 @@
  * contra as páginas que a execução leu por "ler a Wiki" e guarda com a mensagem as citações
  * válidas (a Wiki, o slug e a versão lida). Quem vê a mensagem recebe, por marcador, o link para a
  * página na versão lida; um marcador sem leitura aparece "não consultada", sem link e sem o nome
- * da Wiki; quem não lê a Wiki vê a citação sem link. A citação de uma versão antiga abre aquela
- * versão, mesmo que a página não exista mais na atual. Pela Chave e pela Conta.
+ * da Wiki; quem não lê a Wiki vê a citação sem link e sem o nome dela. A citação de uma versão
+ * antiga abre aquela versão, mesmo que a página não exista mais na atual. Pela Chave e pela Conta.
  */
 import { describe, expect, test } from "bun:test";
 import type {
@@ -372,7 +372,7 @@ describe("a citação de uma versão antiga", () => {
 
 describe("quem vê a mensagem mas não lê a Wiki", () => {
   test(
-    "o Financeiro é restrito a Juliana e Bia: a resposta em #diretoria cita Metas com link; depois que Bia sai da lista, ela vê a citação sem link e a página não abre para ela",
+    "o Financeiro é restrito a Juliana e Bia: a resposta em #diretoria cita Metas com link; depois que Bia sai da lista, ela vê a citação sem link e sem o nome da Wiki, e a página não abre para ela",
     async () => {
       const t = await testApp();
       const ws = await workspace(t);
@@ -397,9 +397,9 @@ describe("quem vê a mensagem mas não lê a Wiki", () => {
       expect((await lista([ws.eu.id])).status).toBe(200);
 
       const daBia = await respostaA(t, ws.diretoria.id, { id: resposta.originMessageId! } as MessageDto, bia);
-      expect(daBia.wikiCitations).toEqual([
-        { marker: "[[wiki:Financeiro/metas]]", state: "unlinked", wikiName: "Financeiro", slug: "metas" },
-      ]);
+      // Fora do alcance, nem pelo nome (história 52): nem a citação nem o corpo dizem qual é a Wiki.
+      expect(daBia.wikiCitations).toEqual([{ marker: "[[wiki:?/metas]]", state: "unlinked", slug: "metas" }]);
+      expect(daBia.body).toBe("A meta é 2 milhões [[wiki:?/metas]].");
       expect((await abrir(t, bia, financeiro.id, 1, "metas")).status).toBe(404);
       const daJuliana = await respostaA(t, ws.diretoria.id, { id: resposta.originMessageId! } as MessageDto, juliana);
       expect(daJuliana.wikiCitations).toMatchObject([comLink]);

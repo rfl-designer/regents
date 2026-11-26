@@ -327,7 +327,8 @@ export function wikiPageOfPath(pathname: string): { wikiId: string; slug: string
  * Uma citação da Wiki numa resposta de Agente, como quem vê a mensagem a recebe: uma por marcador
  * `[[wiki:<nome>/<slug>]]` do corpo, na ordem, sem repetir (`marker` é o marcador exato).
  * - `linked`: a execução leu a página, e quem vê lê a Wiki: o link abre a página na versão lida.
- * - `unlinked`: a execução leu a página, mas quem vê não lê a Wiki: a citação, sem link.
+ * - `unlinked`: a execução leu a página, mas quem vê não lê a Wiki (ou ela foi apagada): a
+ *   citação sem link e sem o nome da Wiki, nem no marcador (`veiledWikiMarker`) nem no corpo.
  * - `not_consulted`: a execução não leu a página (ou a Wiki está fora do alcance): "não
  *   consultada", sem link e sem o nome da Wiki.
  */
@@ -341,8 +342,16 @@ export type WikiCitationDto =
       version: number;
       title: string;
     }
-  | { marker: string; state: "unlinked"; wikiName: string; slug: string }
+  | { marker: string; state: "unlinked"; slug: string }
   | { marker: string; state: "not_consulted" };
+
+/**
+ * O marcador de uma citação sem o nome da Wiki: o que quem não lê a Wiki recebe no lugar do
+ * marcador original, no corpo e na citação (`unlinked`), para que ela não apareça nem pelo nome.
+ */
+export function veiledWikiMarker(slug: string) {
+  return `[[wiki:?/${slug}]]`;
+}
 
 /** Um pedaço do corpo de uma resposta: texto puro, ou um marcador de citação `[[wiki:<nome>/<slug>]]`. */
 export type WikiCitationPart = { text: string } | { marker: string; wiki: string; slug: string };

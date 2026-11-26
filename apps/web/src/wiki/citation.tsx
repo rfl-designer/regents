@@ -13,9 +13,9 @@ export const OpenWikiContext = createContext<((at: WikiAt) => void) | null>(null
 
 /**
  * O corpo de uma mensagem com as citações da Wiki (#85): cada marcador `[[wiki:<nome>/<slug>]]`
- * vira o link para a página na versão lida, a citação sem link (quem vê não lê a Wiki) ou "não
- * consultada" (sem o nome da Wiki). Sem citações, o corpo como veio. `decorate` trata o texto em
- * volta (o destaque da Menção).
+ * vira o link para a página na versão lida, a citação sem link e sem o nome da Wiki (quem vê não a
+ * lê, ou ela foi apagada) ou "não consultada" (sem o nome da Wiki). Sem citações, o corpo como
+ * veio. `decorate` trata o texto em volta (o destaque da Menção).
  */
 export function MessageText({
   body,
@@ -52,8 +52,8 @@ function Citation({ citation: c }: { citation: WikiCitationDto }) {
   }
   if (c.state === "unlinked") {
     return (
-      <span className="wiki-citation" title="Você não lê esta Wiki">
-        Wiki {c.wikiName}: {c.slug}
+      <span className="wiki-citation" title="Esta Wiki está fora do seu alcance">
+        Wiki: {c.slug}
       </span>
     );
   }
