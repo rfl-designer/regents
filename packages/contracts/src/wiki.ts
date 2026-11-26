@@ -106,7 +106,9 @@ export type WikiSourcePending = "new" | "removal" | null;
 /**
  * Uma Fonte de uma Wiki, sem o texto (ele não muda depois de subir). `GET /api/wikis/:id/sources`
  * e a resposta de `POST /api/wikis/:id/sources` (multipart, um ou vários campos `files`; só Admin).
- * `sizeBytes` é o tamanho do texto em UTF-8.
+ * `DELETE /api/wikis/:id/sources/:sourceId` remove uma (só Admin, sem Sincronização em curso) e
+ * devolve a lista nova. A lista tem as ativas e as removidas "a remover"; a removida que a versão
+ * atual já não reflete não aparece. `sizeBytes` é o tamanho do texto em UTF-8.
  */
 export interface WikiSourceDto {
   id: string;
@@ -216,8 +218,9 @@ export interface WikiLinkDto {
 }
 
 /**
- * Uma página para o Membro ler: `GET /api/wikis/:id/pages/:slug` (a versão atual, para quem a Wiki
- * alcança; `404` com a mensagem fora disso). `version` é o número da versão lida (#85: a citação
+ * Uma página para o Membro ler: `GET /api/wikis/:id/pages/:slug` (a versão atual) e
+ * `GET /api/wikis/:id/versions/:n/pages/:slug` (a versão `n`, que a citação abre), para quem a Wiki
+ * alcança; `404` com a mensagem fora disso. `version` é o número da versão lida (#85: a citação
  * abre uma versão antiga, e `wiki.currentVersion` diz se há uma mais nova). `links` são os links
  * do corpo, na ordem, sem repetir, cada um com o título da página ou `null` se ela não existe na
  * versão lida.
@@ -225,6 +228,8 @@ export interface WikiLinkDto {
 export interface WikiPageViewDto {
   wiki: WikiDto;
   version: number;
+  /** A página existe na versão atual (na leitura de uma versão antiga, o aviso leva a ela ou ao índice). */
+  inCurrentVersion: boolean;
   page: WikiPageDto;
   links: WikiLinkDto[];
 }
@@ -253,19 +258,77 @@ export function wikiLinkSlugs(body: string): string[] {
   return [...new Set(slugs)];
 }
 
-/** A leitura da Wiki no PWA (#82): `/wiki/<id>/<slug>` (sem slug, o índice). */
+/**
+ * A leitura da Wiki no PWA (#82): `/wiki/<id>/<slug>` (a versão atual; sem slug, o índice) e
+ * `/wiki/<id>/versoes/<n>/<slug>` (a versão `n`, que a citação abre, #85).
+ */
 export const WIKI_READ_PREFIX = "/wiki/";
 
-export function wikiPagePath(wikiId: string, slug: string = WIKI_INDEX_SLUG): string {
-  return `${WIKI_READ_PREFIX}${wikiId}/${encodeURIComponent(slug)}`;
+export function wikiPagePath(wikiId: string, slug: string = WIKI_INDEX_SLUG, version?: number): string {
+  const at = version === undefined ? "" : `versoes/${version}/`;
+  return `${WIKI_READ_PREFIX}${wikiId}/${at}${encodeURIComponent(slug)}`;
 }
 
-/** A página que o endereço pede (`/wiki/<id>/<slug>`), ou `null`. */
-export function wikiPageOfPath(pathname: string): { wikiId: string; slug: string } | null {
+/** A página que o endereço pede (`version` só na de uma versão), ou `null`. */
+export function wikiPageOfPath(pathname: string): { wikiId: string; slug: string; version?: number } | null {
   if (!pathname.startsWith(WIKI_READ_PREFIX)) return null;
-  const [wikiId, slug] = pathname.slice(WIKI_READ_PREFIX.length).split("/");
+  const parts = pathname.slice(WIKI_READ_PREFIX.length).split("/");
+  const [wikiId] = parts;
   if (!wikiId) return null;
-  return { wikiId, slug: slug ? decodeURIComponent(slug) : WIKI_INDEX_SLUG };
+  if (parts[1] === "versoes" && parts.length >= 4) {
+    const version = Number(parts[2]);
+    if (!Number.isInteger(version) || version < 1) return null;
+    return { wikiId, slug: parts[3] ? decodeURIComponent(parts[3]) : WIKI_INDEX_SLUG, version };
+  }
+  return { wikiId, slug: parts[1] ? decodeURIComponent(parts[1]) : WIKI_INDEX_SLUG };
+}
+
+// ---------- Citação (#85) ----------
+
+/**
+ * Uma citação da Wiki numa resposta de Agente, como quem vê a mensagem a recebe: uma por marcador
+ * `[[wiki:<nome>/<slug>]]` do corpo, na ordem, sem repetir (`marker` é o marcador exato).
+ * - `linked`: a execução leu a página, e quem vê lê a Wiki: o link abre a página na versão lida.
+ * - `unlinked`: a execução leu a página, mas quem vê não lê a Wiki: a citação, sem link.
+ * - `not_consulted`: a execução não leu a página (ou a Wiki está fora do alcance): "não
+ *   consultada", sem link e sem o nome da Wiki.
+ */
+export type WikiCitationDto =
+  | {
+      marker: string;
+      state: "linked";
+      wikiId: string;
+      wikiName: string;
+      slug: string;
+      version: number;
+      title: string;
+    }
+  | { marker: string; state: "unlinked"; wikiName: string; slug: string }
+  | { marker: string; state: "not_consulted" };
+
+/** Um pedaço do corpo de uma resposta: texto puro, ou um marcador de citação `[[wiki:<nome>/<slug>]]`. */
+export type WikiCitationPart = { text: string } | { marker: string; wiki: string; slug: string };
+
+const WIKI_CITATION = /\[\[wiki:([^[\]/]+)\/([^[\]]+)\]\]/g;
+
+/** O corpo em pedaços: o texto e os marcadores de citação, na ordem. */
+export function wikiCitationParts(body: string): WikiCitationPart[] {
+  const parts: WikiCitationPart[] = [];
+  let last = 0;
+  for (const m of body.matchAll(WIKI_CITATION)) {
+    if (m.index > last) parts.push({ text: body.slice(last, m.index) });
+    parts.push({ marker: m[0], wiki: m[1]!.trim(), slug: m[2]!.trim() });
+    last = m.index + m[0].length;
+  }
+  if (last < body.length) parts.push({ text: body.slice(last) });
+  return parts;
+}
+
+/** Os marcadores de citação do corpo, na ordem, sem repetir. */
+export function wikiCitationMarkers(body: string): { marker: string; wiki: string; slug: string }[] {
+  const seen = new Map<string, { marker: string; wiki: string; slug: string }>();
+  for (const p of wikiCitationParts(body)) if ("marker" in p && !seen.has(p.marker)) seen.set(p.marker, p);
+  return [...seen.values()];
 }
 
 /** O que muda na Wiki em tempo real, para quem a vê. */

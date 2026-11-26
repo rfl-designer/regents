@@ -110,6 +110,15 @@ export async function versionNumbered(db: Db, wikiId: string, number: number): P
   return row?.id;
 }
 
+/** O número da versão. */
+export async function versionNumberOf(db: Db, versionId: string): Promise<number> {
+  const [row] = await db
+    .select({ number: wikiVersions.number })
+    .from(wikiVersions)
+    .where(eq(wikiVersions.id, versionId));
+  return row!.number;
+}
+
 /** As páginas de uma versão, por slug, com as Fontes de cada uma (na ordem em que subiram). */
 export async function pageDtos(db: Db, versionId: string): Promise<WikiPageDto[]> {
   const pages = await pagesOfVersion(db, versionId);

@@ -271,6 +271,21 @@ function WikiSources({ wiki, onChanged }: { wiki: WikiDto; onChanged(): void }) 
     }
   }
 
+  /** "Remover": a Fonte fica "a remover" até a próxima Sincronização, ou sai direto se nunca foi sincronizada. */
+  async function remove(source: WikiSourceDto) {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      setSources(await wikiApi.removeSource(wiki.id, source.id));
+      onChanged();
+    } catch (err) {
+      setError(messageOf(err, `A Fonte ${source.fileName} não foi removida. Tente de novo.`));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section aria-label={`Fontes de ${wiki.name}`}>
       {loadError && (
@@ -284,8 +299,17 @@ function WikiSources({ wiki, onChanged }: { wiki: WikiDto; onChanged(): void }) 
           <li key={s.id} className="hint">
             <strong>{s.fileName}</strong> · {formatBytes(s.sizeBytes)} · {s.uploadedBy.name},{" "}
             {dateTimeShort(s.uploadedAt)}
-            {s.state === "removed" && <span className="tag">removida</span>}
             {s.pending && <span className="tag">{PENDING_TEXT[s.pending]}</span>}
+            {s.state === "active" && (
+              <button
+                type="button"
+                disabled={busy || open(wiki.lastSync)}
+                aria-label={`Remover ${s.fileName}`}
+                onClick={() => remove(s)}
+              >
+                Remover
+              </button>
+            )}
           </li>
         ))}
       </ul>

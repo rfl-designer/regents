@@ -24,6 +24,9 @@ export const wikiApi = {
     for (const file of files) form.append("files", file);
     return call<WikiSourceDto[]>(`/api/wikis/${wikiId}/sources`, { method: "POST", body: form });
   },
+  /** Remove uma Fonte: ela fica "a remover" até a próxima Sincronização, ou sai direto. Devolve a lista nova. */
+  removeSource: (wikiId: string, sourceId: string) =>
+    call<WikiSourceDto[]>(`/api/wikis/${wikiId}/sources/${sourceId}`, { method: "DELETE" }),
   /** "Sincronizar": começa na hora; o estado segue por `wiki_sync.updated`. */
   sync: (wikiId: string) => call<WikiSyncDto>(`/api/wikis/${wikiId}/sync`, { method: "POST" }),
   /** "Cancelar": a Sincronização em curso termina em `canceled`, e a Wiki fica como estava. */
@@ -49,4 +52,7 @@ export const wikiApi = {
   /** Uma página da versão atual, para ler. */
   page: (wikiId: string, slug: string) =>
     call<WikiPageViewDto>(`/api/wikis/${wikiId}/pages/${encodeURIComponent(slug)}`),
+  /** A página numa versão (a que a citação abre, #85). */
+  pageAt: (wikiId: string, version: number, slug: string) =>
+    call<WikiPageViewDto>(`/api/wikis/${wikiId}/versions/${version}/pages/${encodeURIComponent(slug)}`),
 };

@@ -47,6 +47,7 @@ import { type AdminView, Sidebar } from "./Sidebar";
 import { SkillsSettings } from "./SkillsAdmin";
 import { WorkspaceContextSettings } from "./WorkspaceContext";
 import { WorkspaceMemory } from "./WorkspaceMemory";
+import { OpenWikiContext } from "./wiki/citation";
 import { useReadableWikis, WikiReader } from "./wiki/WikiReader";
 import { WikisSettings } from "./wiki/WikisAdmin";
 
@@ -296,7 +297,7 @@ export function App() {
     if (watching) void closeNotificationsOf(watching);
   }, [watching]);
   useEffect(() => {
-    const path = view === "wiki" && wikiAt ? wikiPagePath(wikiAt.wikiId, wikiAt.slug) : pathOf(view);
+    const path = view === "wiki" && wikiAt ? wikiPagePath(wikiAt.wikiId, wikiAt.slug, wikiAt.version) : pathOf(view);
     if (path) {
       if (location.pathname !== path) history.replaceState(null, "", path);
       return;
@@ -332,116 +333,119 @@ export function App() {
     setSelectedId(id);
     setView("channel");
   };
-  const openWiki = (wikiId: string, slug: string) => {
-    setWikiAt({ wikiId, slug });
+  const openWiki = (wikiId: string, slug: string, version?: number) => {
+    setWikiAt({ wikiId, slug, ...(version === undefined ? {} : { version }) });
     setView("wiki");
   };
   return (
-    <div className="shell">
-      <ConnectionBanner notice={connection} />
-      <header className="topbar">
-        <strong>Shearim</strong>
-        <div className="row">
-          <button
-            type="button"
-            className="whoami"
-            aria-current={view === "profile" ? "page" : undefined}
-            title="Meu perfil"
-            onClick={() => setView("profile")}
-          >
-            <Avatar name={state.me.displayName} photo={state.me.profilePicUrl} />
-            <span>Você está como {state.me.displayName}</span>
-            <span className="handle">@{state.me.handle}</span>
-          </button>
-          <button
-            type="button"
-            className="link"
-            aria-pressed={view === "notifications"}
-            onClick={() => setView(view === "notifications" ? "channel" : "notifications")}
-          >
-            Notificações
-          </button>
-          <button
-            type="button"
-            className="link"
-            aria-pressed={view === "account"}
-            onClick={() => setView(view === "account" ? "channel" : "account")}
-          >
-            {view === "account" ? "Voltar à conversa" : "Minha Conta"}
-            {expiringValidity(account.account) && (
-              <span className="selo" role="img" aria-label="A sua Conta do Claude vence em breve" />
-            )}
-          </button>
-          <button
-            type="button"
-            className="link"
-            aria-pressed={view === "myConnectors"}
-            onClick={() => setView(view === "myConnectors" ? "channel" : "myConnectors")}
-          >
-            {view === "myConnectors" ? "Voltar à conversa" : "Meus Conectores"}
-          </button>
-        </div>
-      </header>
-      {state.me.role === "admin" && <JoinRequestsPanel />}
-      {state.me.role === "admin" && (
-        <KeyBanners onOpenKey={() => setView("key")} onOpenAgents={() => setView("agents")} />
-      )}
-      {view !== "installation" && (
-        <InstallationBanner installation={installation.installation} onOpen={() => setView("installation")} />
-      )}
-      {view !== "account" && <AccountOffer state={account} onOpen={() => setView("account")} />}
-      <InstallOnIphone />
-      <NotificationsOnboarding push={push} />
-      <PushBanners push={push} onOpenDevices={() => setView("notifications")} />
-      <div className="workspace">
-        <Sidebar
-          me={state.me}
-          channels={state.channels}
-          dms={state.dms}
-          unread={unread}
-          selectedId={shownId}
-          isAdmin={state.me.role === "admin"}
-          adminView={isScreen(view) && SCREENS[view].admin ? (view as AdminView) : null}
-          onOpen={open}
-          onCreated={(created) => {
-            setChannels((list) => upsert(list, created));
-            open(created.id);
-          }}
-          onDmOpened={(opened) => {
-            setDms((list) => upsert(list, opened));
-            open(opened.id);
-          }}
-          onOpenAdmin={setView}
-          workspaceMemoryOpen={view === "workspaceMemory"}
-          onOpenWorkspaceMemory={() => setView("workspaceMemory")}
-          wikis={wikis}
-          openWikiId={view === "wiki" ? (wikiAt?.wikiId ?? null) : null}
-          onOpenWiki={(wikiId) => openWiki(wikiId, WIKI_INDEX_SLUG)}
-        />
-        {view === "wiki" && wikiAt ? (
-          <WikiReader
-            key={wikiAt.wikiId}
-            wikiId={wikiAt.wikiId}
-            slug={wikiAt.slug}
-            onNavigate={(slug) => openWiki(wikiAt.wikiId, slug)}
-          />
-        ) : isScreen(view) ? (
-          SCREENS[view].render({ me: state.me, account, push, installation, setMe })
-        ) : dm ? (
-          <DmView key={dm.id} dm={dm} me={state.me} focus={focusIn(dm.id)} />
-        ) : channel ? (
-          <ChannelView
-            key={channel.id}
-            channel={channel}
-            me={state.me}
-            focus={focusIn(channel.id)}
-            onChanged={(changed) => setChannels((list) => upsert(list, changed))}
-          />
-        ) : (
-          <main className="center">Nenhum Canal ainda.</main>
+    <OpenWikiContext.Provider value={(at) => openWiki(at.wikiId, at.slug, at.version)}>
+      <div className="shell">
+        <ConnectionBanner notice={connection} />
+        <header className="topbar">
+          <strong>Shearim</strong>
+          <div className="row">
+            <button
+              type="button"
+              className="whoami"
+              aria-current={view === "profile" ? "page" : undefined}
+              title="Meu perfil"
+              onClick={() => setView("profile")}
+            >
+              <Avatar name={state.me.displayName} photo={state.me.profilePicUrl} />
+              <span>Você está como {state.me.displayName}</span>
+              <span className="handle">@{state.me.handle}</span>
+            </button>
+            <button
+              type="button"
+              className="link"
+              aria-pressed={view === "notifications"}
+              onClick={() => setView(view === "notifications" ? "channel" : "notifications")}
+            >
+              Notificações
+            </button>
+            <button
+              type="button"
+              className="link"
+              aria-pressed={view === "account"}
+              onClick={() => setView(view === "account" ? "channel" : "account")}
+            >
+              {view === "account" ? "Voltar à conversa" : "Minha Conta"}
+              {expiringValidity(account.account) && (
+                <span className="selo" role="img" aria-label="A sua Conta do Claude vence em breve" />
+              )}
+            </button>
+            <button
+              type="button"
+              className="link"
+              aria-pressed={view === "myConnectors"}
+              onClick={() => setView(view === "myConnectors" ? "channel" : "myConnectors")}
+            >
+              {view === "myConnectors" ? "Voltar à conversa" : "Meus Conectores"}
+            </button>
+          </div>
+        </header>
+        {state.me.role === "admin" && <JoinRequestsPanel />}
+        {state.me.role === "admin" && (
+          <KeyBanners onOpenKey={() => setView("key")} onOpenAgents={() => setView("agents")} />
         )}
+        {view !== "installation" && (
+          <InstallationBanner installation={installation.installation} onOpen={() => setView("installation")} />
+        )}
+        {view !== "account" && <AccountOffer state={account} onOpen={() => setView("account")} />}
+        <InstallOnIphone />
+        <NotificationsOnboarding push={push} />
+        <PushBanners push={push} onOpenDevices={() => setView("notifications")} />
+        <div className="workspace">
+          <Sidebar
+            me={state.me}
+            channels={state.channels}
+            dms={state.dms}
+            unread={unread}
+            selectedId={shownId}
+            isAdmin={state.me.role === "admin"}
+            adminView={isScreen(view) && SCREENS[view].admin ? (view as AdminView) : null}
+            onOpen={open}
+            onCreated={(created) => {
+              setChannels((list) => upsert(list, created));
+              open(created.id);
+            }}
+            onDmOpened={(opened) => {
+              setDms((list) => upsert(list, opened));
+              open(opened.id);
+            }}
+            onOpenAdmin={setView}
+            workspaceMemoryOpen={view === "workspaceMemory"}
+            onOpenWorkspaceMemory={() => setView("workspaceMemory")}
+            wikis={wikis}
+            openWikiId={view === "wiki" ? (wikiAt?.wikiId ?? null) : null}
+            onOpenWiki={(wikiId) => openWiki(wikiId, WIKI_INDEX_SLUG)}
+          />
+          {view === "wiki" && wikiAt ? (
+            <WikiReader
+              key={wikiAt.wikiId}
+              wikiId={wikiAt.wikiId}
+              slug={wikiAt.slug}
+              version={wikiAt.version}
+              onNavigate={(slug, version) => openWiki(wikiAt.wikiId, slug, version)}
+            />
+          ) : isScreen(view) ? (
+            SCREENS[view].render({ me: state.me, account, push, installation, setMe })
+          ) : dm ? (
+            <DmView key={dm.id} dm={dm} me={state.me} focus={focusIn(dm.id)} />
+          ) : channel ? (
+            <ChannelView
+              key={channel.id}
+              channel={channel}
+              me={state.me}
+              focus={focusIn(channel.id)}
+              onChanged={(changed) => setChannels((list) => upsert(list, changed))}
+            />
+          ) : (
+            <main className="center">Nenhum Canal ainda.</main>
+          )}
+        </div>
       </div>
-    </div>
+    </OpenWikiContext.Provider>
   );
 }
 

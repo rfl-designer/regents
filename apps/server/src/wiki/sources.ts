@@ -1,9 +1,17 @@
 import { formatBytes, type WikiSourceDto, type WikiSourceFormat } from "@shearim/contracts";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { type Db, schema } from "../db/client";
+import { type Db, schema, type Tx } from "../db/client";
 import { pendingOf, reflectedSources } from "./wikis";
 
-const { wikiSources, members } = schema;
+const { wikis, wikiSources, wikiSyncs, wikiVersionSources, members } = schema;
+
+/**
+ * Trava a linha da Wiki até o fim da transação: o pedido de Sincronização e a remoção de Fonte
+ * passam por ela, um de cada vez (a Sincronização nunca começa com uma Fonte saindo pela metade).
+ */
+export async function lockWiki(tx: Tx, wikiId: string) {
+  await tx.select({ id: wikis.id }).from(wikis).where(eq(wikis.id, wikiId)).for("update");
+}
 
 /** Uma Fonte pronta para guardar: o nome do arquivo, o formato e o texto. */
 export interface SourceUpload {
@@ -105,7 +113,11 @@ const COLUMNS = {
   uploaderName: members.displayName,
 };
 
-/** As Fontes de uma Wiki, na ordem em que subiram, com a pendência de cada uma. */
+/**
+ * As Fontes de uma Wiki, na ordem em que subiram, com a pendência de cada uma: as ativas e as
+ * removidas "a remover". Uma removida que a versão atual já não reflete saiu da Wiki e não aparece
+ * (fica guardada para as versões antigas; voltar a uma delas a mostra "a remover" de novo).
+ */
 export async function listSources(db: Db, wikiId: string, only?: string[]): Promise<WikiSourceDto[]> {
   const reflected = await reflectedSources(db, wikiId);
   const rows = await db
@@ -114,12 +126,13 @@ export async function listSources(db: Db, wikiId: string, only?: string[]): Prom
     .innerJoin(members, eq(members.id, wikiSources.uploadedByMemberId))
     .where(only ? inArray(wikiSources.id, only) : eq(wikiSources.wikiId, wikiId))
     .orderBy(asc(wikiSources.seq));
-  return rows.map(({ uploaderId, uploaderName, uploadedAt, ...s }) => ({
-    ...s,
-    pending: pendingOf(s, reflected),
-    uploadedBy: { id: uploaderId, name: uploaderName },
-    uploadedAt: uploadedAt.toISOString(),
-  }));
+  return rows.flatMap(({ uploaderId, uploaderName, uploadedAt, ...s }) => {
+    const pending = pendingOf(s, reflected);
+    if (s.state === "removed" && !pending) return [];
+    return [
+      { ...s, pending, uploadedBy: { id: uploaderId, name: uploaderName }, uploadedAt: uploadedAt.toISOString() },
+    ];
+  });
 }
 
 class SourceExists extends Error {
@@ -170,4 +183,43 @@ export async function addSources(
     if (err instanceof SourceExists) return { exists: err.fileName };
     throw err;
   }
+}
+
+/**
+ * Remove uma Fonte ativa da Wiki (#88). Se alguma versão guardada a reflete, ela só passa a
+ * `removed` e fica guardada, com o texto: a versão atual a mostra "a remover" até a próxima
+ * Sincronização, e as versões antigas continuam verificáveis. Se nenhuma versão a reflete, ela sai
+ * direto, sem pendência. `undefined` quando a Fonte não está ativa na Wiki.
+ *
+ * Com uma Sincronização em curso, não (`sync_running`): o plano dela já conta com a Fonte. A trava
+ * da Wiki (`lockWiki`) ordena a remoção e o pedido de Sincronização.
+ */
+export async function removeSource(db: Db, input: { wikiId: string; sourceId: string; now: Date }) {
+  return db.transaction(async (tx) => {
+    await lockWiki(tx, input.wikiId);
+    const [open] = await tx
+      .select({ id: wikiSyncs.id })
+      .from(wikiSyncs)
+      .where(and(eq(wikiSyncs.wikiId, input.wikiId), inArray(wikiSyncs.state, ["queued", "running"])));
+    if (open) return "sync_running" as const;
+    const [source] = await tx
+      .select({ id: wikiSources.id })
+      .from(wikiSources)
+      .where(
+        and(eq(wikiSources.id, input.sourceId), eq(wikiSources.wikiId, input.wikiId), eq(wikiSources.state, "active")),
+      )
+      .for("update");
+    if (!source) return undefined;
+    const [kept] = await tx
+      .select({ id: wikiVersionSources.sourceId })
+      .from(wikiVersionSources)
+      .where(eq(wikiVersionSources.sourceId, source.id))
+      .limit(1);
+    if (!kept) {
+      await tx.delete(wikiSources).where(eq(wikiSources.id, source.id));
+      return "deleted" as const;
+    }
+    await tx.update(wikiSources).set({ state: "removed", removedAt: input.now }).where(eq(wikiSources.id, source.id));
+    return "removed" as const;
+  });
 }
