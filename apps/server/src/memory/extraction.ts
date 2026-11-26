@@ -329,7 +329,7 @@ const MAX_READ_ONLY = 50;
 const SCOPE_NAMES = { workspace: "Workspace", conversation: "Conversa", agent: "Agente" } as const;
 
 const INSTRUCTIONS = [
-  "Você é a extração da Memória do Shearim, um chat de time em que pessoas e Agentes conversam juntos.",
+  "Você é a extração da Memória do Regents, um chat de time em que pessoas e Agentes conversam juntos.",
   "Um Agente acabou de responder numa conversa. Leia a troca e decida o que vale os Agentes lembrarem em respostas futuras nesta conversa: decisões, correções, fatos e pedidos de lembrar ou guardar algo.",
   "Cada item novo vai para um escopo:",
   "- conversa: os fatos e as decisões (o que vale para todos os Agentes que falam nesta conversa).",

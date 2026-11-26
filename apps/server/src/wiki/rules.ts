@@ -10,14 +10,14 @@ import { WIKI_INDEX_SLUG, WIKI_LOG_SLUG } from "@regents/contracts";
  * A marca que abre o `system` de toda chamada da Sincronização. Os dublês do modelo a reconhecem
  * (como reconhecem a extração da Memória pelo schema), para o teste roteirizar as escritas.
  */
-export const SYNC_MARKER = "[Shearim] Sincronização da Wiki";
+export const SYNC_MARKER = "[Regents] Sincronização da Wiki";
 
 /** A Habilidade do Shearim que a tela da Articuladora mostra, só para leitura. */
 export const SYNC_SKILL = {
-  id: "shearim:sincronizar-a-wiki",
+  id: "regents:sincronizar-a-wiki",
   name: "Sincronizar a Wiki",
   description:
-    'Quando o Admin aperta "Sincronizar" numa Wiki: leva as Fontes pendentes para as páginas, com links entre elas e o índice. É do Shearim e não se edita.',
+    'Quando o Admin aperta "Sincronizar" numa Wiki: leva as Fontes pendentes para as páginas, com links entre elas e o índice. É do Regents e não se edita.',
 } as const;
 
 /** As Ferramentas internas da Sincronização: só dela, nunca de uma resposta em conversa. */
@@ -32,7 +32,7 @@ export function syncSystem(wiki: { name: string; description: string }) {
   return [
     `${SYNC_MARKER} "${wiki.name}"`,
     "",
-    `Você é a Articuladora do Shearim e está sincronizando a Wiki "${wiki.name}": ${wiki.description}`,
+    `Você é a Articuladora do Regents e está sincronizando a Wiki "${wiki.name}": ${wiki.description}`,
     "A Wiki segue o padrão LLM Wiki: as Fontes são o texto bruto e não mudam; as páginas são suas, em markdown, organizadas por tema; o índice diz o que cada página cobre. Os Agentes do Workspace consultam a Wiki pelo índice e abrem as páginas de que precisam.",
     "Você trabalha num rascunho: nada do que você escreve aparece antes de a Sincronização terminar. Escreva só pelas Ferramentas.",
     "",
@@ -43,7 +43,7 @@ export function syncSystem(wiki: { name: string; description: string }) {
     "- Diga em cada página de quais Fontes ela veio (o campo fontes, com o nome do arquivo). Uma página reescrita mantém as Fontes que já tinha.",
     "- Escreva o que a Fonte ensina, destilado: sem repetir a transcrição e sem inventar o que ela não diz.",
     `- Mantenha a página ${WIKI_INDEX_SLUG}: uma linha por página, no formato "- [[slug]]: o que ela cobre". Toda página nova entra no índice.`,
-    `- A página ${WIKI_LOG_SLUG} é do Shearim: não a escreva.`,
+    `- A página ${WIKI_LOG_SLUG} é do Regents: não a escreva.`,
     "- Escreva em português do Brasil.",
     '- Quando terminar a Fonte, responda só "Pronto.".',
   ].join("\n");
@@ -98,7 +98,7 @@ export function removalPrompt(input: {
     "",
     `## Fonte removida: ${input.source.fileName} (Fonte ${input.current} de ${input.total})`,
     `O Admin removeu a Fonte ${input.source.fileName}. O que vinha só dela sai da Wiki.`,
-    `- O Shearim já tirou do rascunho as páginas que vinham só dela: ${list(input.removed)}.`,
+    `- O Regents já tirou do rascunho as páginas que vinham só dela: ${list(input.removed)}.`,
     `- Estas páginas também vêm de outras Fontes: ${list(input.rewrite)}. Leia cada uma (ler_pagina) e reescreva-a (escrever_pagina) sem o que só a Fonte removida sustentava.`,
     `- Tire do índice e dos links ([[slug]]) as páginas que saíram. Não cite mais ${input.source.fileName} em nenhuma página.`,
     "",
