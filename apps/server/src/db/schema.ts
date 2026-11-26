@@ -982,3 +982,6 @@ export const memoryItems = pgTable(
     ),
   ],
 );
+
+// A Wiki (spec #74) tem as tabelas num módulo próprio.
+export * from "../wiki/schema";

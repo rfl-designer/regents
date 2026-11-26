@@ -1306,3 +1306,7 @@ export type ApiError =
   | { error: "last_admin"; message: string }
   /** Ninguém sai do Workspace sozinho: só outro Admin remove. */
   | { error: "cannot_remove_self"; message: string };
+
+// ---------- Wiki (spec #74) ----------
+
+export * from "./wiki";

@@ -65,7 +65,7 @@ export function messageOf(err: unknown, fallback: string) {
 /** O servidor não respondeu (Tailscale desligado, servidor fora do ar). */
 export class Offline extends Error {}
 
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
+export async function call<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, { credentials: "same-origin", ...init });
@@ -80,7 +80,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-const json = (method: string, body?: unknown): RequestInit => ({
+export const json = (method: string, body?: unknown): RequestInit => ({
   method,
   headers: { "content-type": "application/json" },
   body: body === undefined ? undefined : JSON.stringify(body),
