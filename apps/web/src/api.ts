@@ -207,6 +207,20 @@ export const api = {
     body.append("file", file);
     return call<ImportSkillResultDto>("/api/skills/import", { method: "POST", body });
   },
+  /**
+   * A pasta da skill: cada arquivo com o caminho a partir da pasta escolhida. Só o `SKILL.md` vai
+   * com o texto; dos outros vai só o caminho (o servidor os lista como ignorados), para que scripts
+   * e assets grandes não pesem no limite.
+   */
+  importSkillFolder: (files: File[]) => {
+    const body = new FormData();
+    for (const file of files) {
+      const path = file.webkitRelativePath || file.name;
+      if (/(^|\/)SKILL\.md$/i.test(path)) body.append("files", file, path);
+      else body.append("files", path);
+    }
+    return call<ImportSkillResultDto>("/api/skills/import", { method: "POST", body });
+  },
   agentSkills: (agentId: string) => call<AgentSkillDto[]>(`/api/agents/${agentId}/skills`),
   setAgentSkill: (agentId: string, skillId: string, active: boolean) =>
     call<AgentSkillDto[]>(`/api/agents/${agentId}/skills/${skillId}`, { method: active ? "PUT" : "DELETE" }),

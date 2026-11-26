@@ -14,7 +14,7 @@ import { findAgent, lockLiveAgent } from "../agents";
 import type { Clock } from "../clock";
 import { type Db, isUuid, schema } from "../db/client";
 import { adminOnly, type Env } from "../members";
-import { readSkillFile } from "./import";
+import { readSkillFile, readSkillFolder } from "./import";
 import { agentSkillsOf, selectSkills, skillById } from "./skills";
 
 const { skills, agentSkills } = schema;
@@ -26,7 +26,7 @@ const { skills, agentSkills } = schema;
  * O nome é único no Workspace sem diferenciar maiúsculas (`409 name_taken`); a descrição diz quando
  * usar e é obrigatória (`400 invalid_input`). Uma edição vale na próxima leitura; apagar tira a
  * Habilidade de todos os Agentes na hora. Importar um `SKILL.md` (ou um `.zip` de skill) cria a
- * Habilidade com as mesmas regras, marcada como importada.
+ * Habilidade com as mesmas regras, marcada como importada; uma pasta de skill também.
  */
 export function skillRoutes(deps: { db: Db; clock: Clock }) {
   const { db, clock } = deps;
@@ -62,12 +62,19 @@ export function skillRoutes(deps: { db: Db; clock: Clock }) {
     const invalid = (message: string) => c.json({ error: "invalid_skill", message }, 400);
     const form = await c.req.formData().catch(() => null);
     const file = form?.get("file");
-    if (!(file instanceof File)) return invalid("Mande o arquivo SKILL.md ou o .zip da skill no campo file.");
-    if (file.size > SKILL_IMPORT_MAX_BYTES) {
-      const mb = SKILL_IMPORT_MAX_BYTES / 1024 / 1024;
-      return c.json({ error: "file_too_large", message: `O arquivo tem mais de ${mb} MB.` }, 413);
+    // A pasta escolhida na tela: um campo `files` por arquivo, com o caminho no nome (ou só o
+    // caminho, em texto, para o que não é o `SKILL.md`).
+    const folder = (form?.getAll("files") ?? []).filter((f) => f instanceof File || (typeof f === "string" && f));
+    if (!(file instanceof File) && folder.length === 0) {
+      return invalid("Mande o arquivo SKILL.md ou o .zip da skill no campo file, ou a pasta da skill no campo files.");
     }
-    const read = await readSkillFile(file);
+    const size = file instanceof File ? file.size : folder.reduce((n, f) => n + (f instanceof File ? f.size : 0), 0);
+    if (size > SKILL_IMPORT_MAX_BYTES) {
+      const mb = SKILL_IMPORT_MAX_BYTES / 1024 / 1024;
+      const what = file instanceof File ? "O arquivo" : "A pasta";
+      return c.json({ error: "file_too_large", message: `${what} tem mais de ${mb} MB.` }, 413);
+    }
+    const read = file instanceof File ? await readSkillFile(file) : await readSkillFolder(folder);
     if ("error" in read) return invalid(read.error);
     const input = checkFields(read.input, { partial: false });
     if (typeof input === "string") return invalid(input);
