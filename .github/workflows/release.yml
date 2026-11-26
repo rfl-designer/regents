@@ -1,8 +1,12 @@
-# Release do Shearim (Spec, módulo 13: "Imagem" e "Distribuição"). Dispara com uma tag vX.Y.Z:
-# 1. publica a imagem do app no GHCR com a tag fixa X.Y.Z (nunca latest), para amd64 e arm64 (Mac
-#    com Apple silicon), com SHEARIM_VERSION=X.Y.Z (a versão da seção Instalação);
+# Release do Regents (Spec, módulo 13: "Imagem" e "Distribuição"). Dispara com uma tag vX.Y.Z:
+# 1. publica a imagem do app em ghcr.io/rfl-designer/regents com a tag fixa X.Y.Z (nunca latest),
+#    para amd64 e arm64 (Mac com Apple silicon), com REGENTS_VERSION=X.Y.Z (a versão da seção
+#    Instalação). O GitHub redireciona o nome antigo do repositório, mas não o do pacote no GHCR:
+#    por isso o nome da imagem fica escrito aqui, e não sai de github.repository;
 # 2. empacota o compose da release (deploy/release.sh) e cria a release do GitHub com o
-#    shearim-compose.tar.gz e o install.sh, que o instalador e o deploy/update.sh baixam com o gh.
+#    regents-compose.tar.gz, a cópia shearim-compose.tar.gz (o nome que o updater antigo, de uma
+#    Instalação que ainda é Shearim, baixa) e o install.sh, que o instalador e o deploy/update.sh
+#    baixam com o curl.
 name: release
 
 on:
@@ -38,13 +42,13 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: SHEARIM_VERSION=${{ steps.version.outputs.version }}
-          tags: ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
+          build-args: REGENTS_VERSION=${{ steps.version.outputs.version }}
+          tags: ghcr.io/rfl-designer/regents:${{ steps.version.outputs.version }}
 
       - run: deploy/release.sh "${{ steps.version.outputs.version }}" dist
 
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/shearim-compose.tar.gz dist/install.sh \
-            --title "Shearim $GITHUB_REF_NAME" --generate-notes
+          gh release create "$GITHUB_REF_NAME" dist/regents-compose.tar.gz dist/shearim-compose.tar.gz dist/install.sh \
+            --title "Regents $GITHUB_REF_NAME" --generate-notes

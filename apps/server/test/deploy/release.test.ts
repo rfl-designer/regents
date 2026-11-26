@@ -83,12 +83,21 @@ describe("scripts de deploy/", () => {
 describe(".github/workflows/release.yml", () => {
   const workflow = readFileSync(join(REPO_ROOT, ".github/workflows/release.yml"), "utf8");
 
-  test("publica no GHCR só a tag da versão e anexa o que o instalador baixa", () => {
+  test("publica no GHCR do Regents só a tag da versão, com a versão que o Dockerfile lê", () => {
     const tags = [...workflow.matchAll(/^\s*tags:\s*(ghcr\.io.+)$/gm)].map((m) => m[1]);
-    expect(tags).toEqual([`ghcr.io/\${{ github.repository }}:\${{ steps.version.outputs.version }}`]);
+    expect(tags).toEqual([`ghcr.io/rfl-designer/regents:\${{ steps.version.outputs.version }}`]);
     const code = workflow.replace(/#.*$/gm, "");
     expect(code).not.toContain("latest");
+
+    const buildArgs = [...code.matchAll(/^\s*build-args:\s*(\S+)=/gm)].map((m) => m[1]);
+    expect(buildArgs).toEqual(["REGENTS_VERSION"]);
+    const dockerfile = readFileSync(join(REPO_ROOT, "Dockerfile"), "utf8");
+    expect(dockerfile).toMatch(/^ARG REGENTS_VERSION=/m);
+  });
+
+  test("anexa à release os dois nomes do pacote do compose e o instalador", () => {
     expect(workflow).toContain(`deploy/release.sh "\${{ steps.version.outputs.version }}" dist`);
-    expect(workflow).toContain("dist/shearim-compose.tar.gz dist/install.sh");
+    expect(workflow).toContain("dist/regents-compose.tar.gz dist/shearim-compose.tar.gz dist/install.sh");
+    expect(workflow).toContain(`--title "Regents $GITHUB_REF_NAME"`);
   });
 });
