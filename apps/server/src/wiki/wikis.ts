@@ -1,12 +1,12 @@
-import type { WikiDto, WikiSourcePending, WikiSourceState } from "@shearim/contracts";
-import { asc, eq, isNotNull, sql } from "drizzle-orm";
+import type { AgentWikiSummaryDto, WikiDto, WikiSourcePending, WikiSourceState } from "@shearim/contracts";
+import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { type Db, isUuid, schema } from "../db/client";
 import { activeAdminIds } from "../members";
 import { inWikiList, wikiListIds } from "./reach";
 import { lastSyncOf } from "./sync-state";
 import { currentVersionId, currentVersionSummary, sourcesOfVersion } from "./versions";
 
-const { wikis, wikiSources } = schema;
+const { wikis, wikiSources, wikiAgents } = schema;
 
 /**
  * A pendência de uma Fonte, derivada da versão atual (spec #74): ativa e fora da versão é "nova";
@@ -101,6 +101,37 @@ export async function listReadableWikis(db: Db, memberId: string): Promise<WikiD
   const readable = [];
   for (const w of all) if (await readableBy(db, w, memberId)) readable.push(w);
   return Promise.all(readable.map((w) => toWikiDto(db, w)));
+}
+
+/**
+ * As Wikis ligadas a cada Agente (`agentIds`, ou todos) que o Membro lê, por nome (a lista de
+ * Agentes, #90): o alcance de leitura é o de `readableBy`, e só entra Wiki com versão publicada.
+ */
+export async function agentWikisReadableBy(
+  db: Db,
+  memberId: string,
+  agentIds?: readonly string[],
+): Promise<Map<string, AgentWikiSummaryDto[]>> {
+  const rows = await db
+    .select({
+      agentId: wikiAgents.agentId,
+      id: wikis.id,
+      name: wikis.name,
+      description: wikis.description,
+      scope: wikis.scope,
+    })
+    .from(wikiAgents)
+    .innerJoin(wikis, eq(wikis.id, wikiAgents.wikiId))
+    .where(and(isNotNull(wikis.currentVersionId), agentIds ? inArray(wikiAgents.agentId, [...agentIds]) : undefined))
+    .orderBy(asc(sql`lower(${wikis.name})`));
+  const readable = new Map<string, boolean>();
+  const byAgent = new Map<string, AgentWikiSummaryDto[]>();
+  for (const { agentId, scope, ...w } of rows) {
+    if (!readable.has(w.id)) readable.set(w.id, await readableBy(db, { id: w.id, scope }, memberId));
+    if (!readable.get(w.id)) continue;
+    byAgent.set(agentId, [...(byAgent.get(agentId) ?? []), w]);
+  }
+  return byAgent;
 }
 
 /** Cria uma Wiki pública. `undefined` quando o nome já existe (sem diferenciar maiúsculas). */
