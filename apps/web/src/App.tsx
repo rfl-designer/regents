@@ -14,8 +14,11 @@ import {
   NO_IDENTITY_TEXT,
   SW_NAVIGATE_MESSAGE,
   type UnreadDto,
+  WIKI_INDEX_SLUG,
   WIKIS_PATH,
   WORKSPACE_KEY_PATH,
+  wikiPageOfPath,
+  wikiPagePath,
 } from "@shearim/contracts";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { AgentsSettings, WorkspaceKeySettings } from "./AgentsAdmin";
@@ -44,6 +47,7 @@ import { type AdminView, Sidebar } from "./Sidebar";
 import { SkillsSettings } from "./SkillsAdmin";
 import { WorkspaceContextSettings } from "./WorkspaceContext";
 import { WorkspaceMemory } from "./WorkspaceMemory";
+import { useReadableWikis, WikiReader } from "./wiki/WikiReader";
 import { WikisSettings } from "./wiki/WikisAdmin";
 
 type State =
@@ -72,8 +76,13 @@ function explain(err: unknown): State {
 }
 
 type Screen = "account" | "myConnectors" | "profile" | "notifications" | "workspaceMemory" | AdminView;
-/** `channel` é a conversa aberta (Canal ou DM); as outras são telas (`SCREENS`). */
-type View = "channel" | Screen;
+/**
+ * `channel` é a conversa aberta (Canal ou DM); `wiki`, a página da Wiki aberta para ler (`/wiki/…`);
+ * as outras são telas (`SCREENS`).
+ */
+type View = "channel" | "wiki" | Screen;
+type Screened = Exclude<View, "channel" | "wiki">;
+const isScreen = (view: View): view is Screened => view !== "channel" && view !== "wiki";
 
 /** O que as telas recebem do App. */
 interface ScreenContext {
@@ -111,10 +120,11 @@ const SCREENS: Record<Screen, { path?: string; admin?: true; render(ctx: ScreenC
 };
 
 /** O endereço próprio da tela, se ela tem. */
-const pathOf = (view: View) => (view === "channel" ? undefined : SCREENS[view].path);
+const pathOf = (view: View) => (isScreen(view) ? SCREENS[view].path : undefined);
 
 /** A tela que um endereço pede (`/conta`, `/chave`…), ou `undefined` (uma conversa, ou a raiz). */
 function viewOfPath(pathname: string): View | undefined {
+  if (wikiPageOfPath(pathname)) return "wiki";
   return (Object.keys(SCREENS) as Screen[]).find((s) => SCREENS[s].path === pathname);
 }
 
@@ -162,6 +172,9 @@ export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selectedId, setSelectedId] = useState<string | null>(conversationFromUrl);
   const [view, setView] = useState<View>(() => viewOfPath(location.pathname) ?? "channel");
+  /** A página da Wiki aberta para ler (a `view` é `wiki`). */
+  const [wikiAt, setWikiAt] = useState(() => wikiPageOfPath(location.pathname));
+  const wikis = useReadableWikis(state.kind === "ready");
   const account = useAccount(state.kind === "ready");
   const push = usePush(state.kind === "ready");
   const installation = useInstallation(state.kind === "ready" && state.me.role === "admin");
@@ -254,6 +267,7 @@ export function App() {
       // Conta), não a uma conversa.
       const target = navigate ? viewOfPath(navigate.pathname) : undefined;
       if (target) {
+        if (target === "wiki") setWikiAt(wikiPageOfPath(navigate!.pathname));
         setView(target);
         return;
       }
@@ -282,7 +296,7 @@ export function App() {
     if (watching) void closeNotificationsOf(watching);
   }, [watching]);
   useEffect(() => {
-    const path = pathOf(view);
+    const path = view === "wiki" && wikiAt ? wikiPagePath(wikiAt.wikiId, wikiAt.slug) : pathOf(view);
     if (path) {
       if (location.pathname !== path) history.replaceState(null, "", path);
       return;
@@ -290,7 +304,7 @@ export function App() {
     if (shownId && location.pathname !== conversationPath(shownId)) {
       history.replaceState(null, "", conversationPath(shownId));
     }
-  }, [shownId, view]);
+  }, [shownId, view, wikiAt]);
 
   if (state.kind === "loading") return <main className="center">Carregando…</main>;
   if (state.kind === "entry") return <EntryView onApproved={load} />;
@@ -317,6 +331,10 @@ export function App() {
     setFocus(null);
     setSelectedId(id);
     setView("channel");
+  };
+  const openWiki = (wikiId: string, slug: string) => {
+    setWikiAt({ wikiId, slug });
+    setView("wiki");
   };
   return (
     <div className="shell">
@@ -383,7 +401,7 @@ export function App() {
           unread={unread}
           selectedId={shownId}
           isAdmin={state.me.role === "admin"}
-          adminView={view !== "channel" && SCREENS[view].admin ? (view as AdminView) : null}
+          adminView={isScreen(view) && SCREENS[view].admin ? (view as AdminView) : null}
           onOpen={open}
           onCreated={(created) => {
             setChannels((list) => upsert(list, created));
@@ -396,8 +414,18 @@ export function App() {
           onOpenAdmin={setView}
           workspaceMemoryOpen={view === "workspaceMemory"}
           onOpenWorkspaceMemory={() => setView("workspaceMemory")}
+          wikis={wikis}
+          openWikiId={view === "wiki" ? (wikiAt?.wikiId ?? null) : null}
+          onOpenWiki={(wikiId) => openWiki(wikiId, WIKI_INDEX_SLUG)}
         />
-        {view !== "channel" ? (
+        {view === "wiki" && wikiAt ? (
+          <WikiReader
+            key={wikiAt.wikiId}
+            wikiId={wikiAt.wikiId}
+            slug={wikiAt.slug}
+            onNavigate={(slug) => openWiki(wikiAt.wikiId, slug)}
+          />
+        ) : isScreen(view) ? (
           SCREENS[view].render({ me: state.me, account, push, installation, setMe })
         ) : dm ? (
           <DmView key={dm.id} dm={dm} me={state.me} focus={focusIn(dm.id)} />

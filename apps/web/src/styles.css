@@ -1134,3 +1134,37 @@ button.primary {
   margin: 4px 0 0;
   overflow-wrap: anywhere;
 }
+/* A leitura da Wiki (#82). */
+.wiki-head,
+.wiki-page,
+.wiki-sources {
+  padding: 0 16px;
+}
+.wiki-head .hint {
+  margin: 0;
+}
+.wiki-body {
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.wiki-body ul {
+  padding-left: 20px;
+  white-space: normal;
+}
+a.wiki-link {
+  color: var(--agent);
+}
+.wiki-link.broken {
+  color: var(--error);
+  text-decoration: line-through dotted;
+}
+.wiki-sources h3 {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.wiki-sources ul {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 0.85rem;
+}

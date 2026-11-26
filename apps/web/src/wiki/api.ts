@@ -1,4 +1,11 @@
-import type { CreateWikiInput, WikiDto, WikiSourceDto, WikiSyncDto, WikiVersionDto } from "@shearim/contracts";
+import type {
+  CreateWikiInput,
+  WikiDto,
+  WikiPageViewDto,
+  WikiSourceDto,
+  WikiSyncDto,
+  WikiVersionDto,
+} from "@shearim/contracts";
 import { call, json } from "../api";
 
 /** As chamadas da Wiki (spec #74). */
@@ -16,4 +23,9 @@ export const wikiApi = {
   /** "Sincronizar": começa na hora; o estado segue por `wiki_sync.updated`. */
   sync: (wikiId: string) => call<WikiSyncDto>(`/api/wikis/${wikiId}/sync`, { method: "POST" }),
   versions: (wikiId: string) => call<WikiVersionDto[]>(`/api/wikis/${wikiId}/versions`),
+  /** As Wikis que o Membro lê (a barra lateral): o servidor decide pelo alcance. */
+  list: () => call<WikiDto[]>("/api/wikis"),
+  /** Uma página da versão atual, para ler. */
+  page: (wikiId: string, slug: string) =>
+    call<WikiPageViewDto>(`/api/wikis/${wikiId}/pages/${encodeURIComponent(slug)}`),
 };
