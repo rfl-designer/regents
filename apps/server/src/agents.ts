@@ -2,7 +2,9 @@ import {
   AGENT_MODELS,
   type AgentDto,
   type AgentModel,
+  type AgentSkillSummaryDto,
   type AgentToolSummaryDto,
+  type AgentWikiSummaryDto,
   type CreateAgentInput,
   type UpdateAgentInput,
 } from "@shearim/contracts";
@@ -20,13 +22,16 @@ import type { Env } from "./members";
 import { forgetAgent } from "./memory/items";
 import { claimHandle, handleBase, releaseHandle } from "./mention-handles";
 import { audienceOf } from "./participation";
+import { activeSkillsByAgent } from "./skills/skills";
 import type { ToolPort } from "./tools/port";
+import { leaveAgentWikis } from "./wiki/reach";
+import { agentWikisReadableBy } from "./wiki/wikis";
 
 export type Agent = typeof schema.agents.$inferSelect;
 /** O Agente com o identificador de Menção dele (`mention_handles`). */
 export type AgentWithHandle = Agent & { handle: string };
 
-const { agents, mentionHandles, channels, channelAgents, agentTools, agentGithubRepositories } = schema;
+const { agents, mentionHandles, channels, channelAgents, agentTools, agentSkills, agentGithubRepositories } = schema;
 
 const NAME_MAX = 40;
 /** Uma foto pequena: `data:` URL de imagem com até ~300 KB. */
@@ -34,7 +39,10 @@ const PHOTO = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 const PHOTO_MAX = 400_000;
 const BUDGET_INVALID = "O orçamento mensal é um valor em dólares, zero ou mais (vazio: sem teto).";
 
-/** Agentes: o Admin cria; todo Membro vê o nome, a foto, a descrição, o modelo e as Ferramentas. */
+/**
+ * Agentes: o Admin cria; todo Membro vê o nome, a foto, a descrição, o modelo, as Ferramentas, as
+ * Habilidades e as Wikis ligadas que ele lê.
+ */
 export function agentRoutes(deps: {
   db: Db;
   clock: Clock;
@@ -50,20 +58,34 @@ export function agentRoutes(deps: {
   events: EventHub;
 }) {
   const { db, clock, ledger } = deps;
-  const toolsOf = async (id: string) => (await deps.tools.grantsOf([id])).get(id) ?? [];
-  const reposOf = async (ids?: readonly string[]) => (await deps.github?.agentRepositories(ids)) ?? new Map();
   const routes = new Hono<Env>();
 
+  /**
+   * O que cada Agente (`ids`, ou todos) tem, como `memberId` vê: as Ferramentas, as Habilidades
+   * ativas, as Wikis ligadas que ele lê e os repositórios do GitHub. Lido em lote.
+   */
+  async function capabilitiesOf(memberId: string, ids?: readonly string[]) {
+    const grants = await deps.tools.grantsOf(ids);
+    const repos = (await deps.github?.agentRepositories(ids)) ?? new Map<string, string[] | null>();
+    const skills = await activeSkillsByAgent(db, ids);
+    const wikis = await agentWikisReadableBy(db, memberId, ids);
+    return (id: string) => ({
+      tools: grants.get(id) ?? [],
+      skills: skills.get(id) ?? [],
+      wikis: wikis.get(id) ?? [],
+      githubRepositories: repos.get(id) ?? null,
+    });
+  }
+
   routes.get("/agents", async (c) => {
-    const admin = c.get("member").role === "admin";
+    const me = c.get("member");
+    const admin = me.role === "admin";
     const all = await db
       .select({ ...getTableColumns(agents), handle: mentionHandles.handle })
       .from(agents)
       .innerJoin(mentionHandles, eq(mentionHandles.agentId, agents.id))
       .orderBy(desc(agents.builtin), asc(agents.createdAt), asc(agents.name));
-    const grants = await deps.tools.grantsOf();
-    const repos = await reposOf();
-    const of = (id: string) => ({ tools: grants.get(id) ?? [], githubRepositories: repos.get(id) ?? null });
+    const of = await capabilitiesOf(me.id);
     if (!admin) return c.json(all.map((a) => toAgentDto(a, { admin, ...of(a.id) })));
     const spend = await keySpend(db, monthOf(clock.now()));
     return c.json(all.map((a) => toAgentDto(a, { admin, ...of(a.id), keySpendUsd: spend.get(a.id) ?? 0 })));
@@ -110,7 +132,8 @@ export function agentRoutes(deps: {
       return { ...agent, handle };
     });
     if (!created) return c.json({ error: "name_taken", message: `Já existe um Agente chamado ${name}.` }, 409);
-    return c.json(toAgentDto(created, { admin: true, tools: [], githubRepositories: null, keySpendUsd: 0 }), 201);
+    const of = await capabilitiesOf(c.get("member").id, [created.id]);
+    return c.json(toAgentDto(created, { admin: true, ...of(created.id), keySpendUsd: 0 }), 201);
   });
 
   /**
@@ -208,14 +231,8 @@ export function agentRoutes(deps: {
     const budgetChanged = change.monthlyBudgetUsd !== undefined && change.monthlyBudgetUsd !== current.monthlyBudgetUsd;
     const budget = budgetChanged ? await ledger.budgetChanged(updated.id) : await ledger.budgetNow(updated.id);
     if (budgetChanged) deps.onBudgetChanged?.();
-    return c.json(
-      toAgentDto(updated, {
-        admin: true,
-        tools: await toolsOf(updated.id),
-        githubRepositories: (await reposOf([updated.id])).get(updated.id) ?? null,
-        keySpendUsd: budget.keySpendUsd,
-      }),
-    );
+    const of = await capabilitiesOf(c.get("member").id, [updated.id]);
+    return c.json(toAgentDto(updated, { admin: true, ...of(updated.id), keySpendUsd: budget.keySpendUsd }));
   });
 
   /**
@@ -223,8 +240,8 @@ export function agentRoutes(deps: {
    * conversas some: a linha dele fica, marcada `deleted_at`, porque as mensagens, o Andamento, os
    * Desfechos, os Pedidos de aprovação e os gastos apontam para ela. Ele sai das listas, do
    * identificador de Menção (o nome e o `@` voltam a ficar livres) e dos Canais; as DMs com ele
-   * ficam, e o que chegar ali diz que ele foi apagado. As Ferramentas concedidas e a lista de
-   * repositórios saem. O que ele tinha aberto é cancelado. A Memória do Agente sai junto (é o
+   * ficam, e o que chegar ali diz que ele foi apagado. As Ferramentas concedidas, as Habilidades, as
+   * Wikis ligadas e a lista de repositórios saem. O que ele tinha aberto é cancelado. A Memória do Agente sai junto (é o
    * único apagamento de Memória, spec #60); a Memória da Conversa que ele gerou fica. Apagar de
    * novo um Agente já apagado refaz a limpeza (cancelar e apagar a Memória dele), para o caso de
    * ela ter caído no meio da primeira vez.
@@ -246,6 +263,8 @@ export function agentRoutes(deps: {
           await tx.update(agents).set({ deletedAt: clock.now() }).where(eq(agents.id, agent.id));
           await releaseHandle(tx, { kind: "agent", id: agent.id });
           await tx.delete(agentTools).where(eq(agentTools.agentId, agent.id));
+          await tx.delete(agentSkills).where(eq(agentSkills.agentId, agent.id));
+          await leaveAgentWikis(tx, agent.id);
           await tx.delete(agentGithubRepositories).where(eq(agentGithubRepositories.agentId, agent.id));
           // Na mesma transação: a marca não fica sem a Memória ter saído.
           await forgetAgent(tx, agent.id);
@@ -336,6 +355,10 @@ export function toAgentDto(
   opts: {
     admin: boolean;
     tools: AgentToolSummaryDto[];
+    /** As Habilidades ativas nele: o nome e a descrição. */
+    skills: AgentSkillSummaryDto[];
+    /** As Wikis ligadas a ele que quem pede lê (`agentWikisReadableBy`). */
+    wikis: AgentWikiSummaryDto[];
     /** Os repositórios do GitHub a que o Agente está restrito (nulo ou ausente: todos os da instalação). */
     githubRepositories?: string[] | null;
     keySpendUsd?: number;
@@ -351,6 +374,8 @@ export function toAgentDto(
     model: a.model as AgentModel,
     builtin: a.builtin,
     tools: opts.tools,
+    skills: opts.skills,
+    wikis: opts.wikis,
     reach: reachLines(opts.tools),
     memoryEnabled: a.memoryEnabled,
   };

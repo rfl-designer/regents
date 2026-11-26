@@ -144,6 +144,24 @@ function AgentAbout({ agent: a }: { agent: AgentDto }) {
         </p>
       ))}
       <p className="micro muted">Ferramentas: {a.tools.length ? a.tools.map((t) => t.title).join(", ") : "nenhuma"}</p>
+      {a.skills.length > 0 && (
+        <ul className="micro muted" aria-label={`Habilidades de ${a.name}`}>
+          {a.skills.map((s) => (
+            <li key={s.name}>
+              Habilidade {s.name}: {s.description}
+            </li>
+          ))}
+        </ul>
+      )}
+      {a.wikis.length > 0 && (
+        <ul className="micro muted" aria-label={`Wikis de ${a.name}`}>
+          {a.wikis.map((w) => (
+            <li key={w.id}>
+              Wiki {w.name}: {w.description}
+            </li>
+          ))}
+        </ul>
+      )}
       <p className="micro">{a.memoryEnabled ? "Memória ligada" : "Memória desligada: não guarda nem lê"}</p>
     </section>
   );

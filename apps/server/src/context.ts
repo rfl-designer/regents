@@ -8,7 +8,9 @@ import { remembers } from "./memory/enabled";
 import { DEFAULT_SUMMARY_CHARS, memorySummary } from "./memory/summary";
 import type { ModelMessage } from "./model/port";
 import { workspaceMapFor } from "./routing";
+import { skillCatalog } from "./skills/tool";
 import type { ToolSpec } from "./tools/port";
+import { wikiCatalog } from "./wiki/tool";
 import { readWorkspaceContext } from "./workspace-context";
 
 const { messages, members, agents, channels, channelParticipants, channelAgents } = schema;
@@ -24,6 +26,14 @@ export interface ResponseContext extends ModelContext {
   /** Os ids dos itens de Memória que entraram no resumo (a resposta os guarda; a extração os recebe). */
   memoryItemIds: string[];
 }
+
+/**
+ * A nota de precedência (spec #74): o que é escrito por gente vale acima da Wiki e da Memória, e
+ * entre a Wiki e a Memória não há ordem (a regra da contradição vem no catálogo das Wikis). Entra
+ * quando há Habilidade, Wiki ou Memória na resposta.
+ */
+const PRECEDENCE =
+  "O Contexto do Workspace vale acima das Instruções do Canal, que valem acima das suas instruções e das suas Habilidades, que valem acima da Wiki e da Memória: quando se contradizem, siga o que vale mais. Entre a Wiki e a Memória não há ordem.";
 
 /**
  * Por que o Agente foi chamado: entra no preâmbulo ("sabe quem chamou").
@@ -45,8 +55,13 @@ export type Call =
  *    não promete ações, quem chamou);
  * 2. o Contexto do Workspace;
  * 3. as instruções do Agente;
+ * 3a. o catálogo das Habilidades ativas nele (`skillCatalog`: o nome e a descrição; o corpo vem
+ *     pela Ferramenta "carregar Habilidade");
+ * 3b. o catálogo das Wikis que alcançam a resposta (`wikiCatalog`: o nome e a descrição; as
+ *     páginas vêm pela Ferramenta "ler a Wiki");
  * 4. as Instruções do Canal;
- * 5. o resumo da Memória (`memorySummary`, com a precedência e o orçamento da Instalação);
+ * 5. o resumo da Memória (`memorySummary`, com o orçamento da Instalação);
+ * 5a. a precedência (`PRECEDENCE`), quando há Habilidade, Wiki ou Memória;
  * 6. quem é quem (pessoas com nome e "sobre mim", Agentes com nome e descrição);
  * 7. as últimas N mensagens até a de origem, cada uma com o autor e a marca de pessoa ou Agente
  *    (numa Thread, a raiz sempre e as últimas N da Thread: `recentMessages`).
@@ -146,12 +161,18 @@ export async function buildContext(
         budget: memoryBudget,
       })
     : { text: "", shown: [] };
+  const skills = await skillCatalog(db, row.id);
+  const wikis = await wikiCatalog(db, { channelId: conversation!.id, originMessageId, agentId: row.id });
   const system = [
     preamble,
     section("Contexto do Workspace", await readWorkspaceContext(db)),
     section("Suas instruções", agent.instructions),
+    section("Suas Habilidades", skills),
+    section("Wikis", wikis),
     section("Instruções do Canal", conversation!.instructions),
     memory.text,
+    // A precedência vale sempre que há uma camada abaixo do que é escrito por gente.
+    section("O que vale mais", skills || wikis || memory.text ? PRECEDENCE : ""),
     section("Quem é quem", whoIsWho),
     ...(await articuladoraMap(db, agent, origin, conversation!)),
   ]

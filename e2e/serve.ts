@@ -34,6 +34,15 @@
  * que respondeu (#65). Com `[sem citar: <texto>]`, devolve também o texto sem citar mensagem
  * nenhuma, que o Shearim descarta e mostra no Andamento.
  *
+ * A Sincronização da Wiki (reconhecida pela marca no `system`) escreve, para cada Fonte, uma página
+ * com o slug do nome do arquivo (sem a extensão), o título do primeiro `# título` da Fonte (ou o nome
+ * do arquivo) e o primeiro parágrafo de texto, e acrescenta a linha dela ao índice do rascunho. Uma
+ * Fonte com `[trave]` fica sem resposta (para o "Cancelar"); com `[falhe sempre]`, recebe a
+ * sobrecarga (529) em toda tentativa.
+ *
+ * Com `[wiki: <Wiki>/<página>]`, o Agente lê a página por "ler a Wiki" e responde com a primeira
+ * linha do corpo dela e a citação `[[wiki:<Wiki>/<página>]]` (#85).
+ *
  * O GitHub é o falso dos testes do servidor (`test/fakes/github-api.ts`), com `time/site` e
  * `time/infra` na conta do time: criar o App e instalá-lo passam por ele (o "navegador do Admin"
  * pode ser um `fetch` que segue os redirecionamentos à mão).
@@ -79,8 +88,11 @@ const delayMs = Number(process.env.FAKE_MESSAGES_API_DELAY_MS ?? 400);
 const failures = new Map<string, number>();
 const anthropic = await startFakeMessagesApi({
   defaultExtraction: lembrar,
+  defaultSync: sincronizar,
   defaultReply: (req) => {
     if (req.body.output_config) return desfecho(req);
+    const daWiki = citarWiki(req);
+    if (daWiki) return daWiki;
     const [resultado] = toolResults(req.body);
     if (resultado) {
       // Só o resultado da Ferramenta do CRM (bem ou mal): o de "listar Agentes" pode citar "buscar cliente".
@@ -116,6 +128,92 @@ const anthropic = await startFakeMessagesApi({
     return { text: "Oi! Tudo certo por aqui: o prazo é sexta-feira.", delayMs };
   },
 });
+/**
+ * `[wiki: <Wiki>/<página>]` na mensagem de origem, com "ler a Wiki" oferecida: no primeiro turno o
+ * Agente lê a página; com o resultado, responde com a primeira linha do corpo e a citação.
+ */
+function citarWiki(req: RecordedRequest): FakeReply | undefined {
+  const tools = (req.body.tools as { name: string }[] | undefined) ?? [];
+  if (!tools.some((t) => t.name === "ler_a_wiki")) return undefined;
+  const contexto = req.body.messages.find((m) => m.role === "user");
+  const texto =
+    typeof contexto?.content === "string"
+      ? contexto.content
+      : (contexto?.content ?? []).map((b) => b.text ?? "").join("");
+  const pedido = (texto.split("\n\n").at(-2) ?? "").match(/\[wiki: ([^/\]]+)\/([^\]]+)\]/);
+  if (!pedido) return undefined;
+  const [, wiki, pagina] = pedido as unknown as [string, string, string];
+  const [resultado] = toolResults(req.body);
+  if (!resultado) return { toolUse: [{ name: "ler_a_wiki", input: { wiki, pagina } }], delayMs };
+  // O resultado: "<resultado_de_ferramenta …>\nWiki X, versão 1: a página …\n\n<corpo>\n</resultado_de_ferramenta>".
+  const corpo = resultado.content.split("\n\n")[1]?.split("\n")[0] ?? "";
+  return { text: `Segundo a Wiki: ${corpo} [[wiki:${wiki}/${pagina}]]`, delayMs };
+}
+
+/**
+ * Uma chamada da Sincronização: no primeiro turno, escreve a página da Fonte e o índice com ela; no
+ * seguinte (com os resultados das Ferramentas), termina.
+ */
+function sincronizar(req: RecordedRequest): FakeReply {
+  if (toolResults(req.body).length) return { text: "Pronto.", delayMs: 0 };
+  const prompt = lastUserText(req.body);
+  if (prompt.includes("## Revisão da Wiki")) return revisar(prompt);
+  const indice = prompt.split("## Índice do rascunho\n")[1]?.split("\n\n## Fonte nova")[0] ?? "";
+  // Uma Fonte grande vai em partes (#87): "(Fonte 1 de 1, parte 2 de 3)" e a linha da parte.
+  const fonte = prompt.match(
+    /## Fonte nova: (.+?) \(Fonte \d+ de \d+(?:, parte \d+ de \d+)?\)\n(?:Esta é a parte .+\n)?([\s\S]*?)\n\nLeve esta Fonte/,
+  );
+  if (!fonte) return { text: "Pronto.", delayMs: 0 };
+  const [, arquivo, texto] = fonte as unknown as [string, string, string];
+  // `[trave]`: a chamada não responde (até o cancelamento ou a vigia). `[falhe sempre]`: a sobrecarga.
+  if (texto.includes("[trave]")) return { hang: true };
+  if (texto.includes("[falhe sempre]")) {
+    return { status: 529, errorType: "overloaded_error", errorMessage: "Overloaded" };
+  }
+  const slug = arquivo
+    .replace(/\.[^.]+$/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  const titulo = texto.match(/^# (.+)$/m)?.[1]?.trim() ?? arquivo;
+  const corpo =
+    texto
+      .split("\n\n")
+      .find((p) => p.trim() && !p.startsWith("#"))
+      ?.trim() ?? texto.trim();
+  const linhas = indice.startsWith("(") ? [] : indice.split("\n").filter(Boolean);
+  return {
+    toolUse: [
+      { name: "escrever_pagina", input: { slug, titulo, corpo, fontes: [arquivo] } },
+      {
+        name: "escrever_pagina",
+        input: { slug: "index", titulo: "Índice", corpo: [...linhas, `- [[${slug}]]: ${titulo}`].join("\n") },
+      },
+    ],
+    delayMs,
+  };
+}
+
+/**
+ * A revisão da Wiki (#87): uma página com "contradiz" no slug (de uma Fonte `contradiz….md`) ganha
+ * uma contradição apontada, devagar (a espera é entre eventos do stream), para a tela mostrar
+ * "revisando a Wiki"; sem ela, termina.
+ */
+function revisar(prompt: string): FakeReply {
+  const paginas = prompt.split("## Páginas do rascunho\n")[1]?.split("\n\n")[0] ?? "";
+  const slug = paginas.match(/^- ([a-z0-9-]*contradiz[a-z0-9-]*):/m)?.[1];
+  if (!slug) return { text: "Pronto.", delayMs: 0 };
+  return {
+    toolUse: [
+      {
+        name: "apontar_contradicao",
+        input: { paginas: [slug], descricao: "Diz que o gancho dura 3 segundos e, depois, 5." },
+      },
+    ],
+    delayMs: 300,
+  };
+}
+
 /**
  * A extração da Memória: guarda o `[lembrar: …]` da última mensagem de pessoa da troca (a que o
  * Agente respondeu). A entrada traz as mensagens de pessoa, uma por parágrafo, antes da resposta.

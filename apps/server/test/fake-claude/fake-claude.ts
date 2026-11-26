@@ -14,6 +14,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileS
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SYNC_MARKER } from "../../src/wiki/rules";
 import { citeLastPerson } from "../fakes/memory-citation";
 import {
   DEFAULT_FAKE_ACCOUNT,
@@ -46,7 +47,16 @@ const isExtraction = (() => {
   }
 })();
 
-/** Registra o start. O `-p` lê o stdin até o fim antes (o prompt chega por ali). A extração vai a um log à parte. */
+/** Uma chamada da Sincronização da Wiki (ADR 0015): o `--system-prompt` abre com a marca das regras da Wiki. */
+const isSync = (() => {
+  const system = argv.includes("--system-prompt") ? argv[argv.indexOf("--system-prompt") + 1] : undefined;
+  return Boolean(system?.includes(SYNC_MARKER));
+})();
+
+/**
+ * Registra o start. O `-p` lê o stdin até o fim antes (o prompt chega por ali). A extração e a
+ * Sincronização vão cada uma a um log à parte.
+ */
 function logCall(stdin?: string) {
   const call: FakeClaudeCall = {
     pid: process.pid,
@@ -55,7 +65,8 @@ function logCall(stdin?: string) {
     cwd: process.cwd(),
     env: Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)),
   };
-  appendFileSync(join(home!, isExtraction ? "extractions.jsonl" : "calls.jsonl"), `${JSON.stringify(call)}\n`);
+  const log = isExtraction ? "extractions.jsonl" : isSync ? "syncs.jsonl" : "calls.jsonl";
+  appendFileSync(join(home!, log), `${JSON.stringify(call)}\n`);
 }
 if (!isPrint) logCall();
 
@@ -199,6 +210,14 @@ function nextRun(): FakeRun {
         end: { result: "success", text: "", structuredOutput: { operacoes: [] } },
       }
     );
+  }
+  if (isSync) {
+    const queued = script.syncRuns?.[0];
+    if (queued) {
+      writeFileSync(scriptFile, JSON.stringify({ ...script, syncRuns: script.syncRuns!.slice(1) }));
+      return queued;
+    }
+    return script.syncRun ?? { kind: "reply", text: "Pronto." };
   }
   const queued = script.runs?.[0];
   if (queued) {

@@ -100,7 +100,7 @@ describe("o resumo da Memória no contexto", () => {
     expect([...posicoes].sort((a, b) => a - b)).toEqual(posicoes);
   });
 
-  test("o resumo diz ao modelo a precedência: o Contexto do Workspace, as Instruções do Canal e as instruções do Agente valem acima da Memória", async () => {
+  test("o resumo diz ao modelo a precedência: o Contexto do Workspace, as Instruções do Canal, as instruções do Agente e as Habilidades valem acima da Wiki e da Memória", async () => {
     const t = await testApp();
     const { produto } = await produtoComFaro(t);
     await guardarNaMemoria(t, produto.id, ["O preço sobe em janeiro."]);
@@ -109,7 +109,7 @@ describe("o resumo da Memória no contexto", () => {
 
     const system = await systemDaChamada(t, 2);
     expect(system).toContain(
-      "O Contexto do Workspace, as Instruções do Canal e as suas instruções valem acima da Memória: quando se contradizem, siga-os.",
+      "O Contexto do Workspace vale acima das Instruções do Canal, que valem acima das suas instruções e das suas Habilidades, que valem acima da Wiki e da Memória: quando se contradizem, siga o que vale mais. Entre a Wiki e a Memória não há ordem.",
     );
   });
 

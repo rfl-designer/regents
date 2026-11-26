@@ -340,6 +340,7 @@ export const executions = pgTable(
 
 /**
  * Uso por execução (Spec, Esquema): Agente, pagador e custo de cada chamada que terminou bem.
+ * Também o de cada chamada de uma Sincronização da Wiki, que não é execução (ADR 0015).
  * Só a Chave grava aqui (o gasto da Conta é da assinatura do Membro e não aparece para o Admin).
  * O gasto do mês de um Agente é a soma de `cost_usd` com `month` = o mês do relógio (UTC).
  */
@@ -347,9 +348,13 @@ export const executionUsage = pgTable(
   "execution_usage",
   {
     id: uuid().primaryKey(),
-    executionId: uuid()
-      .notNull()
-      .references(() => executions.id),
+    /** A execução que gastou; nula no gasto de uma Sincronização da Wiki (`wikiSyncId`). */
+    executionId: uuid().references(() => executions.id),
+    /**
+     * A Sincronização da Wiki que gastou (ADR 0015): conta no orçamento da Articuladora. Sem FK: o
+     * gasto do mês fica mesmo que a Wiki (e as Sincronizações dela) seja apagada.
+     */
+    wikiSyncId: uuid(),
     agentId: uuid()
       .notNull()
       .references(() => agents.id),
@@ -363,7 +368,10 @@ export const executionUsage = pgTable(
     month: text().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull(),
   },
-  (t) => [index().on(t.agentId, t.month)],
+  (t) => [
+    index().on(t.agentId, t.month),
+    check("execution_usage_one_origin", sql`num_nonnulls(${t.executionId}, ${t.wikiSyncId}) = 1`),
+  ],
 );
 
 /**
@@ -982,3 +990,46 @@ export const memoryItems = pgTable(
     ),
   ],
 );
+
+/** De onde veio uma Habilidade: escrita na tela ou importada de um `SKILL.md` (spec #74). */
+export const skillOrigin = pgEnum("skill_origin", ["written", "imported"]);
+
+/**
+ * Uma Habilidade (spec #74): um procedimento escrito por gente, com nome (único no Workspace, sem
+ * diferenciar maiúsculas), descrição (diz quando usar) e corpo em markdown. Só o Admin escreve. O
+ * Agente vê o nome e a descrição das ativas nele e carrega o corpo pela Ferramenta.
+ */
+export const skills = pgTable(
+  "skills",
+  {
+    id: uuid().primaryKey(),
+    name: text().notNull(),
+    description: text().notNull(),
+    body: text().notNull(),
+    origin: skillOrigin().notNull().default("written"),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+    updatedAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [uniqueIndex("skills_name_lower_unique").on(sql`lower(${t.name})`)],
+);
+
+/**
+ * A Habilidade ativa num Agente (a Articuladora inclusive): o Admin liga e desliga na tela do
+ * Agente. Apagar a Habilidade a tira de todos os Agentes na hora.
+ */
+export const agentSkills = pgTable(
+  "agent_skills",
+  {
+    agentId: uuid()
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    skillId: uuid()
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+    activatedAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.agentId, t.skillId] }), index().on(t.skillId)],
+);
+
+// A Wiki (spec #74) tem as tabelas num módulo próprio.
+export * from "../wiki/schema";

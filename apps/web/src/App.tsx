@@ -14,7 +14,11 @@ import {
   NO_IDENTITY_TEXT,
   SW_NAVIGATE_MESSAGE,
   type UnreadDto,
+  WIKI_INDEX_SLUG,
+  WIKIS_PATH,
   WORKSPACE_KEY_PATH,
+  wikiPageOfPath,
+  wikiPagePath,
 } from "@shearim/contracts";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { AgentsSettings, WorkspaceKeySettings } from "./AgentsAdmin";
@@ -40,8 +44,12 @@ import { closeNotificationsOf, showBadge, usePush } from "./notifications";
 import { ProfileView } from "./ProfileView";
 import { InstallOnIphone, PushBanners } from "./PushBanners";
 import { type AdminView, Sidebar } from "./Sidebar";
+import { SkillsSettings } from "./SkillsAdmin";
 import { WorkspaceContextSettings } from "./WorkspaceContext";
 import { WorkspaceMemory } from "./WorkspaceMemory";
+import { OpenWikiContext } from "./wiki/citation";
+import { useReadableWikis, WikiReader } from "./wiki/WikiReader";
+import { WikisSettings } from "./wiki/WikisAdmin";
 
 type State =
   | { kind: "loading" }
@@ -69,8 +77,13 @@ function explain(err: unknown): State {
 }
 
 type Screen = "account" | "myConnectors" | "profile" | "notifications" | "workspaceMemory" | AdminView;
-/** `channel` é a conversa aberta (Canal ou DM); as outras são telas (`SCREENS`). */
-type View = "channel" | Screen;
+/**
+ * `channel` é a conversa aberta (Canal ou DM); `wiki`, a página da Wiki aberta para ler (`/wiki/…`);
+ * as outras são telas (`SCREENS`).
+ */
+type View = "channel" | "wiki" | Screen;
+type Screened = Exclude<View, "channel" | "wiki">;
+const isScreen = (view: View): view is Screened => view !== "channel" && view !== "wiki";
 
 /** O que as telas recebem do App. */
 interface ScreenContext {
@@ -95,7 +108,9 @@ const SCREENS: Record<Screen, { path?: string; admin?: true; render(ctx: ScreenC
   context: { admin: true, render: () => <WorkspaceContextSettings /> },
   settings: { admin: true, render: () => <ChannelSettings /> },
   agents: { path: AGENTS_PATH, admin: true, render: () => <AgentsSettings /> },
+  skills: { admin: true, render: () => <SkillsSettings /> },
   connectors: { path: CONNECTORS_PATH, admin: true, render: () => <ConnectorsSettings /> },
+  wikis: { path: WIKIS_PATH, admin: true, render: () => <WikisSettings /> },
   key: { path: WORKSPACE_KEY_PATH, admin: true, render: () => <WorkspaceKeySettings /> },
   github: { path: GITHUB_PATH, admin: true, render: () => <GitHubSettings /> },
   installation: {
@@ -106,10 +121,11 @@ const SCREENS: Record<Screen, { path?: string; admin?: true; render(ctx: ScreenC
 };
 
 /** O endereço próprio da tela, se ela tem. */
-const pathOf = (view: View) => (view === "channel" ? undefined : SCREENS[view].path);
+const pathOf = (view: View) => (isScreen(view) ? SCREENS[view].path : undefined);
 
 /** A tela que um endereço pede (`/conta`, `/chave`…), ou `undefined` (uma conversa, ou a raiz). */
 function viewOfPath(pathname: string): View | undefined {
+  if (wikiPageOfPath(pathname)) return "wiki";
   return (Object.keys(SCREENS) as Screen[]).find((s) => SCREENS[s].path === pathname);
 }
 
@@ -157,6 +173,9 @@ export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selectedId, setSelectedId] = useState<string | null>(conversationFromUrl);
   const [view, setView] = useState<View>(() => viewOfPath(location.pathname) ?? "channel");
+  /** A página da Wiki aberta para ler (a `view` é `wiki`). */
+  const [wikiAt, setWikiAt] = useState(() => wikiPageOfPath(location.pathname));
+  const wikis = useReadableWikis(state.kind === "ready");
   const account = useAccount(state.kind === "ready");
   const push = usePush(state.kind === "ready");
   const installation = useInstallation(state.kind === "ready" && state.me.role === "admin");
@@ -249,6 +268,7 @@ export function App() {
       // Conta), não a uma conversa.
       const target = navigate ? viewOfPath(navigate.pathname) : undefined;
       if (target) {
+        if (target === "wiki") setWikiAt(wikiPageOfPath(navigate!.pathname));
         setView(target);
         return;
       }
@@ -277,7 +297,7 @@ export function App() {
     if (watching) void closeNotificationsOf(watching);
   }, [watching]);
   useEffect(() => {
-    const path = pathOf(view);
+    const path = view === "wiki" && wikiAt ? wikiPagePath(wikiAt.wikiId, wikiAt.slug, wikiAt.version) : pathOf(view);
     if (path) {
       if (location.pathname !== path) history.replaceState(null, "", path);
       return;
@@ -285,7 +305,7 @@ export function App() {
     if (shownId && location.pathname !== conversationPath(shownId)) {
       history.replaceState(null, "", conversationPath(shownId));
     }
-  }, [shownId, view]);
+  }, [shownId, view, wikiAt]);
 
   if (state.kind === "loading") return <main className="center">Carregando…</main>;
   if (state.kind === "entry") return <EntryView onApproved={load} />;
@@ -313,102 +333,119 @@ export function App() {
     setSelectedId(id);
     setView("channel");
   };
+  const openWiki = (wikiId: string, slug: string, version?: number) => {
+    setWikiAt({ wikiId, slug, ...(version === undefined ? {} : { version }) });
+    setView("wiki");
+  };
   return (
-    <div className="shell">
-      <ConnectionBanner notice={connection} />
-      <header className="topbar">
-        <strong>Shearim</strong>
-        <div className="row">
-          <button
-            type="button"
-            className="whoami"
-            aria-current={view === "profile" ? "page" : undefined}
-            title="Meu perfil"
-            onClick={() => setView("profile")}
-          >
-            <Avatar name={state.me.displayName} photo={state.me.profilePicUrl} />
-            <span>Você está como {state.me.displayName}</span>
-            <span className="handle">@{state.me.handle}</span>
-          </button>
-          <button
-            type="button"
-            className="link"
-            aria-pressed={view === "notifications"}
-            onClick={() => setView(view === "notifications" ? "channel" : "notifications")}
-          >
-            Notificações
-          </button>
-          <button
-            type="button"
-            className="link"
-            aria-pressed={view === "account"}
-            onClick={() => setView(view === "account" ? "channel" : "account")}
-          >
-            {view === "account" ? "Voltar à conversa" : "Minha Conta"}
-            {expiringValidity(account.account) && (
-              <span className="selo" role="img" aria-label="A sua Conta do Claude vence em breve" />
-            )}
-          </button>
-          <button
-            type="button"
-            className="link"
-            aria-pressed={view === "myConnectors"}
-            onClick={() => setView(view === "myConnectors" ? "channel" : "myConnectors")}
-          >
-            {view === "myConnectors" ? "Voltar à conversa" : "Meus Conectores"}
-          </button>
-        </div>
-      </header>
-      {state.me.role === "admin" && <JoinRequestsPanel />}
-      {state.me.role === "admin" && (
-        <KeyBanners onOpenKey={() => setView("key")} onOpenAgents={() => setView("agents")} />
-      )}
-      {view !== "installation" && (
-        <InstallationBanner installation={installation.installation} onOpen={() => setView("installation")} />
-      )}
-      {view !== "account" && <AccountOffer state={account} onOpen={() => setView("account")} />}
-      <InstallOnIphone />
-      <NotificationsOnboarding push={push} />
-      <PushBanners push={push} onOpenDevices={() => setView("notifications")} />
-      <div className="workspace">
-        <Sidebar
-          me={state.me}
-          channels={state.channels}
-          dms={state.dms}
-          unread={unread}
-          selectedId={shownId}
-          isAdmin={state.me.role === "admin"}
-          adminView={view !== "channel" && SCREENS[view].admin ? (view as AdminView) : null}
-          onOpen={open}
-          onCreated={(created) => {
-            setChannels((list) => upsert(list, created));
-            open(created.id);
-          }}
-          onDmOpened={(opened) => {
-            setDms((list) => upsert(list, opened));
-            open(opened.id);
-          }}
-          onOpenAdmin={setView}
-          workspaceMemoryOpen={view === "workspaceMemory"}
-          onOpenWorkspaceMemory={() => setView("workspaceMemory")}
-        />
-        {view !== "channel" ? (
-          SCREENS[view].render({ me: state.me, account, push, installation, setMe })
-        ) : dm ? (
-          <DmView key={dm.id} dm={dm} me={state.me} focus={focusIn(dm.id)} />
-        ) : channel ? (
-          <ChannelView
-            key={channel.id}
-            channel={channel}
-            me={state.me}
-            focus={focusIn(channel.id)}
-            onChanged={(changed) => setChannels((list) => upsert(list, changed))}
-          />
-        ) : (
-          <main className="center">Nenhum Canal ainda.</main>
+    <OpenWikiContext.Provider value={(at) => openWiki(at.wikiId, at.slug, at.version)}>
+      <div className="shell">
+        <ConnectionBanner notice={connection} />
+        <header className="topbar">
+          <strong>Shearim</strong>
+          <div className="row">
+            <button
+              type="button"
+              className="whoami"
+              aria-current={view === "profile" ? "page" : undefined}
+              title="Meu perfil"
+              onClick={() => setView("profile")}
+            >
+              <Avatar name={state.me.displayName} photo={state.me.profilePicUrl} />
+              <span>Você está como {state.me.displayName}</span>
+              <span className="handle">@{state.me.handle}</span>
+            </button>
+            <button
+              type="button"
+              className="link"
+              aria-pressed={view === "notifications"}
+              onClick={() => setView(view === "notifications" ? "channel" : "notifications")}
+            >
+              Notificações
+            </button>
+            <button
+              type="button"
+              className="link"
+              aria-pressed={view === "account"}
+              onClick={() => setView(view === "account" ? "channel" : "account")}
+            >
+              {view === "account" ? "Voltar à conversa" : "Minha Conta"}
+              {expiringValidity(account.account) && (
+                <span className="selo" role="img" aria-label="A sua Conta do Claude vence em breve" />
+              )}
+            </button>
+            <button
+              type="button"
+              className="link"
+              aria-pressed={view === "myConnectors"}
+              onClick={() => setView(view === "myConnectors" ? "channel" : "myConnectors")}
+            >
+              {view === "myConnectors" ? "Voltar à conversa" : "Meus Conectores"}
+            </button>
+          </div>
+        </header>
+        {state.me.role === "admin" && <JoinRequestsPanel />}
+        {state.me.role === "admin" && (
+          <KeyBanners onOpenKey={() => setView("key")} onOpenAgents={() => setView("agents")} />
         )}
+        {view !== "installation" && (
+          <InstallationBanner installation={installation.installation} onOpen={() => setView("installation")} />
+        )}
+        {view !== "account" && <AccountOffer state={account} onOpen={() => setView("account")} />}
+        <InstallOnIphone />
+        <NotificationsOnboarding push={push} />
+        <PushBanners push={push} onOpenDevices={() => setView("notifications")} />
+        <div className="workspace">
+          <Sidebar
+            me={state.me}
+            channels={state.channels}
+            dms={state.dms}
+            unread={unread}
+            selectedId={shownId}
+            isAdmin={state.me.role === "admin"}
+            adminView={isScreen(view) && SCREENS[view].admin ? (view as AdminView) : null}
+            onOpen={open}
+            onCreated={(created) => {
+              setChannels((list) => upsert(list, created));
+              open(created.id);
+            }}
+            onDmOpened={(opened) => {
+              setDms((list) => upsert(list, opened));
+              open(opened.id);
+            }}
+            onOpenAdmin={setView}
+            workspaceMemoryOpen={view === "workspaceMemory"}
+            onOpenWorkspaceMemory={() => setView("workspaceMemory")}
+            wikis={wikis}
+            openWikiId={view === "wiki" ? (wikiAt?.wikiId ?? null) : null}
+            onOpenWiki={(wikiId) => openWiki(wikiId, WIKI_INDEX_SLUG)}
+          />
+          {view === "wiki" && wikiAt ? (
+            <WikiReader
+              key={wikiAt.wikiId}
+              wikiId={wikiAt.wikiId}
+              slug={wikiAt.slug}
+              version={wikiAt.version}
+              onNavigate={(slug, version) => openWiki(wikiAt.wikiId, slug, version)}
+            />
+          ) : isScreen(view) ? (
+            SCREENS[view].render({ me: state.me, account, push, installation, setMe })
+          ) : dm ? (
+            <DmView key={dm.id} dm={dm} me={state.me} focus={focusIn(dm.id)} />
+          ) : channel ? (
+            <ChannelView
+              key={channel.id}
+              channel={channel}
+              me={state.me}
+              focus={focusIn(channel.id)}
+              onChanged={(changed) => setChannels((list) => upsert(list, changed))}
+            />
+          ) : (
+            <main className="center">Nenhum Canal ainda.</main>
+          )}
+        </div>
       </div>
-    </div>
+    </OpenWikiContext.Provider>
   );
 }
 

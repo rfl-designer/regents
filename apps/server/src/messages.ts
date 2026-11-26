@@ -3,6 +3,7 @@ import { asc, eq } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { type Db, schema } from "./db/client";
 import { mentionsOf } from "./mentions";
+import { type CitedReply, wikiCitationsOf } from "./wiki/citations";
 
 const { messages, members, agents, executions } = schema;
 const origins = alias(messages, "origins");
@@ -41,13 +42,14 @@ type Row = Awaited<ReturnType<ReturnType<typeof selectMessages>["where"]>>[numbe
 
 /**
  * A mensagem como `viewerId` a vê: o porquê da Chave pagando (`yourAccount`) só vai ao autor da
- * mensagem de origem.
+ * mensagem de origem; a citação da Wiki só abre para quem lê a Wiki.
  */
-function toDto(r: Row, mentions: Map<string, MessageDto["mentions"]>, viewerId: string | null): MessageDto {
+function toDto(r: Row, extra: Extra, viewerId: string | null): MessageDto {
+  const cited = extra.citations.get(r.id);
   return {
     id: r.id,
     channelId: r.channelId,
-    body: r.body,
+    body: cited?.body ?? r.body,
     author: r.agentId
       ? { kind: "agent", id: r.agentId, displayName: r.agentName!, photo: r.agentPhoto }
       : {
@@ -59,13 +61,34 @@ function toDto(r: Row, mentions: Map<string, MessageDto["mentions"]>, viewerId: 
         },
     originMessageId: r.originMessageId,
     threadRootId: r.threadRootId,
-    mentions: mentions.get(r.id) ?? [],
+    mentions: extra.mentions.get(r.id) ?? [],
     createdAt: r.createdAt.toISOString(),
     // "⚠ pela Chave do Workspace" é de todos; pela Conta, nada aparece (a Conta é só do autor).
     ...(r.payer === "key" ? { payer: "key" as const } : {}),
     ...(r.payer === "key" && r.payerAccount && viewerId !== null && r.originAuthorId === viewerId
       ? { yourAccount: r.payerAccount }
       : {}),
+    ...(cited ? { wikiCitations: cited.citations } : {}),
+  };
+}
+
+interface Extra {
+  mentions: Map<string, MessageDto["mentions"]>;
+  citations: Map<string, CitedReply>;
+}
+
+/** As Menções e, nas respostas de Agente, as citações da Wiki como `viewerId` as vê. */
+async function extraOf(db: Db, rows: Row[], viewerId: string | null): Promise<Extra> {
+  return {
+    mentions: await mentionsOf(
+      db,
+      rows.map((r) => r.id),
+    ),
+    citations: await wikiCitationsOf(
+      db,
+      rows.filter((r) => r.agentId),
+      viewerId,
+    ),
   };
 }
 
@@ -75,11 +98,8 @@ function toDto(r: Row, mentions: Map<string, MessageDto["mentions"]>, viewerId: 
  */
 export async function listMessages(db: Db, channelId: string, viewerId: string): Promise<MessageDto[]> {
   const rows = await selectMessages(db).where(eq(messages.channelId, channelId)).orderBy(asc(messages.seq));
-  const mentions = await mentionsOf(
-    db,
-    rows.map((r) => r.id),
-  );
-  return rows.map((r) => toDto(r, mentions, viewerId));
+  const extra = await extraOf(db, rows, viewerId);
+  return rows.map((r) => toDto(r, extra, viewerId));
 }
 
 /**
@@ -88,5 +108,5 @@ export async function listMessages(db: Db, channelId: string, viewerId: string):
  */
 export async function findMessage(db: Db, id: string, viewerId: string | null = null): Promise<MessageDto | undefined> {
   const [row] = await selectMessages(db).where(eq(messages.id, id));
-  return row && toDto(row, await mentionsOf(db, [row.id]), viewerId);
+  return row && toDto(row, await extraOf(db, [row], viewerId), viewerId);
 }

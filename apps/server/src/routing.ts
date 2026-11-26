@@ -3,7 +3,9 @@ import { and, asc, eq, inArray, isNotNull, notInArray, or } from "drizzle-orm";
 import type { Agent } from "./agents";
 import { recentMessages } from "./context";
 import { type Db, schema } from "./db/client";
+import { activeSkillsByAgent } from "./skills/skills";
 import type { ToolPort } from "./tools/port";
+import { type Answer, wikisInReach } from "./wiki/reach";
 
 const { messages, agents, channels, channelAgents, channelParticipants, mentionHandles } = schema;
 
@@ -49,6 +51,12 @@ type TeamMember = { id: string; name: string; handle: string; description: strin
 /** As Ferramentas concedidas a cada Agente (a porta de Ferramentas): o roteamento as lista, sem usá-las. */
 type GrantsOf = ToolPort["grantsOf"];
 
+/**
+ * O que a linha de cada Agente diz depois da descrição, para os Agentes `agentIds`: o roteamento
+ * pede uma vez e monta as linhas com a função que volta.
+ */
+type LineSuffixes = (agentIds: readonly string[]) => Promise<(agentId: string) => string>;
+
 /** O Desfecho decidido, já conferido contra os Agentes do Canal. */
 export type Decision =
   | { decision: "reply" | "none"; reason: string; delegates: [] }
@@ -63,8 +71,8 @@ export async function workspaceMapFor(
   db: Db,
   authorMemberId: string,
   channelId: string,
-  /** Com ele, cada Agente vem com as Ferramentas dele (o roteamento). */
-  grantsOf?: GrantsOf,
+  /** Com ele, cada Agente vem com o que sabe fazer (o roteamento: `capabilitySuffixes`). */
+  suffixes?: LineSuffixes,
 ) {
   const visible = await db
     .select({ id: channels.id, name: channels.name })
@@ -114,12 +122,12 @@ export async function workspaceMapFor(
           )
       : [];
   const nameOf = new Map(visible.map((c) => [c.id, c.name!]));
-  const grants = grantsOf ? await grantsOf(outside.map((a) => a.id)) : undefined;
+  const suffixOf = suffixes ? await suffixes(outside.map((a) => a.id)) : () => "";
   const lines = {
     channels: visible.map((c) => `#${c.name}`).join(", "),
     agents: outside.map((a) => {
       const where = placements.filter((p) => p.agentId === a.id).map((p) => `#${nameOf.get(p.channelId)}`);
-      return `- ${agentLine(a)}${where.length ? ` · está em ${where.join(", ")}` : ""}${toolsSuffix(a, grants)}`;
+      return `- ${agentLine(a)}${where.length ? ` · está em ${where.join(", ")}` : ""}${suffixOf(a.id)}`;
     }),
   };
   return lines;
@@ -129,15 +137,40 @@ function agentLine(a: TeamMember) {
   return `@${a.handle} (${a.name})${a.description ? `: ${a.description}` : ""}`;
 }
 
-/** " · Ferramentas: a, b" (ou "nenhuma"), quando o pedido leva as Ferramentas de cada Agente. */
-function toolsSuffix(a: Pick<TeamMember, "id">, grants?: Awaited<ReturnType<GrantsOf>>) {
-  if (!grants) return "";
-  return ` · Ferramentas: ${
-    grants
-      .get(a.id)
-      ?.map((t) => t.title)
-      .join(", ") || "nenhuma"
-  }`;
+/**
+ * O que cada Agente sabe fazer, na linha dele no roteamento (spec #74, ADR 0009): as Ferramentas
+ * (" · Ferramentas: a, b", ou "nenhuma"), as Habilidades ativas, com o nome e a descrição
+ * (" · Habilidades: Nome (descrição); …") e as Wikis que alcançam esta conversa com ele
+ * (" · Wikis: Nome (descrição); …"); as duas últimas somem sem nenhuma. As Wikis vêm de
+ * `wikisInReach` (#90): ligadas ao Agente ou ao Canal, e só as do alcance de quem vê a conversa, para
+ * que o motivo do Desfecho nunca nomeie uma restrita de fora. Nunca o corpo de uma Habilidade nem
+ * uma página: o Desfecho só escolhe quem responde.
+ */
+function capabilitySuffixes(
+  db: Db,
+  grantsOf: GrantsOf,
+  conversation: Pick<Answer, "channelId" | "originMessageId">,
+): LineSuffixes {
+  return async (agentIds) => {
+    const [grants, skills, wikis] = await Promise.all([
+      grantsOf(agentIds),
+      activeSkillsByAgent(db, agentIds),
+      Promise.all(agentIds.map((agentId) => wikisInReach(db, { ...conversation, agentId }))),
+    ]);
+    const wikisOf = new Map(agentIds.map((id, i) => [id, wikis[i]!]));
+    return (id) =>
+      toolsSuffix(grants.get(id)) + namedSuffix("Habilidades", skills.get(id)) + namedSuffix("Wikis", wikisOf.get(id));
+  };
+}
+
+function toolsSuffix(tools: readonly { title: string }[] = []) {
+  return ` · Ferramentas: ${tools.map((t) => t.title).join(", ") || "nenhuma"}`;
+}
+
+/** " · Habilidades: Nome (descrição); …" ou " · Wikis: …"; nada sem nenhuma. */
+function namedSuffix(label: string, items: readonly { name: string; description: string }[] = []) {
+  if (items.length === 0) return "";
+  return ` · ${label}: ${items.map((s) => `${s.name} (${s.description})`).join("; ")}`;
 }
 
 /** Os Agentes do Canal a quem ela pode delegar (todos menos ela), com o identificador. */
@@ -166,8 +199,9 @@ async function spokeInThread(db: Db, rootId: string, team: readonly TeamMember[]
 /**
  * O pedido de roteamento de uma mensagem de pessoa num Canal: o `system`, a conversa e quem pode
  * receber. Numa Thread, a conversa é a raiz e a Thread (`recentMessages`), e os Agentes que já
- * falaram ali vêm marcados como preferidos. Cada Agente vem com as Ferramentas dele, para que ela
- * delegue a quem consegue atender; o pedido de roteamento em si continua sem Ferramentas.
+ * falaram ali vêm marcados como preferidos. Cada Agente vem com as Ferramentas, as Habilidades e as
+ * Wikis do alcance dele, para que ela delegue a quem consegue atender; o pedido de roteamento em si
+ * continua sem Ferramentas.
  */
 export async function buildRouting(db: Db, articuladora: Agent, originMessageId: string, grantsOf: GrantsOf) {
   const [origin] = await db.select().from(messages).where(eq(messages.id, originMessageId));
@@ -175,8 +209,9 @@ export async function buildRouting(db: Db, articuladora: Agent, originMessageId:
   const [channel] = await db.select().from(channels).where(eq(channels.id, origin.channelId));
   const recent = await recentMessages(db, origin, Math.min(ROUTING_RECENT, channel!.recentMessages));
   const team = await delegatesIn(db, channel!.id);
-  const map = await workspaceMapFor(db, origin.authorMemberId, channel!.id, grantsOf);
-  const grants = await grantsOf(team.map((a) => a.id));
+  const suffixes = capabilitySuffixes(db, grantsOf, { channelId: channel!.id, originMessageId });
+  const map = await workspaceMapFor(db, origin.authorMemberId, channel!.id, suffixes);
+  const suffixOf = await suffixes(team.map((a) => a.id));
   const author = recent.at(-1)!.author;
   const inThread = origin.threadRootId !== null;
   const spoke = inThread ? await spokeInThread(db, origin.threadRootId!, team) : [];
@@ -190,7 +225,7 @@ export async function buildRouting(db: Db, articuladora: Agent, originMessageId:
     `- delegar: passe para até ${MAX_DELEGATES} Agentes do Canal, cada um com uma frase sobre o que cobrir. Só Agentes da lista "Agentes do Canal", pelo identificador. Um Agente de fora do Canal você nunca delega.`,
     "- nenhum: nenhum Agente precisa agir (conversa entre pessoas, recado, cumprimento, assunto encerrado).",
     "Na dúvida entre responder e nenhum, fique com nenhum.",
-    "Cada Agente vem com as Ferramentas que tem. Quando o pedido precisa de uma Ferramenta, delegue a quem a tem; se só um Agente de fora do Canal a tem, responda sugerindo esse Agente.",
+    "Cada Agente vem com as Ferramentas e as Habilidades que tem (cada Habilidade com o nome e quando usar) e as Wikis que alcançam esta conversa com ele (cada Wiki com o nome e do que trata). Quando o pedido precisa de uma Ferramenta, de uma Habilidade ou do que está numa Wiki, delegue a quem a tem; se só um Agente de fora do Canal a tem, responda sugerindo esse Agente.",
     ...(inThread
       ? [
           'Prefira, entre os Agentes do Canal, os que já falaram nesta Thread (a lista "Já falaram nesta Thread"), para manter a continuidade.',
@@ -202,7 +237,7 @@ export async function buildRouting(db: Db, articuladora: Agent, originMessageId:
   const system = [
     contract,
     section("Instruções do Canal", channel!.instructions),
-    section("Agentes do Canal", team.map((a) => `- ${agentLine(a)}${toolsSuffix(a, grants)}`).join("\n")),
+    section("Agentes do Canal", team.map((a) => `- ${agentLine(a)}${suffixOf(a.id)}`).join("\n")),
     section("Já falaram nesta Thread", spoke.map((a) => `- @${a.handle} (${a.name})`).join("\n")),
     section("Outros Agentes do Workspace", map.agents.join("\n")),
     section(`Canais que ${author} pode ver`, map.channels),

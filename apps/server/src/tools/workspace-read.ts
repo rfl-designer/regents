@@ -59,7 +59,8 @@ const where = (c: ReachableConversation) =>
   c.name !== null ? { at: `em #${c.name}`, it: `#${c.name}` } : { at: `na ${dmName(c)}`, it: `a ${dmName(c)}` };
 const dmName = (c: ReachableConversation) => c.label.replace(/ \[id [^\]]+\]$/, "");
 
-const input = (raw: unknown): Record<string, unknown> =>
+/** Os campos da entrada que o modelo mandou a uma Ferramenta; o que não é objeto vale como vazio. */
+export const input = (raw: unknown): Record<string, unknown> =>
   raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
 
 /** Uma data do modelo (`AAAA-MM-DD` ou ISO completo); `endOfDay` faz a data simples valer o dia todo. */

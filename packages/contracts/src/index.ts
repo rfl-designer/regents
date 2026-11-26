@@ -3,6 +3,8 @@
  * Só tipos (e constantes pequenas). Nada de runtime pesado aqui.
  */
 
+import type { WikiCitationDto, WikiServerEvent } from "./wiki";
+
 // ---------- identidade e Membros ----------
 
 /** Por que uma requisição chegou sem identidade da tailnet (ADR 0007). */
@@ -301,6 +303,12 @@ export interface MessageDto {
    * pagar, que fica com a resposta). Ausente para os outros e quando a Conta não explica nada.
    */
   yourAccount?: YourAccountDto;
+  /**
+   * Só na resposta de Agente com marcadores `[[wiki:<nome>/<slug>]]`: uma citação por marcador,
+   * como quem recebe a vê (#85). O cliente troca cada marcador pelo link, pela citação sem link ou
+   * por "não consultada".
+   */
+  wikiCitations?: WikiCitationDto[];
 }
 
 /** Corpo de `POST /api/conversations/:id/messages` (e de `/api/channels/:id/messages`). */
@@ -403,6 +411,17 @@ export interface AgentDto {
   builtin: boolean;
   /** As Ferramentas concedidas a ele, na ordem do catálogo, para todo Membro (Spec #44). */
   tools: AgentToolSummaryDto[];
+  /**
+   * As Habilidades ativas nele, por nome, para todo Membro (spec #74): o nome e a descrição (quando
+   * usar). O corpo não vem: só o Admin o lê, em `GET /api/skills/:id`.
+   */
+  skills: AgentSkillSummaryDto[];
+  /**
+   * As Wikis ligadas a ele que quem pede lê (spec #74, #90), por nome: a pública, para todo Membro;
+   * a restrita, só para quem está na lista dela (o Admin não a vê aqui por ser Admin). Só as que já
+   * têm versão publicada. Nenhuma página vem.
+   */
+  wikis: AgentWikiSummaryDto[];
   /**
    * As linhas geradas da descrição pública, sobre o que ele alcança fora do Workspace (uma por
    * Conector com credencial do Workspace, e uma pelo GitHub, com os repositórios da lista dele):
@@ -944,6 +963,87 @@ export interface MemoryItemDto {
  */
 export type YourAccountDto = { state: "limited"; until: string } | { state: "needs_relink" } | { state: "not_linked" };
 
+// ---------- Habilidades (spec #74) ----------
+
+/** De onde veio a Habilidade: escrita na tela (`written`) ou importada de um `SKILL.md` (`imported`). */
+export type SkillOrigin = "written" | "imported";
+
+/** Tamanho máximo do nome e da descrição de uma Habilidade, em caracteres: entram no catálogo de toda resposta. */
+export const SKILL_NAME_MAX = 80;
+export const SKILL_DESCRIPTION_MAX = 500;
+/** Tamanho máximo do corpo de uma Habilidade, em caracteres: ele vai inteiro ao modelo quando carregado. */
+export const SKILL_BODY_MAX = 100_000;
+
+/**
+ * Uma Habilidade (só Admin): `GET /api/skills`, `GET`/`PATCH /api/skills/:id` e a resposta de
+ * `POST /api/skills`. `agents` são os Agentes em que ela está ativa (o impacto de editar ou apagar).
+ */
+export interface SkillDto {
+  id: string;
+  name: string;
+  /** Diz quando usar: é o que o Agente vê no catálogo. */
+  description: string;
+  /** O procedimento em markdown: o Agente o carrega pela Ferramenta "carregar Habilidade". */
+  body: string;
+  origin: SkillOrigin;
+  agents: { id: string; name: string }[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** `POST /api/skills` (só Admin). */
+export interface CreateSkillInput {
+  name: string;
+  description: string;
+  body: string;
+}
+
+/** `PATCH /api/skills/:id` (só Admin): campo ausente fica. */
+export type UpdateSkillInput = Partial<CreateSkillInput>;
+
+/** Tamanho máximo do arquivo de `POST /api/skills/import` (um `SKILL.md` ou um `.zip` de skill), em bytes. */
+export const SKILL_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * A resposta de `POST /api/skills/import` (só Admin, multipart, campo `file`): a Habilidade criada
+ * do `SKILL.md` e, de um `.zip`, os arquivos que ficaram de fora (scripts, referências, assets),
+ * porque os Agentes do Shearim não executam código. Erros: `400 invalid_skill` (com o motivo),
+ * `409 name_taken`, `413 file_too_large`.
+ */
+export interface ImportSkillResultDto {
+  skill: SkillDto;
+  ignored: string[];
+}
+
+/** Uma Wiki ligada a um Agente, como a lista de Agentes a mostra a quem a lê (`AgentDto.wikis`). */
+export interface AgentWikiSummaryDto {
+  id: string;
+  name: string;
+  description: string;
+}
+
+/** Uma Habilidade ativa num Agente, como a lista de Agentes a mostra a todo Membro (`AgentDto.skills`). */
+export interface AgentSkillSummaryDto {
+  name: string;
+  description: string;
+}
+
+/**
+ * Uma Habilidade na tela do Agente (só Admin), com a marca de ativa nele: `GET
+ * /api/agents/:id/skills` e a resposta de `PUT`/`DELETE /api/agents/:id/skills/:skillId`.
+ */
+export interface AgentSkillDto {
+  id: string;
+  name: string;
+  description: string;
+  active: boolean;
+  /**
+   * Uma Habilidade do Shearim, e não do Workspace ("Sincronizar a Wiki", na Articuladora): sempre
+   * ativa, só para leitura (não se ativa, desativa nem edita).
+   */
+  builtin?: true;
+}
+
 // ---------- Pedido de aprovação (ADR 0011) ----------
 
 /**
@@ -1249,6 +1349,8 @@ export type ServerEvent =
   /** Um Pedido de aprovação novo, ou que mudou de estado: para quem vê a conversa. */
   | { type: "approval.created"; approval: ApprovalRequestDto }
   | { type: "approval.updated"; approval: ApprovalRequestDto }
+  /** A Sincronização e a Wiki (spec #74), para quem vê a Wiki. */
+  | WikiServerEvent
   /**
    * As não-lidas do Membro mudaram (chegou mensagem numa conversa dele, ou ele leu algo em
    * qualquer aba ou aparelho). Vai só para as conexões do próprio Membro.
@@ -1306,3 +1408,7 @@ export type ApiError =
   | { error: "last_admin"; message: string }
   /** Ninguém sai do Workspace sozinho: só outro Admin remove. */
   | { error: "cannot_remove_self"; message: string };
+
+// ---------- Wiki (spec #74) ----------
+
+export * from "./wiki";

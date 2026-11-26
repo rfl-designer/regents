@@ -2,6 +2,7 @@ import type {
   AccountDto,
   AgentDto,
   AgentGitHubDto,
+  AgentSkillDto,
   AgentToolDto,
   ApiError,
   ApprovalRequestDto,
@@ -14,6 +15,7 @@ import type {
   CreateChannelInput,
   CreateConnectorInput,
   CreateConnectorLoginInput,
+  CreateSkillInput,
   DeviceDto,
   DmDto,
   ExecutionDto,
@@ -21,6 +23,7 @@ import type {
   GitHubDto,
   GitHubInstallDto,
   GitHubManifestDto,
+  ImportSkillResultDto,
   InstallationDto,
   JoinRequestAdminDto,
   JoinRequestDto,
@@ -36,12 +39,14 @@ import type {
   PushSubscriptionInput,
   SendMessageInput,
   SetPresenceInput,
+  SkillDto,
   SubmitAccountCodeInput,
   UnreadDto,
   UnreadMessagesDto,
   UpdateAgentInput,
   UpdateChannelSettingsInput,
   UpdateProfileInput,
+  UpdateSkillInput,
   WorkspaceContextDto,
   WorkspaceKeyDto,
 } from "@shearim/contracts";
@@ -65,7 +70,7 @@ export function messageOf(err: unknown, fallback: string) {
 /** O servidor não respondeu (Tailscale desligado, servidor fora do ar). */
 export class Offline extends Error {}
 
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
+export async function call<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, { credentials: "same-origin", ...init });
@@ -80,7 +85,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-const json = (method: string, body?: unknown): RequestInit => ({
+export const json = (method: string, body?: unknown): RequestInit => ({
   method,
   headers: { "content-type": "application/json" },
   body: body === undefined ? undefined : JSON.stringify(body),
@@ -192,6 +197,33 @@ export const api = {
   createAgent: (input: CreateAgentInput) => call<AgentDto>("/api/agents", json("POST", input)),
   addAgent: (channelId: string, agentId: string) =>
     call<ChannelDto>(`/api/channels/${channelId}/agents`, json("POST", { agentId })),
+  skills: () => call<SkillDto[]>("/api/skills"),
+  createSkill: (input: CreateSkillInput) => call<SkillDto>("/api/skills", json("POST", input)),
+  updateSkill: (skillId: string, input: UpdateSkillInput) =>
+    call<SkillDto>(`/api/skills/${skillId}`, json("PATCH", input)),
+  deleteSkill: (skillId: string) => call<void>(`/api/skills/${skillId}`, { method: "DELETE" }),
+  importSkill: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return call<ImportSkillResultDto>("/api/skills/import", { method: "POST", body });
+  },
+  /**
+   * A pasta da skill: cada arquivo com o caminho a partir da pasta escolhida. Só o `SKILL.md` vai
+   * com o texto; dos outros vai só o caminho (o servidor os lista como ignorados), para que scripts
+   * e assets grandes não pesem no limite.
+   */
+  importSkillFolder: (files: File[]) => {
+    const body = new FormData();
+    for (const file of files) {
+      const path = file.webkitRelativePath || file.name;
+      if (/(^|\/)SKILL\.md$/i.test(path)) body.append("files", file, path);
+      else body.append("files", path);
+    }
+    return call<ImportSkillResultDto>("/api/skills/import", { method: "POST", body });
+  },
+  agentSkills: (agentId: string) => call<AgentSkillDto[]>(`/api/agents/${agentId}/skills`),
+  setAgentSkill: (agentId: string, skillId: string, active: boolean) =>
+    call<AgentSkillDto[]>(`/api/agents/${agentId}/skills/${skillId}`, { method: active ? "PUT" : "DELETE" }),
   workspaceContext: () => call<WorkspaceContextDto>("/api/workspace-context"),
   setWorkspaceContext: (context: string) =>
     call<WorkspaceContextDto>("/api/workspace-context", json("PUT", { context })),

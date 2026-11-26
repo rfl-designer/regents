@@ -37,6 +37,9 @@ describe("a Articuladora existe em todo Workspace", () => {
         builtin: true,
         // Sem Ferramentas até o Admin conceder (Spec #44).
         tools: [],
+        // Sem Habilidades até o Admin ativar (spec #74).
+        skills: [],
+        wikis: [],
         reach: [],
         // O Admin lê as instruções dela (são do Shearim; ele só não as edita).
         instructions: expect.stringContaining("Articuladora"),

@@ -153,7 +153,11 @@ export type ToolDefinition = ReadTool | WriteTool | BrainTool;
  * uso, como a concessão. Só de leitura: nunca gera Pedido de aprovação.
  */
 export interface AutomaticTool extends ReadTool {
-  presentFor(db: Db, agentId: string): Promise<boolean>;
+  /**
+   * Se o Agente a tem nesta resposta. Recebe a execução inteira, e não só o Agente: a presença pode
+   * depender da conversa ("ler a Wiki" só existe quando uma Wiki alcança a resposta).
+   */
+  presentFor(db: Db, run: ToolRun): Promise<boolean>;
 }
 
 const runsInBrain = (def: ToolDefinition): def is BrainTool => "runsIn" in def;
@@ -240,10 +244,10 @@ export function createToolPort(deps: {
   }
 
   /** O que o Agente tem agora: as concedidas e as que vêm sem concessão e estão presentes para ele. */
-  async function availableTo(agentId: string): Promise<ToolDefinition[]> {
+  async function availableTo(run: ToolRun): Promise<ToolDefinition[]> {
     const automatic: ToolDefinition[] = [];
-    for (const def of deps.automatic ?? []) if (await def.presentFor(db, agentId)) automatic.push(def);
-    return [...(await grantedTo(agentId)), ...automatic];
+    for (const def of deps.automatic ?? []) if (await def.presentFor(db, run)) automatic.push(def);
+    return [...(await grantedTo(run.agentId)), ...automatic];
   }
 
   /** Roda `work` com o prazo da definição; devolve o que ele devolveu ou o motivo da falha. */
@@ -443,7 +447,7 @@ export function createToolPort(deps: {
         },
 
         async list() {
-          return (await availableTo(run.agentId)).map((d) => ({
+          return (await availableTo(run)).map((d) => ({
             name: d.id,
             title: d.title,
             description: d.description,
@@ -455,7 +459,15 @@ export function createToolPort(deps: {
 
         async call(name, input, signal) {
           // A concessão é conferida na hora: o Admin pode tê-la retirado no meio da resposta.
-          const def = (await availableTo(run.agentId)).find((d) => d.id === name);
+          const def = (await availableTo(run)).find((d) => d.id === name);
+          // Uma que vem sem concessão e deixou de estar presente no meio da resposta (a Habilidade
+          // desativada, a Memória desligada): a falha fica à vista no Andamento, com o motivo.
+          const gone = def ? undefined : deps.automatic?.find((d) => d.id === name);
+          if (gone) {
+            const reason = "não está mais disponível para você";
+            await end(await begin(gone, gone.label, input), reason);
+            return { content: `A Ferramenta ${gone.title} falhou: ${reason}.`, isError: true };
+          }
           // As da web rodam no cérebro: nunca por aqui (nem pelo endpoint MCP).
           if (!def || runsInBrain(def)) {
             return { content: `A Ferramenta ${name} não está disponível para você.`, isError: true };

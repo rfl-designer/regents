@@ -3,17 +3,20 @@ import {
   type AgentDto,
   type AgentGitHubDto,
   type AgentModel,
+  type AgentSkillDto,
   type AgentToolDto,
+  type AgentWikiDto,
   type ToolOrigin,
   type WorkspaceKeyDto,
 } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
-import { agentToolsText } from "./agent-tools";
+import { agentCapabilitiesText } from "./agent-tools";
 import { api, messageOf } from "./api";
 import { dateTimeShort } from "./format";
 import { INCIDENT_TEXT, usd } from "./KeyBanners";
 import { useDropDeletedAgents, useServerEvents } from "./live";
+import { wikiApi } from "./wiki/api";
 
 const MODEL_LABEL: Record<AgentModel, string> = {
   "claude-opus-5-5": "Claude Opus 5.5",
@@ -164,7 +167,7 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
           </button>
         </div>
         <p className="body">{a.description || "Sem descrição."}</p>
-        <p className="hint">{agentToolsText(a)}</p>
+        <p className="hint">{agentCapabilitiesText(a)}</p>
         <p className="hint">{a.memoryEnabled ? "Memória ligada" : "Memória desligada: não guarda nem lê"}</p>
         <p className={a.overBudget ? "error" : "hint"}>
           Gasto na Chave este mês: {usd.format(a.keySpendUsd ?? 0)}
@@ -189,6 +192,8 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
                 if (fresh) onChanged(fresh);
               }}
             />
+            <AgentSkills agent={a} />
+            <AgentWikis agent={a} />
             <AgentGitHub agent={a} onChanged={(repos) => onChanged({ ...a, githubRepositories: repos })} />
           </>
         )}
@@ -348,6 +353,123 @@ function AgentTools({ agent, onChanged }: { agent: AgentDto; onChanged(tools: Ag
             ))}
         </div>
       ))}
+      {error && (
+        <span className="error" role="alert">
+          {error}
+        </span>
+      )}
+    </fieldset>
+  );
+}
+
+/**
+ * As Habilidades do Agente (spec #74), a Articuladora inclusive: ativar ou desativar cada uma vale
+ * na hora, sem "Salvar". O Agente vê o nome e a descrição das ativas e carrega o corpo quando a
+ * tarefa pede. Escrever e apagar Habilidades é na tela Habilidades.
+ */
+function AgentSkills({ agent }: { agent: AgentDto }) {
+  const [skills, setSkills] = useState<AgentSkillDto[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.agentSkills(agent.id).then(setSkills, () => setError("Não foi possível carregar as Habilidades."));
+  }, [agent.id]);
+
+  async function toggle(skill: AgentSkillDto) {
+    setBusy(skill.id);
+    setError(null);
+    try {
+      setSkills(await api.setAgentSkill(agent.id, skill.id, !skill.active));
+    } catch (err) {
+      setError(
+        messageOf(err, `A Habilidade ${skill.name} não foi ${skill.active ? "desativada" : "ativada"}. Tente de novo.`),
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <fieldset className="settings-row" aria-label={`Habilidades de ${agent.name}`}>
+      <legend>Habilidades</legend>
+      {skills === null && !error && <p className="hint">Carregando…</p>}
+      {skills?.map((s) =>
+        // A Habilidade do Shearim ("Sincronizar a Wiki", na Articuladora): sempre ativa, só para leitura.
+        s.builtin ? (
+          <label key={s.id} className="hint">
+            <input type="checkbox" checked disabled /> {s.name} <span className="tag">do Shearim</span>
+            <br />
+            <small>{s.description}</small>
+          </label>
+        ) : (
+          <label key={s.id} className="hint">
+            <input type="checkbox" checked={s.active} disabled={busy !== null} onChange={() => toggle(s)} /> {s.name}
+            <br />
+            <small>{s.description}</small>
+          </label>
+        ),
+      )}
+      {skills?.every((s) => s.builtin) && (
+        <p className="hint">Nenhuma Habilidade no Workspace. Escreva uma em Habilidades.</p>
+      )}
+      {error && (
+        <span className="error" role="alert">
+          {error}
+        </span>
+      )}
+    </fieldset>
+  );
+}
+
+/**
+ * As Wikis ligadas ao Agente (#84): ele as consulta em qualquer conversa, a DM inclusive, sempre
+ * dentro do alcance de cada uma. Vale na próxima resposta.
+ */
+function AgentWikis({ agent }: { agent: AgentDto }) {
+  const [wikis, setWikis] = useState<AgentWikiDto[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    wikiApi.ofAgent(agent.id).then(setWikis, () => setError("Não foi possível carregar as Wikis."));
+  }, [agent.id]);
+
+  async function toggle(wiki: AgentWikiDto) {
+    setBusy(wiki.id);
+    setError(null);
+    try {
+      setWikis(await wikiApi.setAgent(agent.id, wiki.id, !wiki.linked));
+    } catch (err) {
+      setError(messageOf(err, `A Wiki ${wiki.name} não foi ${wiki.linked ? "desligada" : "ligada"}. Tente de novo.`));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <fieldset className="settings-row" aria-label={`Wikis de ${agent.name}`}>
+      <legend>Wikis</legend>
+      <p className="hint">
+        {agent.name} consulta a Wiki ligada em qualquer conversa, só quando todos ali estão no alcance dela.
+      </p>
+      {wikis === null && !error && <p className="hint">Carregando…</p>}
+      {wikis?.map((w) => (
+        <label key={w.id} className="hint">
+          <input
+            type="checkbox"
+            aria-label={w.name}
+            checked={w.linked}
+            disabled={busy !== null}
+            onChange={() => toggle(w)}
+          />{" "}
+          {w.name}
+          {w.scope === "restricted" && <span className="tag">restrita</span>}
+          <br />
+          <small>{w.description}</small>
+        </label>
+      ))}
+      {wikis?.length === 0 && <p className="hint">Nenhuma Wiki no Workspace. Crie uma em Wikis.</p>}
       {error && (
         <span className="error" role="alert">
           {error}

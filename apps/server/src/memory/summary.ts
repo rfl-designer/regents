@@ -8,8 +8,7 @@ const { memoryItems } = schema;
 
 /**
  * O resumo da Memória que entra em toda resposta de Agente (spec #60, #62): uma camada do
- * `system` depois das Instruções do Canal e antes de "quem é quem", com a precedência dita ao
- * modelo e um orçamento fixo da Instalação (`SHEARIM_MEMORY_SUMMARY_CHARS`).
+ * `system` depois das Instruções do Canal e antes de "quem é quem", com um orçamento fixo da Instalação (`SHEARIM_MEMORY_SUMMARY_CHARS`).
  *
  * Entram, nesta ordem, cada uma num grupo: a Memória do Workspace (#66), a da Conversa atual
  * (com as Threads, o mesmo `channelId`) e a Memória do Agente que responde, das conversas de
@@ -38,8 +37,8 @@ export interface MemorySummary {
   left: SummaryItem[];
 }
 
-const PRECEDENCE =
-  "O que os Agentes guardaram de conversas anteriores. O Contexto do Workspace, as Instruções do Canal e as suas instruções valem acima da Memória: quando se contradizem, siga-os.";
+/** O que a seção é. A precedência sobre ela fica no contexto (`PRECEDENCE`, em `context.ts`). */
+const INTRO = "O que os Agentes guardaram de conversas anteriores.";
 
 /**
  * As conversas de origem cuja Memória do Agente entra numa resposta (#68, ADR 0012): as do alcance
@@ -106,7 +105,7 @@ export async function memorySummary(
   }
   sections.push(...titles(left));
   if (!sections.length) return { text: "", shown, left };
-  return { text: ["## Memória", PRECEDENCE, ...sections].join("\n\n"), shown, left };
+  return { text: ["## Memória", INTRO, ...sections].join("\n\n"), shown, left };
 }
 
 /** Os itens ativos que atendem a `where`, do mais novo para o mais velho. */

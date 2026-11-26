@@ -246,6 +246,76 @@
       "when": 1795629569231,
       "tag": "0034_agente-apagado",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1795655214606,
+      "tag": "0035_habilidades",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1795656730144,
+      "tag": "0036_wiki-e-fontes",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1795657884293,
+      "tag": "0037_sincronizacao",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1795660630821,
+      "tag": "0038_wiki-nos-canais",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1795662438874,
+      "tag": "0039_sync-pela-conta",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1795663446685,
+      "tag": "0040_wiki-restrita",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1795664422551,
+      "tag": "0041_wiki-agentes",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1795665783469,
+      "tag": "0042_wiki-citacao",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1795668054082,
+      "tag": "0043_voltar-versao",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1795671471369,
+      "tag": "0044_apagar-wiki",
+      "breakpoints": true
     }
   ]
 }
