@@ -75,7 +75,7 @@ async function freshDatabase() {
 
 async function runApp(args: string[], env: Record<string, string>) {
   const proc = Bun.spawn(["bun", MAIN, ...args], {
-    env: { ...process.env, DATABASE_PASSWORD_FILE: "", SHEARIM_PG_BIN_DIR: binDir!, ...env },
+    env: { ...process.env, DATABASE_PASSWORD_FILE: "", REGENTS_PG_BIN_DIR: binDir!, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -94,7 +94,7 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
     const url = await freshDatabase();
     const backupsDir = mkdtempSync(join(tmpdir(), "shearim-backups-"));
     onCleanup(() => rmSync(backupsDir, { recursive: true, force: true }));
-    const env = { DATABASE_URL: url, SHEARIM_BACKUPS_DIR: backupsDir };
+    const env = { DATABASE_URL: url, REGENTS_BACKUPS_DIR: backupsDir };
 
     expect((await runApp(["migrate"], env)).code).toBe(0);
     const conn = connect({ DATABASE_URL: url, pgliteDir: "", pgBinDir: binDir });
@@ -128,7 +128,7 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
     const url = await freshDatabase();
     const backupsDir = mkdtempSync(join(tmpdir(), "shearim-backups-"));
     onCleanup(() => rmSync(backupsDir, { recursive: true, force: true }));
-    const env = { DATABASE_URL: url, SHEARIM_BACKUPS_DIR: backupsDir };
+    const env = { DATABASE_URL: url, REGENTS_BACKUPS_DIR: backupsDir };
     expect((await runApp(["migrate"], env)).code).toBe(0);
     const conn = connect({ DATABASE_URL: url, pgliteDir: "", pgBinDir: binDir });
     const t = await testApp({ db: conn.db });
@@ -154,7 +154,7 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
 
   test("banco migrado por uma versão mais nova: `migrate` se recusa também no Postgres", async () => {
     const url = await freshDatabase();
-    const env = { DATABASE_URL: url, SHEARIM_BACKUPS_DIR: tmpdir() };
+    const env = { DATABASE_URL: url, REGENTS_BACKUPS_DIR: tmpdir() };
     expect((await runApp(["migrate"], env)).code).toBe(0);
     const conn = connect({ DATABASE_URL: url, pgliteDir: "" });
     await conn.db.execute(
