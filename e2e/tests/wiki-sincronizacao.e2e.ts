@@ -122,6 +122,33 @@ describe("Sincronização da Wiki", () => {
     await expect(wiki.getByRole("button", "Sincronizar")).toBeEnabled();
   });
 
+  test('o Admin remove uma Fonte sincronizada: ela fica "a remover", e a próxima Sincronização tira a página dela', {
+    timeout: 90_000,
+  }, async ({ app, screen }) => {
+    const nome = await wikiComFontes(app, screen, {
+      "ganchos.md": "# Ganchos\n\nO gancho vem nos 3 primeiros segundos.\n",
+      "carrossel.txt": "Uma ideia por cartão.",
+    });
+    const wiki = screen.getByRole("listitem", `Wiki ${nome}`);
+    const estado = wiki.getByRole("status").filter({ hasText: "Sincronização" });
+    await wiki.getByRole("button", "Sincronizar").tap();
+    await expect(estado).toContainText("Sincronização concluída: versão 1", { timeout: 30_000 });
+
+    const fontes = wiki.getByRole("list", `Fontes da Wiki ${nome}`);
+    await wiki.getByRole("button", "Remover ganchos.md").tap();
+    await expect(fontes.getByRole("listitem").filter({ hasText: "ganchos.md" })).toContainText("a remover");
+    await expect(wiki.getByRole("button", "Remover ganchos.md")).toHaveCount(0);
+    await expect(wiki).toContainText("1 Fonte pendente");
+    // A Wiki atual não muda até a próxima Sincronização.
+    await expect(wiki).toContainText("versão 1, sincronizada em");
+
+    await wiki.getByRole("button", "Sincronizar").tap();
+    await expect(estado).toContainText("Sincronização concluída: versão 2", { timeout: 30_000 });
+    await expect(wiki.getByRole("list", "Relatório da Sincronização")).toContainText("Páginas removidas: Ganchos");
+    await expect(fontes.getByRole("listitem").filter({ hasText: "ganchos.md" })).toHaveCount(0);
+    await expect(wiki).toContainText("nada pendente");
+  });
+
   test('a tela da Articuladora mostra "Sincronizar a Wiki" como Habilidade do Shearim, só para leitura', {
     timeout: 60_000,
   }, async ({ app, screen }) => {

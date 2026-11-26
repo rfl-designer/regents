@@ -106,7 +106,9 @@ export type WikiSourcePending = "new" | "removal" | null;
 /**
  * Uma Fonte de uma Wiki, sem o texto (ele não muda depois de subir). `GET /api/wikis/:id/sources`
  * e a resposta de `POST /api/wikis/:id/sources` (multipart, um ou vários campos `files`; só Admin).
- * `sizeBytes` é o tamanho do texto em UTF-8.
+ * `DELETE /api/wikis/:id/sources/:sourceId` remove uma (só Admin, sem Sincronização em curso) e
+ * devolve a lista nova. A lista tem as ativas e as removidas "a remover"; a removida que a versão
+ * atual já não reflete não aparece. `sizeBytes` é o tamanho do texto em UTF-8.
  */
 export interface WikiSourceDto {
   id: string;

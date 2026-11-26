@@ -13,7 +13,8 @@ import type { Push } from "../push";
 import type { SecretBox } from "../secrets";
 import type { ExecutionTools } from "../tools/port";
 import { Draft, type DraftSource, draftTools } from "./draft";
-import { syncPrompt, syncSystem } from "./rules";
+import { removalPrompt, syncPrompt, syncSystem } from "./rules";
+import { lockWiki } from "./sources";
 import { syncDto } from "./sync-state";
 import { currentVersionId, pagesOfVersion, publishVersion, sourcesOfVersion } from "./versions";
 import { findWiki, pendingOf, toWikiDto, wikiAudience } from "./wikis";
@@ -61,7 +62,10 @@ function pause(clock: Clock, ms: number, signal: AbortSignal) {
 /** Por que o pedido de Sincronização foi recusado, com o motivo em pt-BR. */
 export type SyncRefusal = { error: "nothing_to_sync" | "sync_running"; message: string };
 
-/** O que a próxima Sincronização faz: as Fontes novas, na ordem em que subiram. */
+/**
+ * O que a próxima Sincronização faz: as Fontes "a remover" e as novas, cada lista na ordem em que
+ * subiram, e as Fontes que a versão nova vai refletir.
+ */
 async function planOf(db: Db, wikiId: string) {
   const version = await currentVersionId(db, wikiId);
   const reflected = await sourcesOfVersion(db, version);
@@ -71,7 +75,6 @@ async function planOf(db: Db, wikiId: string) {
     .where(eq(wikiSources.wikiId, wikiId))
     .orderBy(asc(wikiSources.seq));
   const news = all.filter((s) => pendingOf(s, reflected) === "new");
-  // As Fontes "a remover" (#88) entram no plano antes das novas, uma chamada por Fonte.
   const removals = all.filter((s) => pendingOf(s, reflected) === "removal");
   /** As Fontes que a versão nova vai refletir: as ativas (as de antes e as novas). */
   const target: DraftSource[] = all.filter((s) => s.state === "active").map(({ id, fileName }) => ({ id, fileName }));
@@ -251,8 +254,8 @@ export function createWikiSyncs(deps: {
   }
 
   /**
-   * Uma chamada de modelo sobre o rascunho (hoje: levar uma Fonte; #87/#88: a revisão e a remoção
-   * de Fonte, com outro `prompt` e outras `tools`). Devolve se terminou bem;
+   * Uma chamada de modelo sobre o rascunho (tirar uma Fonte removida, levar uma Fonte nova; #87: a
+   * revisão, com outro `prompt` e outras `tools`). Devolve se terminou bem;
    * senão, a Sincronização já foi encerrada com o motivo (ou foi cancelada, ou o servidor está
    * parando).
    *
@@ -321,7 +324,10 @@ export function createWikiSyncs(deps: {
     }
   }
 
-  /** O trabalho: uma chamada por Fonte nova, num rascunho, e a publicação no fim. */
+  /**
+   * O trabalho, num rascunho: uma chamada por Fonte removida (as que nenhuma página cita não
+   * precisam), uma por Fonte nova, e a publicação no fim.
+   */
   async function work(syncId: string, controller: AbortController) {
     const [row] = await db
       .update(wikiSyncs)
@@ -337,9 +343,25 @@ export function createWikiSyncs(deps: {
     const starter = { id: row.startedByMemberId, name: who?.name ?? "" };
     const plan = await planOf(db, wiki.id);
     const draft = new Draft(await pagesOfVersion(db, plan.version), plan.target);
-    const total = plan.news.length;
-    for (const [i, news] of plan.news.entries()) {
+    const run = { id: syncId, startedBy: starter, wiki };
+    const total = plan.removals.length + plan.news.length;
+    // As Fontes "a remover" primeiro (#88): o Shearim tira do rascunho as páginas que vinham só
+    // dela e a Fonte das outras; a Articuladora reescreve essas e arruma o índice. Uma Fonte que
+    // nenhuma página cita não precisa de chamada.
+    for (const [i, removal] of plan.removals.entries()) {
       const position = { current: i + 1, total };
+      await step(syncId, { kind: "source", ...position, fileName: removal.fileName });
+      const index = draft.pages.get(WIKI_INDEX_SLUG)?.body ?? null;
+      const touched = draft.takeOut(removal.id);
+      if (touched.removed.length + touched.rewrite.length === 0) continue;
+      const asked = {
+        prompt: removalPrompt({ index, source: removal, ...touched, ...position }),
+        tools: draftTools(draft),
+      };
+      if (!(await call(run, controller, draft, asked))) return;
+    }
+    for (const [i, news] of plan.news.entries()) {
+      const position = { current: plan.removals.length + i + 1, total };
       await step(syncId, { kind: "source", ...position, fileName: news.fileName });
       const [source] = await db
         .select({ id: wikiSources.id, fileName: wikiSources.fileName, text: wikiSources.text })
@@ -349,7 +371,7 @@ export function createWikiSyncs(deps: {
         prompt: syncPrompt({ index: draft.pages.get(WIKI_INDEX_SLUG)?.body ?? null, source: source!, ...position }),
         tools: draftTools(draft, source!),
       };
-      if (!(await call({ id: syncId, startedBy: starter, wiki }, controller, draft, asked))) return;
+      if (!(await call(run, controller, draft, asked))) return;
     }
     await step(syncId, { kind: "publishing" });
     const report = draft.report();
@@ -368,7 +390,8 @@ export function createWikiSyncs(deps: {
         pages: draft.pages,
         sources: plan.target.map((s) => s.id),
         report,
-        logEntry: (number) => logEntry({ number, by: starter.name, at: now, news: plan.news, report }),
+        logEntry: (number) =>
+          logEntry({ number, by: starter.name, at: now, news: plan.news, removals: plan.removals, report }),
         now,
       });
       return true;
@@ -381,16 +404,19 @@ export function createWikiSyncs(deps: {
   return {
     async request(wikiId, by) {
       const plan = await planOf(db, wikiId);
-      // A remoção de Fonte (#88) também conta como pendência quando entrar no trabalho.
-      if (plan.news.length === 0) {
+      if (plan.news.length + plan.removals.length === 0) {
         return { error: "nothing_to_sync", message: "Nada a sincronizar: nenhuma Fonte está pendente nesta Wiki." };
       }
       const id = crypto.randomUUID();
-      const [created] = await db
-        .insert(wikiSyncs)
-        .values({ id, wikiId, startedByMemberId: by, createdAt: clock.now() })
-        .onConflictDoNothing()
-        .returning({ id: wikiSyncs.id });
+      // Pela trava da Wiki: uma remoção de Fonte (#88) termina antes, ou vê esta em curso e recusa.
+      const [created] = await db.transaction(async (tx) => {
+        await lockWiki(tx, wikiId);
+        return tx
+          .insert(wikiSyncs)
+          .values({ id, wikiId, startedByMemberId: by, createdAt: clock.now() })
+          .onConflictDoNothing()
+          .returning({ id: wikiSyncs.id });
+      });
       if (!created) {
         const [open] = await db
           .select({ name: members.displayName })
@@ -453,12 +479,15 @@ function logEntry(input: {
   by: string;
   at: Date;
   news: readonly { fileName: string }[];
+  removals: readonly { fileName: string }[];
   report: { created: { slug: string }[]; updated: { slug: string }[]; removed: { slug: string }[] };
 }) {
   const when = `${input.at.toISOString().slice(0, 16).replace("T", " ")} UTC`;
   const links = (refs: { slug: string }[]) => refs.map((r) => `[[${r.slug}]]`).join(", ");
+  const names = (sources: readonly { fileName: string }[]) => sources.map((s) => s.fileName).join(", ");
   const lines = [`## Versão ${input.number} · ${when} · ${input.by}`];
-  if (input.news.length) lines.push(`- Fontes novas: ${input.news.map((s) => s.fileName).join(", ")}`);
+  if (input.news.length) lines.push(`- Fontes novas: ${names(input.news)}`);
+  if (input.removals.length) lines.push(`- Fontes removidas: ${names(input.removals)}`);
   if (input.report.created.length) lines.push(`- Páginas criadas: ${links(input.report.created)}`);
   if (input.report.updated.length) lines.push(`- Páginas alteradas: ${links(input.report.updated)}`);
   if (input.report.removed.length)
