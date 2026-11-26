@@ -49,8 +49,8 @@ export type CitedReply = { body: string; citations: WikiCitationDto[] };
 /**
  * As citações de cada resposta, como `viewerId` as vê (sem ele, a cópia de todos: só as Wikis
  * públicas abrem). Uma por marcador, na ordem: com link quando quem vê lê a Wiki; sem link e sem o
- * nome quando não lê (o marcador do corpo também perde o nome); "não consultada" (sem o nome da
- * Wiki) quando a execução não leu a página.
+ * nome quando não lê ou quando a Wiki foi apagada (o marcador do corpo também perde o nome); "não
+ * consultada" (sem o nome da Wiki) quando a execução não leu a página.
  */
 export async function wikiCitationsOf(
   db: Db,
@@ -72,9 +72,10 @@ export async function wikiCitationsOf(
       title: wikiPages.title,
     })
     .from(messageWikiCitations)
-    .innerJoin(wikis, eq(wikis.id, messageWikiCitations.wikiId))
-    .innerJoin(wikiVersions, eq(wikiVersions.id, messageWikiCitations.versionId))
-    .innerJoin(
+    // A Wiki apagada deixa a citação sem Wiki e sem versão (`set null`): ela fica sem link e sem nome.
+    .leftJoin(wikis, eq(wikis.id, messageWikiCitations.wikiId))
+    .leftJoin(wikiVersions, eq(wikiVersions.id, messageWikiCitations.versionId))
+    .leftJoin(
       wikiPages,
       and(eq(wikiPages.versionId, messageWikiCitations.versionId), eq(wikiPages.slug, messageWikiCitations.slug)),
     )
@@ -97,7 +98,14 @@ export async function wikiCitationsOf(
     for (const { marker } of wikiCitationMarkers(reply.body)) {
       const row = rows.find((r) => r.messageId === reply.id && r.marker === marker);
       if (!row) citations.push({ marker, state: "not_consulted" });
-      else if (await reads({ id: row.wikiId, scope: row.scope })) {
+      else if (
+        row.wikiId &&
+        row.wikiName &&
+        row.scope &&
+        row.version !== null &&
+        row.title !== null &&
+        (await reads({ id: row.wikiId, scope: row.scope }))
+      ) {
         const { wikiId, wikiName, slug, version, title } = row;
         citations.push({ marker, state: "linked", wikiId, wikiName, slug, version, title });
       } else {

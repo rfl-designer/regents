@@ -1024,7 +1024,8 @@ button.primary {
   flex: 1;
   min-width: 12rem;
 }
-.member-row button.danger {
+.member-row button.danger,
+.warning button.danger {
   border: 1px solid var(--error);
   background: var(--error);
   color: #fff;

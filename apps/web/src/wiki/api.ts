@@ -17,6 +17,8 @@ export const wikiApi = {
   /** Todas as Wikis, para o Admin (mesmo as restritas). */
   adminList: () => call<WikiDto[]>("/api/wiki-settings"),
   create: (input: CreateWikiInput) => call<WikiDto>("/api/wikis", json("POST", input)),
+  /** Apaga a Wiki: ela sai de todos os Canais e Agentes na hora. */
+  remove: (wikiId: string) => call<void>(`/api/wikis/${wikiId}`, { method: "DELETE" }),
   sources: (wikiId: string) => call<WikiSourceDto[]>(`/api/wikis/${wikiId}/sources`),
   /** Sobe as Fontes juntas: todas ou nenhuma. */
   upload: (wikiId: string, files: File[]) => {

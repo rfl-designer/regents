@@ -309,6 +309,13 @@
       "when": 1795668054082,
       "tag": "0043_voltar-versao",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1795671471369,
+      "tag": "0044_apagar-wiki",
+      "breakpoints": true
     }
   ]
 }

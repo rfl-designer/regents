@@ -59,6 +59,8 @@ export function WikisSettings() {
     if (event.type === "wiki.updated") {
       setWikis((list) => list?.map((w) => (w.id === event.wiki.id ? event.wiki : w)) ?? list);
     }
+    // Apagada (aqui ou por outro Admin): sai da lista.
+    if (event.type === "wiki.left") setWikis((list) => list?.filter((w) => w.id !== event.wikiId) ?? list);
   });
 
   return (
@@ -97,6 +99,9 @@ export function WikisSettings() {
             {w.id === openId && <WikiSources wiki={w} onChanged={load} />}
             {w.id === openId && <WikiReach wiki={w} />}
             {w.id === openId && <WikiChannels wiki={w} />}
+            {w.id === openId && (
+              <DeleteWiki wiki={w} onDeleted={() => setWikis((list) => list?.filter((x) => x.id !== w.id) ?? list)} />
+            )}
           </li>
         ))}
       </ul>
@@ -107,6 +112,58 @@ export function WikisSettings() {
         }}
       />
     </main>
+  );
+}
+
+/**
+ * "Apagar a Wiki" (história 25), com a confirmação à vista: a Wiki sai na hora de todos os Canais
+ * e Agentes, e uma Sincronização em curso é cancelada antes.
+ */
+function DeleteWiki({ wiki, onDeleted }: { wiki: WikiDto; onDeleted(): void }) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function remove() {
+    setBusy(true);
+    setError(null);
+    try {
+      await wikiApi.remove(wiki.id);
+      onDeleted();
+    } catch (err) {
+      setError(messageOf(err, "A Wiki não foi apagada. Tente de novo."));
+      setBusy(false);
+    }
+  }
+
+  if (!asking) {
+    return (
+      <button type="button" className="link" onClick={() => setAsking(true)}>
+        Apagar a Wiki
+      </button>
+    );
+  }
+  return (
+    <section className="warning" aria-label={`Apagar a Wiki ${wiki.name}`}>
+      <p>
+        Apagar a Wiki {wiki.name}? Ela sai na hora de todos os Canais e Agentes, com as Fontes e as versões.
+        {open(wiki.lastSync) && " A Sincronização em curso é cancelada."} As citações antigas ficam sem link. Não dá
+        para desfazer.
+      </p>
+      <div className="row">
+        <button type="button" className="danger" disabled={busy} onClick={remove}>
+          Apagar de vez
+        </button>
+        <button type="button" className="link" disabled={busy} onClick={() => setAsking(false)}>
+          Manter a Wiki
+        </button>
+      </div>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }
 

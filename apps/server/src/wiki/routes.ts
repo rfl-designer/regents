@@ -22,6 +22,7 @@ import type { WikiSyncs } from "./sync";
 import { listVersions, pageDtos, readPage, restoreVersion, versionNumbered, versionNumberOf } from "./versions";
 import {
   createWiki,
+  deleteWiki,
   findWiki,
   listReadableWikis,
   listWikis,
@@ -122,6 +123,26 @@ export function wikiRoutes(deps: {
       return c.json({ error: "name_taken", message: `Já existe a Wiki "${taken?.name ?? name}".` }, 409);
     }
     return c.json(wiki, 201);
+  });
+
+  /**
+   * Apaga a Wiki (história 25): ela sai na hora de todos os Canais e Agentes, da barra lateral e
+   * das respostas. Uma Sincronização em curso é cancelada antes, como no "Cancelar". Quem via a
+   * Wiki recebe só `wiki.left`, com o id; as citações antigas ficam sem link e sem o nome dela.
+   */
+  routes.delete("/wikis/:id", adminOnly, async (c) => {
+    const wiki = await findWiki(db, c.req.param("id"));
+    if (!wiki) return c.json({ error: "not_found" }, 404);
+    const audience = await wikiAudience(db, wiki);
+    await deps.syncs.cancel(wiki.id);
+    const done = await deleteWiki(db, wiki.id);
+    if (done === "sync_running") {
+      const message = "Uma Sincronização começou agora nesta Wiki. Tente apagar de novo.";
+      return c.json({ error: "sync_running", message }, 409);
+    }
+    if (!done) return c.json({ error: "not_found" }, 404);
+    events.publish(audience, { type: "wiki.left", wikiId: wiki.id });
+    return c.body(null, 204);
   });
 
   routes.get("/wikis/:id/sources", adminOnly, async (c) => {
