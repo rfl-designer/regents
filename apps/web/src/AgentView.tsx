@@ -153,6 +153,15 @@ function AgentAbout({ agent: a }: { agent: AgentDto }) {
           ))}
         </ul>
       )}
+      {a.wikis.length > 0 && (
+        <ul className="micro muted" aria-label={`Wikis de ${a.name}`}>
+          {a.wikis.map((w) => (
+            <li key={w.id}>
+              Wiki {w.name}: {w.description}
+            </li>
+          ))}
+        </ul>
+      )}
       <p className="micro">{a.memoryEnabled ? "Memória ligada" : "Memória desligada: não guarda nem lê"}</p>
     </section>
   );

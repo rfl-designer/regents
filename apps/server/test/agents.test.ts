@@ -100,6 +100,7 @@ describe("Agentes", () => {
       tools: [],
       // Nasce sem Habilidades: o Admin as ativa na tela do Agente (spec #74).
       skills: [],
+      wikis: [],
       // Sem Conector, nenhuma linha de alcance na descrição pública.
       reach: [],
       // A Memória vem ligada (#67).

@@ -4,6 +4,7 @@ import {
   type AgentModel,
   type AgentSkillSummaryDto,
   type AgentToolSummaryDto,
+  type AgentWikiSummaryDto,
   type CreateAgentInput,
   type UpdateAgentInput,
 } from "@shearim/contracts";
@@ -24,6 +25,7 @@ import { audienceOf } from "./participation";
 import { activeSkillsByAgent } from "./skills/tool";
 import type { ToolPort } from "./tools/port";
 import { leaveAgentWikis } from "./wiki/reach";
+import { agentWikisReadableBy } from "./wiki/wikis";
 
 export type Agent = typeof schema.agents.$inferSelect;
 /** O Agente com o identificador de Menção dele (`mention_handles`). */
@@ -37,7 +39,10 @@ const PHOTO = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 const PHOTO_MAX = 400_000;
 const BUDGET_INVALID = "O orçamento mensal é um valor em dólares, zero ou mais (vazio: sem teto).";
 
-/** Agentes: o Admin cria; todo Membro vê o nome, a foto, a descrição, o modelo, as Ferramentas e as Habilidades. */
+/**
+ * Agentes: o Admin cria; todo Membro vê o nome, a foto, a descrição, o modelo, as Ferramentas, as
+ * Habilidades e as Wikis ligadas que ele lê.
+ */
 export function agentRoutes(deps: {
   db: Db;
   clock: Clock;
@@ -58,7 +63,8 @@ export function agentRoutes(deps: {
   const routes = new Hono<Env>();
 
   routes.get("/agents", async (c) => {
-    const admin = c.get("member").role === "admin";
+    const me = c.get("member");
+    const admin = me.role === "admin";
     const all = await db
       .select({ ...getTableColumns(agents), handle: mentionHandles.handle })
       .from(agents)
@@ -67,9 +73,11 @@ export function agentRoutes(deps: {
     const grants = await deps.tools.grantsOf();
     const repos = await reposOf();
     const skills = await activeSkillsByAgent(db);
+    const wikis = await agentWikisReadableBy(db, me.id);
     const of = (id: string) => ({
       tools: grants.get(id) ?? [],
       skills: skills.get(id) ?? [],
+      wikis: wikis.get(id) ?? [],
       githubRepositories: repos.get(id) ?? null,
     });
     if (!admin) return c.json(all.map((a) => toAgentDto(a, { admin, ...of(a.id) })));
@@ -119,7 +127,7 @@ export function agentRoutes(deps: {
     });
     if (!created) return c.json({ error: "name_taken", message: `Já existe um Agente chamado ${name}.` }, 409);
     return c.json(
-      toAgentDto(created, { admin: true, tools: [], skills: [], githubRepositories: null, keySpendUsd: 0 }),
+      toAgentDto(created, { admin: true, tools: [], skills: [], wikis: [], githubRepositories: null, keySpendUsd: 0 }),
       201,
     );
   });
@@ -224,6 +232,7 @@ export function agentRoutes(deps: {
         admin: true,
         tools: await toolsOf(updated.id),
         skills: (await activeSkillsByAgent(db, [updated.id])).get(updated.id) ?? [],
+        wikis: (await agentWikisReadableBy(db, c.get("member").id, [updated.id])).get(updated.id) ?? [],
         githubRepositories: (await reposOf([updated.id])).get(updated.id) ?? null,
         keySpendUsd: budget.keySpendUsd,
       }),
@@ -352,6 +361,8 @@ export function toAgentDto(
     tools: AgentToolSummaryDto[];
     /** As Habilidades ativas nele: o nome e a descrição. */
     skills: AgentSkillSummaryDto[];
+    /** As Wikis ligadas a ele que quem pede lê (`agentWikisReadableBy`). */
+    wikis: AgentWikiSummaryDto[];
     /** Os repositórios do GitHub a que o Agente está restrito (nulo ou ausente: todos os da instalação). */
     githubRepositories?: string[] | null;
     keySpendUsd?: number;
@@ -368,6 +379,7 @@ export function toAgentDto(
     builtin: a.builtin,
     tools: opts.tools,
     skills: opts.skills,
+    wikis: opts.wikis,
     reach: reachLines(opts.tools),
     memoryEnabled: a.memoryEnabled,
   };

@@ -411,6 +411,12 @@ export interface AgentDto {
    */
   skills: AgentSkillSummaryDto[];
   /**
+   * As Wikis ligadas a ele que quem pede lê (spec #74, #90), por nome: a pública, para todo Membro;
+   * a restrita, só para quem está na lista dela (o Admin não a vê aqui por ser Admin). Só as que já
+   * têm versão publicada. Nenhuma página vem.
+   */
+  wikis: AgentWikiSummaryDto[];
+  /**
    * As linhas geradas da descrição pública, sobre o que ele alcança fora do Workspace (uma por
    * Conector com credencial do Workspace, e uma pelo GitHub, com os repositórios da lista dele):
    * "acessa CRM com a credencial do Workspace".
@@ -1001,6 +1007,13 @@ export const SKILL_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
 export interface ImportSkillResultDto {
   skill: SkillDto;
   ignored: string[];
+}
+
+/** Uma Wiki ligada a um Agente, como a lista de Agentes a mostra a quem a lê (`AgentDto.wikis`). */
+export interface AgentWikiSummaryDto {
+  id: string;
+  name: string;
+  description: string;
 }
 
 /** Uma Habilidade ativa num Agente, como a lista de Agentes a mostra a todo Membro (`AgentDto.skills`). */
