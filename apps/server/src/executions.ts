@@ -29,6 +29,7 @@ import type { Agent } from "./agents";
 import { APPROVAL_EXPIRED_REASON, continuationNote, insertApproval, publishApproval } from "./approvals";
 import { ROUTING_MODEL } from "./articuladora";
 import type { Clock } from "./clock";
+import type { Config } from "./config";
 import { buildContext, type Call } from "./context";
 import { type Db, schema, type Tx } from "./db/client";
 import { type EventHub, reaches, without } from "./events";
@@ -95,24 +96,26 @@ export interface ExecutionLimits {
 }
 export const DEFAULT_LIMITS: ExecutionLimits = { perAccount: 2, key: 4, processes: 8 };
 
-const LIMIT_VARS = {
-  perAccount: "SHEARIM_MAX_PER_ACCOUNT",
-  key: "SHEARIM_MAX_ON_KEY",
-  processes: "SHEARIM_MAX_PROCESSES",
+const LIMIT_SUFFIXES = {
+  perAccount: "MAX_PER_ACCOUNT",
+  key: "MAX_ON_KEY",
+  processes: "MAX_PROCESSES",
 } as const satisfies Record<keyof ExecutionLimits, string>;
 
 /**
- * Os tetos que o `.env` ajusta (`SHEARIM_MAX_PER_ACCOUNT`, `SHEARIM_MAX_ON_KEY`,
- * `SHEARIM_MAX_PROCESSES`); o que falta fica com o padrão. Valor que não é inteiro maior que zero
+ * Os tetos que o `.env` ajusta (`REGENTS_MAX_PER_ACCOUNT`, `REGENTS_MAX_ON_KEY`,
+ * `REGENTS_MAX_PROCESSES`); o que falta fica com o padrão. Valor que não é inteiro maior que zero
  * é erro (o servidor não sobe).
  */
-export function limitsFromEnv(env: Record<string, string | undefined>): Partial<ExecutionLimits> {
+export function limitsFromEnv(config: Config): Partial<ExecutionLimits> {
   const limits: Partial<ExecutionLimits> = {};
-  for (const [field, name] of Object.entries(LIMIT_VARS) as [keyof ExecutionLimits, string][]) {
-    const raw = env[name]?.trim();
-    if (!raw) continue;
-    const n = Number(raw);
-    if (!Number.isInteger(n) || n < 1) throw new Error(`${name}=${raw} não é um número inteiro maior que zero.`);
+  for (const [field, suffix] of Object.entries(LIMIT_SUFFIXES) as [keyof ExecutionLimits, string][]) {
+    const setting = config.read(suffix);
+    if (!setting) continue;
+    const n = Number(setting.value);
+    if (!Number.isInteger(n) || n < 1) {
+      throw new Error(`${setting.name}=${setting.value} não é um número inteiro maior que zero.`);
+    }
     limits[field] = n;
   }
   return limits;
@@ -272,11 +275,11 @@ export function createExecutions(deps: {
   limits?: Partial<ExecutionLimits>;
   /** O teto de turnos de Ferramenta de uma resposta (padrão: `MAX_TOOL_TURNS`, 20; #53). */
   maxToolTurns?: number;
-  /** O prazo do Pedido de aprovação (padrão: 24 h, `APPROVAL_TTL_MS`; `SHEARIM_APPROVAL_TTL_H`). */
+  /** O prazo do Pedido de aprovação (padrão: 24 h, `APPROVAL_TTL_MS`; `REGENTS_APPROVAL_TTL_H`). */
   approvalTtlMs?: number;
-  /** O modelo pequeno da extração da Memória (padrão: `DEFAULT_MEMORY_MODEL`; `SHEARIM_MEMORY_MODEL`). */
+  /** O modelo pequeno da extração da Memória (padrão: `DEFAULT_MEMORY_MODEL`; `REGENTS_MEMORY_MODEL`). */
   memoryModel?: string;
-  /** O orçamento do resumo da Memória em cada resposta, em caracteres (`SHEARIM_MEMORY_SUMMARY_CHARS`). */
+  /** O orçamento do resumo da Memória em cada resposta, em caracteres (`REGENTS_MEMORY_SUMMARY_CHARS`). */
   memorySummaryChars?: number;
 }): Executions {
   const { db, clock, events, model, secrets, hooks, reading, ledger, push } = deps;

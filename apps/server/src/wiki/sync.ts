@@ -38,7 +38,7 @@ import { findWiki, pendingOf, toWikiDto, wikiAudience } from "./wikis";
 
 const { wikiSyncs, wikiSources, members } = schema;
 
-/** O teto de turnos de Ferramenta de cada chamada da Sincronização (`SHEARIM_WIKI_SYNC_MAX_TURNS`). */
+/** O teto de turnos de Ferramenta de cada chamada da Sincronização (`REGENTS_WIKI_SYNC_MAX_TURNS`). */
 export const DEFAULT_SYNC_MAX_TURNS = 40;
 
 /** O motivo da vigia numa chamada da Sincronização. */

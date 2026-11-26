@@ -25,7 +25,7 @@ const DAY_MS = 24 * HOUR_MS;
 export const INSTALLATION_CHECK_MS = 15 * 60 * 1000;
 
 export interface InstallationConfig {
-  /** A versão que está rodando (a tag da imagem, `SHEARIM_VERSION`). */
+  /** A versão que está rodando (a tag da imagem, `REGENTS_VERSION`). */
   version?: string;
   /** Liga a verificação periódica com os pushes do Admin (o `main.ts` liga; nos testes, opcional). */
   watch?: boolean;

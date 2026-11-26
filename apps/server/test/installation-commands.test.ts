@@ -91,7 +91,7 @@ async function databaseAt(dir: string, opts: { until?: string; extra?: { tag: st
 
 /** O ambiente de um comando do app num PGlite em disco, com a pasta de backups. */
 function envFor(dataDir: string, backupsDir: string) {
-  return { SHEARIM_PGLITE_DIR: dataDir, SHEARIM_BACKUPS_DIR: backupsDir };
+  return { REGENTS_PGLITE_DIR: dataDir, REGENTS_BACKUPS_DIR: backupsDir };
 }
 
 describe("banco migrado por uma versão mais nova", () => {
@@ -108,8 +108,8 @@ describe("banco migrado por uma versão mais nova", () => {
     const migrated = await runApp(["migrate"], envFor(dataDir, backupsDir));
     const served = await runApp(["serve"], {
       ...envFor(dataDir, backupsDir),
-      SHEARIM_IDENTITY: "dev",
-      SHEARIM_MASTER_KEY_FILE: keyFile,
+      REGENTS_IDENTITY: "dev",
+      REGENTS_MASTER_KEY_FILE: keyFile,
       HOST: "127.0.0.1",
       PORT: "0",
     });

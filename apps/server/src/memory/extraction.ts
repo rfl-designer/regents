@@ -1,5 +1,6 @@
 import { AGENT_MODELS } from "@regents/contracts";
 import { and, desc, eq, gt, inArray, notInArray, or } from "drizzle-orm";
+import type { Config } from "../config";
 import { type ModelContext, recentMessages } from "../context";
 import { type Db, schema, type Tx } from "../db/client";
 import { inReach, insertExtracted, lockActiveItem, replaceItem } from "./items";
@@ -17,7 +18,7 @@ const { messages, channels, agents, memoryItems } = schema;
  * (`discarded`) aparece no Andamento dela: nada some calado.
  */
 
-/** O modelo pequeno da extração, se a Instalação não ajusta (`SHEARIM_MEMORY_MODEL`). */
+/** O modelo pequeno da extração, se a Instalação não ajusta (`REGENTS_MEMORY_MODEL`). */
 export const DEFAULT_MEMORY_MODEL = "claude-haiku-5-5";
 
 /** Quantas operações uma extração aplica, no máximo (o resto é descartado, à vista). */
@@ -26,25 +27,25 @@ export const MAX_OPERATIONS = 10;
 export const MAX_ITEM_LENGTH = 500;
 
 /**
- * O que a Instalação ajusta na Memória pelo `.env`: o modelo da extração (`SHEARIM_MEMORY_MODEL`,
+ * O que a Instalação ajusta na Memória pelo `.env`: o modelo da extração (`REGENTS_MEMORY_MODEL`,
  * um dos modelos aceitos) e o orçamento do resumo que entra em cada resposta, em caracteres
- * (`SHEARIM_MEMORY_SUMMARY_CHARS`; padrão `DEFAULT_SUMMARY_CHARS`). Valor inválido é erro (o
+ * (`REGENTS_MEMORY_SUMMARY_CHARS`; padrão `DEFAULT_SUMMARY_CHARS`). Valor inválido é erro (o
  * servidor não sobe).
  */
-export function memoryFromEnv(env: Record<string, string | undefined>): { model?: string; summaryChars?: number } {
+export function memoryFromEnv(settings: Config): { model?: string; summaryChars?: number } {
   const config: { model?: string; summaryChars?: number } = {};
-  const model = env.SHEARIM_MEMORY_MODEL?.trim();
+  const model = settings.read("MEMORY_MODEL");
   if (model) {
-    if (!(AGENT_MODELS as readonly string[]).includes(model)) {
-      throw new Error(`SHEARIM_MEMORY_MODEL=${model} não é um modelo aceito (${AGENT_MODELS.join(", ")}).`);
+    if (!(AGENT_MODELS as readonly string[]).includes(model.value)) {
+      throw new Error(`${model.name}=${model.value} não é um modelo aceito (${AGENT_MODELS.join(", ")}).`);
     }
-    config.model = model;
+    config.model = model.value;
   }
-  const chars = env.SHEARIM_MEMORY_SUMMARY_CHARS?.trim();
+  const chars = settings.read("MEMORY_SUMMARY_CHARS");
   if (chars) {
-    const n = Number(chars);
+    const n = Number(chars.value);
     if (!Number.isInteger(n) || n < 1) {
-      throw new Error(`SHEARIM_MEMORY_SUMMARY_CHARS=${chars} não é um número inteiro maior que zero.`);
+      throw new Error(`${chars.name}=${chars.value} não é um número inteiro maior que zero.`);
     }
     config.summaryChars = n;
   }

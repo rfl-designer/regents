@@ -3,6 +3,7 @@ import type { Server } from "bun";
 import { and, asc, eq, gt, isNull, type SQL } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import type { Clock } from "./clock";
+import type { Config } from "./config";
 import { findVisibleConversation } from "./conversations";
 import { type Db, isUuid, schema, type Tx } from "./db/client";
 import type { EventHub } from "./events";
@@ -20,14 +21,16 @@ export const APPROVAL_TTL_MS = 24 * 60 * 60_000;
 export const APPROVAL_EXPIRED_REASON = "a aprovação expirou";
 
 /**
- * O prazo do Pedido que o `.env` ajusta (`SHEARIM_APPROVAL_TTL_H`, em horas; aceita fração, ex.
+ * O prazo do Pedido que o `.env` ajusta (`REGENTS_APPROVAL_TTL_H`, em horas; aceita fração, ex.
  * `0.5`). Valor que não é número maior que zero é erro (o servidor não sobe).
  */
-export function approvalTtlFromEnv(env: Record<string, string | undefined>): number | undefined {
-  const raw = env.SHEARIM_APPROVAL_TTL_H?.trim();
-  if (!raw) return undefined;
-  const h = Number(raw);
-  if (!Number.isFinite(h) || h <= 0) throw new Error(`SHEARIM_APPROVAL_TTL_H=${raw} não é um número maior que zero.`);
+export function approvalTtlFromEnv(config: Config): number | undefined {
+  const setting = config.read("APPROVAL_TTL_H");
+  if (!setting) return undefined;
+  const h = Number(setting.value);
+  if (!Number.isFinite(h) || h <= 0) {
+    throw new Error(`${setting.name}=${setting.value} não é um número maior que zero.`);
+  }
   return Math.round(h * 60 * 60_000);
 }
 const REASON_MAX = 500;

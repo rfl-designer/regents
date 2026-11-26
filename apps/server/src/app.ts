@@ -80,25 +80,25 @@ export interface AppDeps {
   /** Os tetos de concorrência das execuções (padrão: 2 por Conta, 4 na Chave, 8 processos). */
   limits?: Partial<ExecutionLimits>;
   /**
-   * A porta de Ferramentas: o prazo padrão de uma chamada (`SHEARIM_TOOL_TIMEOUT_S`), o teto de
-   * turnos de Ferramenta de uma resposta (`SHEARIM_TOOL_MAX_TURNS`, padrão 20) e o catálogo
+   * A porta de Ferramentas: o prazo padrão de uma chamada (`REGENTS_TOOL_TIMEOUT_S`), o teto de
+   * turnos de Ferramenta de uma resposta (`REGENTS_TOOL_MAX_TURNS`, padrão 20) e o catálogo
    * (padrão: as Ferramentas do Workspace; os testes juntam Ferramentas que travam ou falham).
    */
   tools?: { timeoutMs?: number; maxTurns?: number; definitions?: readonly ToolDefinition[] };
   /** Onde fica o GitHub (padrão: github.com). Os testes apontam para o falso. */
   github?: Partial<GitHubConfig>;
-  /** O Pedido de aprovação: o prazo até expirar (`SHEARIM_APPROVAL_TTL_H`; padrão 24 h). */
+  /** O Pedido de aprovação: o prazo até expirar (`REGENTS_APPROVAL_TTL_H`; padrão 24 h). */
   approvals?: { ttlMs?: number };
   /**
-   * A Memória: o modelo pequeno da extração (`SHEARIM_MEMORY_MODEL`; padrão `claude-haiku-5-5`) e o
-   * orçamento do resumo em cada resposta, em caracteres (`SHEARIM_MEMORY_SUMMARY_CHARS`; padrão 4000).
+   * A Memória: o modelo pequeno da extração (`REGENTS_MEMORY_MODEL`; padrão `claude-haiku-5-5`) e o
+   * orçamento do resumo em cada resposta, em caracteres (`REGENTS_MEMORY_SUMMARY_CHARS`; padrão 4000).
    */
   memory?: { model?: string; summaryChars?: number };
   /**
-   * A Wiki: o tamanho máximo de uma Fonte, em bytes (`SHEARIM_WIKI_SOURCE_MAX_MB`; padrão 5 MB), e o
-   * teto de turnos de Ferramenta de cada chamada da Sincronização (`SHEARIM_WIKI_SYNC_MAX_TURNS`;
+   * A Wiki: o tamanho máximo de uma Fonte, em bytes (`REGENTS_WIKI_SOURCE_MAX_MB`; padrão 5 MB), e o
+   * teto de turnos de Ferramenta de cada chamada da Sincronização (`REGENTS_WIKI_SYNC_MAX_TURNS`;
    * padrão 40) e o tamanho de parte de uma Fonte grande, em caracteres
-   * (`SHEARIM_WIKI_PART_MAX_CHARS`; padrão 40.000).
+   * (`REGENTS_WIKI_PART_MAX_CHARS`; padrão 40.000).
    */
   wiki?: { sourceMaxBytes?: number; syncMaxToolTurns?: number; partMaxChars?: number };
 }
