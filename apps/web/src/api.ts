@@ -23,6 +23,7 @@ import type {
   GitHubDto,
   GitHubInstallDto,
   GitHubManifestDto,
+  ImportSkillResultDto,
   InstallationDto,
   JoinRequestAdminDto,
   JoinRequestDto,
@@ -201,6 +202,11 @@ export const api = {
   updateSkill: (skillId: string, input: UpdateSkillInput) =>
     call<SkillDto>(`/api/skills/${skillId}`, json("PATCH", input)),
   deleteSkill: (skillId: string) => call<void>(`/api/skills/${skillId}`, { method: "DELETE" }),
+  importSkill: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return call<ImportSkillResultDto>("/api/skills/import", { method: "POST", body });
+  },
   agentSkills: (agentId: string) => call<AgentSkillDto[]>(`/api/agents/${agentId}/skills`),
   setAgentSkill: (agentId: string, skillId: string, active: boolean) =>
     call<AgentSkillDto[]>(`/api/agents/${agentId}/skills/${skillId}`, { method: active ? "PUT" : "DELETE" }),
