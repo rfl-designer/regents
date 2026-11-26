@@ -1,10 +1,12 @@
-import type { WikiChannelDto } from "@shearim/contracts";
-import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
-import { type Db, schema } from "../db/client";
+import type { WikiChannelDto, WikiReachDto, WikiScope } from "@shearim/contracts";
+import { and, asc, eq, inArray, isNotNull, or, type SQL, sql } from "drizzle-orm";
+import { type Db, schema, type Tx } from "../db/client";
+import { isActive } from "../members";
 import { seenBy } from "../participation";
 import type { ToolRun } from "../tools/port";
+import { type Viewers, viewersOf } from "../viewers";
 
-const { wikis, wikiChannels, wikiVersions, channels } = schema;
+const { wikis, wikiChannels, wikiMembers, wikiVersions, channels, members } = schema;
 
 /** Uma Wiki que alcança a resposta, com a versão atual (a que ela lê). */
 export interface WikiInReach {
@@ -25,12 +27,13 @@ export type Answer = Pick<ToolRun, "channelId" | "originMessageId" | "agentId">;
  * (b) tem versão publicada (a nunca sincronizada não tem o que ler), e
  * (c) tem no alcance dela o autor e todos os Membros que veem a conversa.
  *
- * Hoje (#81) só a Wiki pública passa em (c): todo Membro está no alcance dela. A restrita (#83)
- * entra quando a lista dela contém todos os que veem a conversa (a mesma peça de `reachOf`), e a
+ * Em (c), quem vê a conversa vem de `viewersOf`, a mesma peça de `reachOf` (`inReachOf`). A
  * ligação a Agentes (#84) entra em (a), com `answer.agentId`. Fora daqui, nenhuma Wiki aparece:
  * nem no catálogo, nem na Ferramenta, nem no Andamento.
  */
 export async function wikisInReach(db: Db, answer: Answer): Promise<WikiInReach[]> {
+  const viewers = await viewersOf(db, answer);
+  if (!viewers) return [];
   return db
     .select({
       id: wikis.id,
@@ -42,10 +45,26 @@ export async function wikisInReach(db: Db, answer: Answer): Promise<WikiInReach[
     .from(wikiChannels)
     .innerJoin(wikis, eq(wikis.id, wikiChannels.wikiId))
     .innerJoin(wikiVersions, eq(wikiVersions.id, wikis.currentVersionId))
-    .where(
-      and(eq(wikiChannels.channelId, answer.channelId), eq(wikis.scope, "public"), isNotNull(wikis.currentVersionId)),
-    )
+    .where(and(eq(wikiChannels.channelId, answer.channelId), isNotNull(wikis.currentVersionId), inReachOf(db, viewers)))
     .orderBy(asc(sql`lower(${wikis.name})`));
+}
+
+/**
+ * A condição "a Wiki tem no alcance todos os que veem a conversa" (ADR 0014), em SQL sobre
+ * `wikis`. A pública, sempre. A restrita, só fora do Canal público (onde todo Membro vê) e quando a
+ * lista dela tem cada um dos que veem, o autor incluído. Sem ninguém que veja, só a pública: a
+ * lista nunca abre por vazio.
+ */
+function inReachOf(db: Db, viewers: Viewers): SQL {
+  const isPublic = eq(wikis.scope, "public");
+  if (viewers === "everyone" || viewers.length === 0) return isPublic;
+  const listed = db
+    .select({ id: wikiMembers.wikiId })
+    .from(wikiMembers)
+    .where(inArray(wikiMembers.memberId, [...viewers]))
+    .groupBy(wikiMembers.wikiId)
+    .having(sql`count(distinct ${wikiMembers.memberId}) = ${viewers.length}`);
+  return or(isPublic, inArray(wikis.id, listed))!;
 }
 
 /** A Wiki com este nome (sem diferenciar maiúsculas), se ela alcança a resposta. */
@@ -91,4 +110,72 @@ export async function linkWikiToChannel(db: Db, wikiId: string, channelId: strin
 
 export async function unlinkWikiFromChannel(db: Db, wikiId: string, channelId: string) {
   await db.delete(wikiChannels).where(and(eq(wikiChannels.wikiId, wikiId), eq(wikiChannels.channelId, channelId)));
+}
+
+/** Se o Membro está na lista da Wiki (o alcance de leitura da restrita). */
+export async function inWikiList(db: Db, wikiId: string, memberId: string) {
+  const [row] = await db
+    .select({ id: wikiMembers.memberId })
+    .from(wikiMembers)
+    .where(and(eq(wikiMembers.wikiId, wikiId), eq(wikiMembers.memberId, memberId)));
+  return row !== undefined;
+}
+
+/** Os ids dos Membros ativos na lista da Wiki. */
+export async function wikiListIds(db: Db, wikiId: string): Promise<string[]> {
+  const rows = await db
+    .select({ id: wikiMembers.memberId })
+    .from(wikiMembers)
+    .innerJoin(members, eq(members.id, wikiMembers.memberId))
+    .where(and(eq(wikiMembers.wikiId, wikiId), isActive));
+  return rows.map((r) => r.id);
+}
+
+/** A tela do alcance (#83): o escopo e os Membros ativos, por nome, com a marca de quem está na lista. */
+export async function wikiReachFor(db: Db, wiki: { id: string; scope: WikiScope }): Promise<WikiReachDto> {
+  const rows = await db
+    .select({ id: members.id, name: members.displayName, listedAt: wikiMembers.addedAt })
+    .from(members)
+    .leftJoin(wikiMembers, and(eq(wikiMembers.memberId, members.id), eq(wikiMembers.wikiId, wiki.id)))
+    .where(isActive)
+    .orderBy(asc(members.displayName), asc(members.id));
+  return {
+    scope: wiki.scope,
+    members: rows.map((r) => ({ id: r.id, name: r.name, inList: r.listedAt !== null })),
+  };
+}
+
+/**
+ * Os ids que não são de Membros ativos (para recusar a lista com o motivo). Vazio: todos servem.
+ */
+export async function unknownMembers(db: Db, ids: readonly string[]): Promise<string[]> {
+  if (ids.length === 0) return [];
+  const found = await db
+    .select({ id: members.id })
+    .from(members)
+    .where(and(inArray(members.id, [...ids]), isActive));
+  const known = new Set(found.map((m) => m.id));
+  return ids.filter((id) => !known.has(id));
+}
+
+/** Troca o alcance e a lista inteira da Wiki, numa transação. Vale na próxima resposta. */
+export async function setWikiReach(
+  db: Db,
+  wikiId: string,
+  input: { scope: WikiScope; memberIds: readonly string[]; now: Date },
+) {
+  await db.transaction(async (tx) => {
+    await tx.update(wikis).set({ scope: input.scope }).where(eq(wikis.id, wikiId));
+    await tx.delete(wikiMembers).where(eq(wikiMembers.wikiId, wikiId));
+    if (input.memberIds.length) {
+      await tx
+        .insert(wikiMembers)
+        .values([...new Set(input.memberIds)].map((memberId) => ({ wikiId, memberId, addedAt: input.now })));
+    }
+  });
+}
+
+/** Quem sai do Workspace sai de toda lista de Wiki: se voltar, volta fora delas. */
+export async function leaveWikiLists(tx: Tx, memberId: string) {
+  await tx.delete(wikiMembers).where(eq(wikiMembers.memberId, memberId));
 }

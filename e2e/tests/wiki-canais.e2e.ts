@@ -20,7 +20,7 @@ describe("Wiki ligada a Canais", () => {
     await expect(geral).toBeChecked();
 
     await app.open("/wikis");
-    await screen.getByRole("listitem", `Wiki ${nome}`).getByRole("button", "Fontes e Canais").tap();
+    await screen.getByRole("listitem", `Wiki ${nome}`).getByRole("button", "Fontes, alcance e Canais").tap();
     const deNovo = screen.getByRole("group", `Canais de ${nome}`).getByRole("checkbox", "#geral");
     await expect(deNovo).toBeChecked();
     await deNovo.tap();

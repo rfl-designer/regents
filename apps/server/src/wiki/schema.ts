@@ -217,3 +217,22 @@ export const wikiChannels = pgTable(
   },
   (t) => [primaryKey({ columns: [t.wikiId, t.channelId] }), index().on(t.channelId)],
 );
+
+/**
+ * A lista de Membros de uma Wiki restrita (#83): ela só é lida numa resposta em que o autor e todos
+ * os que veem a conversa estão aqui, e só eles a veem na barra lateral. Numa Wiki pública a lista
+ * fica guardada, sem efeito. Quem sai do Workspace não conta (a lista ignora `members.left_at`).
+ */
+export const wikiMembers = pgTable(
+  "wiki_members",
+  {
+    wikiId: uuid()
+      .notNull()
+      .references(() => wikis.id, { onDelete: "cascade" }),
+    memberId: uuid()
+      .notNull()
+      .references(() => members.id, { onDelete: "cascade" }),
+    addedAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.wikiId, t.memberId] }), index().on(t.memberId)],
+);
