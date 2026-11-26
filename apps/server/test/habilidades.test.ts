@@ -129,6 +129,33 @@ describe("o Admin escreve Habilidades", () => {
     expect(lista.map((s) => s.name)).toEqual(["Criar carrossel", "Criar Reels"]);
   });
 
+  test("o nome da Habilidade do Shearim, Sincronizar a Wiki, em qualquer caixa, é recusado ao criar, importar e renomear", async () => {
+    const t = await testApp();
+    await t.as(juliana).get("/api/me");
+    const recusa = {
+      error: "name_taken",
+      message: "Sincronizar a Wiki é a Habilidade do Shearim: dê outro nome à sua.",
+    };
+
+    const criada = await t.as(juliana).post("/api/skills", { ...CARROSSEL, name: "sincronizar a WIKI" });
+    expect(criada.status).toBe(409);
+    expect(await criada.json()).toEqual(recusa);
+
+    const form = new FormData();
+    const md = "---\nname: Sincronizar a Wiki\ndescription: Outra.\n---\n\nCorpo.\n";
+    form.append("file", new File([md], "SKILL.md"));
+    const importada = await t.as(juliana).request("/api/skills/import", { method: "POST", body: form });
+    expect(importada.status).toBe(409);
+    expect(await importada.json()).toEqual(recusa);
+
+    const minha = await criar(t);
+    const renomeada = await t.as(juliana).patch(`/api/skills/${minha.id}`, { name: " Sincronizar a wiki " });
+    expect(renomeada.status).toBe(409);
+    expect(await renomeada.json()).toEqual(recusa);
+    const lista: SkillDto[] = await (await t.as(juliana).get("/api/skills")).json();
+    expect(lista.map((s) => s.name)).toEqual(["Criar carrossel"]);
+  });
+
   test("um Membro que não é Admin recebe 403 ao criar, editar, ativar, desativar ou apagar uma Habilidade", async () => {
     const t = await testApp();
     const { social } = await workspace(t);
