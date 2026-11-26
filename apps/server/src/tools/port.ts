@@ -456,6 +456,14 @@ export function createToolPort(deps: {
         async call(name, input, signal) {
           // A concessão é conferida na hora: o Admin pode tê-la retirado no meio da resposta.
           const def = (await availableTo(run.agentId)).find((d) => d.id === name);
+          // Uma que vem sem concessão e deixou de estar presente no meio da resposta (a Habilidade
+          // desativada, a Memória desligada): a falha fica à vista no Andamento, com o motivo.
+          const gone = def ? undefined : deps.automatic?.find((d) => d.id === name);
+          if (gone) {
+            const reason = "não está mais disponível para você";
+            await end(await begin(gone, gone.label, input), reason);
+            return { content: `A Ferramenta ${gone.title} falhou: ${reason}.`, isError: true };
+          }
           // As da web rodam no cérebro: nunca por aqui (nem pelo endpoint MCP).
           if (!def || runsInBrain(def)) {
             return { content: `A Ferramenta ${name} não está disponível para você.`, isError: true };

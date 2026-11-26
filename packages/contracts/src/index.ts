@@ -944,6 +944,55 @@ export interface MemoryItemDto {
  */
 export type YourAccountDto = { state: "limited"; until: string } | { state: "needs_relink" } | { state: "not_linked" };
 
+// ---------- Habilidades (spec #74) ----------
+
+/** De onde veio a Habilidade: escrita na tela (`written`) ou importada de um `SKILL.md` (`imported`). */
+export type SkillOrigin = "written" | "imported";
+
+/** Tamanho máximo do nome e da descrição de uma Habilidade, em caracteres: entram no catálogo de toda resposta. */
+export const SKILL_NAME_MAX = 80;
+export const SKILL_DESCRIPTION_MAX = 500;
+/** Tamanho máximo do corpo de uma Habilidade, em caracteres: ele vai inteiro ao modelo quando carregado. */
+export const SKILL_BODY_MAX = 100_000;
+
+/**
+ * Uma Habilidade (só Admin): `GET /api/skills`, `GET`/`PATCH /api/skills/:id` e a resposta de
+ * `POST /api/skills`. `agents` são os Agentes em que ela está ativa (o impacto de editar ou apagar).
+ */
+export interface SkillDto {
+  id: string;
+  name: string;
+  /** Diz quando usar: é o que o Agente vê no catálogo. */
+  description: string;
+  /** O procedimento em markdown: o Agente o carrega pela Ferramenta "carregar Habilidade". */
+  body: string;
+  origin: SkillOrigin;
+  agents: { id: string; name: string }[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** `POST /api/skills` (só Admin). */
+export interface CreateSkillInput {
+  name: string;
+  description: string;
+  body: string;
+}
+
+/** `PATCH /api/skills/:id` (só Admin): campo ausente fica. */
+export type UpdateSkillInput = Partial<CreateSkillInput>;
+
+/**
+ * Uma Habilidade na tela do Agente (só Admin), com a marca de ativa nele: `GET
+ * /api/agents/:id/skills` e a resposta de `PUT`/`DELETE /api/agents/:id/skills/:skillId`.
+ */
+export interface AgentSkillDto {
+  id: string;
+  name: string;
+  description: string;
+  active: boolean;
+}
+
 // ---------- Pedido de aprovação (ADR 0011) ----------
 
 /**

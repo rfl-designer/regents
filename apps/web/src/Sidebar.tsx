@@ -31,6 +31,7 @@ export type AdminView =
   | "context"
   | "settings"
   | "agents"
+  | "skills"
   | "connectors"
   | "key"
   | "github"
@@ -41,6 +42,7 @@ const ADMIN_LINKS: [AdminView, string][] = [
   ["context", "Contexto do Workspace"],
   ["settings", "Instruções dos Canais"],
   ["agents", "Agentes"],
+  ["skills", "Habilidades"],
   ["connectors", "Conectores"],
   ["key", "Chave do Workspace"],
   ["github", "GitHub"],

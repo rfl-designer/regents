@@ -36,6 +36,8 @@ import { profileRoutes } from "./profile";
 import { createPush, type PushConfig } from "./push";
 import { createReading, unreadOf } from "./reading";
 import type { SecretBox } from "./secrets";
+import { skillRoutes } from "./skills/routes";
+import { LOAD_SKILL } from "./skills/tool";
 import { threadRoutes } from "./threads";
 import { createConnectors } from "./tools/connectors";
 import { createMcpEndpoint } from "./tools/mcp";
@@ -162,8 +164,9 @@ export function createApp(deps: AppDeps) {
     clock,
     definitions: [...(deps.tools?.definitions ?? [...WORKSPACE_TOOLS, ...WEB_TOOLS]), ...githubTools(github)],
     extra: connectors.definitions,
-    // Sem concessão do Admin: "buscar na Memória" vem com a Memória ligada (#69).
-    automatic: [SEARCH_MEMORY],
+    // Sem concessão do Admin: "buscar na Memória" vem com a Memória ligada (#69), e "carregar
+    // Habilidade" com ao menos uma Habilidade ativa (spec #74).
+    automatic: [SEARCH_MEMORY, LOAD_SKILL],
     timeoutMs: deps.tools?.timeoutMs,
   });
   // As mensagens novas (de pessoa e as respostas de Agente) vão ao push pelo mesmo `messageCreated`.
@@ -271,6 +274,7 @@ export function createApp(deps: AppDeps) {
   app.route("/api", workspaceKeyRoutes({ db, clock, secrets, onChanged: () => reconsider() }));
   app.route("/api", workspaceContextRoutes({ db }));
   app.route("/api", memoryRoutes({ db, clock, events }));
+  app.route("/api", skillRoutes({ db, clock }));
   app.route("/api", githubRoutes({ db, github }));
   app.route("/api", installation.routes);
 

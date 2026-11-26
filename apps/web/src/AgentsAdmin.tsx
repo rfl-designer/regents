@@ -3,6 +3,7 @@ import {
   type AgentDto,
   type AgentGitHubDto,
   type AgentModel,
+  type AgentSkillDto,
   type AgentToolDto,
   type ToolOrigin,
   type WorkspaceKeyDto,
@@ -189,6 +190,7 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
                 if (fresh) onChanged(fresh);
               }}
             />
+            <AgentSkills agent={a} />
             <AgentGitHub agent={a} onChanged={(repos) => onChanged({ ...a, githubRepositories: repos })} />
           </>
         )}
@@ -347,6 +349,55 @@ function AgentTools({ agent, onChanged }: { agent: AgentDto; onChanged(tools: Ag
               </label>
             ))}
         </div>
+      ))}
+      {error && (
+        <span className="error" role="alert">
+          {error}
+        </span>
+      )}
+    </fieldset>
+  );
+}
+
+/**
+ * As Habilidades do Agente (spec #74), a Articuladora inclusive: ativar ou desativar cada uma vale
+ * na hora, sem "Salvar". O Agente vê o nome e a descrição das ativas e carrega o corpo quando a
+ * tarefa pede. Escrever e apagar Habilidades é na tela Habilidades.
+ */
+function AgentSkills({ agent }: { agent: AgentDto }) {
+  const [skills, setSkills] = useState<AgentSkillDto[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.agentSkills(agent.id).then(setSkills, () => setError("Não foi possível carregar as Habilidades."));
+  }, [agent.id]);
+
+  async function toggle(skill: AgentSkillDto) {
+    setBusy(skill.id);
+    setError(null);
+    try {
+      setSkills(await api.setAgentSkill(agent.id, skill.id, !skill.active));
+    } catch (err) {
+      setError(
+        messageOf(err, `A Habilidade ${skill.name} não foi ${skill.active ? "desativada" : "ativada"}. Tente de novo.`),
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <fieldset className="settings-row" aria-label={`Habilidades de ${agent.name}`}>
+      <legend>Habilidades</legend>
+      {skills === null && !error && <p className="hint">Carregando…</p>}
+      {skills?.length === 0 && <p className="hint">Nenhuma Habilidade no Workspace. Escreva uma em Habilidades.</p>}
+      {skills?.map((s) => (
+        <label key={s.id} className="hint">
+          <input type="checkbox" checked={s.active} disabled={busy !== null} onChange={() => toggle(s)} /> {s.name}
+          <br />
+          <small>{s.description}</small>
+        </label>
       ))}
       {error && (
         <span className="error" role="alert">
