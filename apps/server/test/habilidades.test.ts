@@ -510,7 +510,7 @@ describe("teto, orçamento e precedência", () => {
   );
 
   test(
-    "a nota de precedência diz: Contexto do Workspace > Instruções do Canal > instruções do Agente e Habilidades > Memória",
+    "a nota de precedência diz: Contexto do Workspace > Instruções do Canal > instruções do Agente e Habilidades > Wiki e Memória",
     async () => {
       const t = await testApp();
       const { social, geral } = await workspace(t);
@@ -520,7 +520,7 @@ describe("teto, orçamento e precedência", () => {
       await respostaA(t, geral.id, await enviar(t, geral.id, "@social faz um carrossel?"));
 
       expect(systemDe(respostas(t)[0]!)).toContain(
-        "O Contexto do Workspace vale acima das Instruções do Canal, que valem acima das suas instruções e das suas Habilidades, que valem acima da Memória: quando se contradizem, siga o que vale mais.",
+        "O Contexto do Workspace vale acima das Instruções do Canal, que valem acima das suas instruções e das suas Habilidades, que valem acima da Wiki e da Memória: quando se contradizem, siga o que vale mais. Entre a Wiki e a Memória não há ordem.",
       );
     },
     LONGO,

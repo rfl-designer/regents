@@ -47,6 +47,7 @@ import { WEB_TOOLS } from "./tools/web";
 import { WORKSPACE_TOOLS } from "./tools/workspace";
 import { wikiRoutes } from "./wiki/routes";
 import { createWikiSyncs } from "./wiki/sync";
+import { READ_WIKI } from "./wiki/tool";
 import { workspaceContextRoutes } from "./workspace-context";
 import { workspaceKeyRoutes } from "./workspace-key";
 
@@ -174,7 +175,7 @@ export function createApp(deps: AppDeps) {
     extra: connectors.definitions,
     // Sem concessão do Admin: "buscar na Memória" vem com a Memória ligada (#69), e "carregar
     // Habilidade" com ao menos uma Habilidade ativa (spec #74).
-    automatic: [SEARCH_MEMORY, LOAD_SKILL],
+    automatic: [SEARCH_MEMORY, LOAD_SKILL, READ_WIKI],
     timeoutMs: deps.tools?.timeoutMs,
   });
   // As mensagens novas (de pessoa e as respostas de Agente) vão ao push pelo mesmo `messageCreated`.

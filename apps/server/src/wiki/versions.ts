@@ -1,9 +1,11 @@
 import {
   WIKI_INDEX_SLUG,
   WIKI_LOG_SLUG,
+  type WikiLinkDto,
   type WikiPageDto,
   type WikiSyncReportDto,
   type WikiVersionDto,
+  wikiLinkSlugs,
 } from "@shearim/contracts";
 import { and, asc, desc, eq, inArray, max } from "drizzle-orm";
 import { type Db, schema, type Tx } from "../db/client";
@@ -124,6 +126,40 @@ export async function pageDtos(db: Db, versionId: string): Promise<WikiPageDto[]
     body: p.body,
     sources: p.sources.map((id) => ({ id, fileName: names.find((n) => n.id === id)?.fileName ?? "" })),
   }));
+}
+
+/**
+ * Uma página de uma versão, para ler (#82): a página com as Fontes dela (na ordem em que subiram) e
+ * os links do corpo, cada um com o título da página ligada naquela versão, ou `null` (quebrado).
+ * Nada quando a versão não tem a página.
+ */
+export async function readPage(
+  db: Db,
+  versionId: string,
+  slug: string,
+): Promise<{ page: WikiPageDto; links: WikiLinkDto[] } | undefined> {
+  const [row] = await db
+    .select({ id: wikiPages.id, slug: wikiPages.slug, title: wikiPages.title, body: wikiPages.body })
+    .from(wikiPages)
+    .where(and(eq(wikiPages.versionId, versionId), eq(wikiPages.slug, slug)));
+  if (!row) return undefined;
+  const sources = await db
+    .select({ id: wikiSources.id, fileName: wikiSources.fileName })
+    .from(wikiPageSources)
+    .innerJoin(wikiSources, eq(wikiSources.id, wikiPageSources.sourceId))
+    .where(eq(wikiPageSources.pageId, row.id))
+    .orderBy(asc(wikiSources.seq));
+  const slugs = wikiLinkSlugs(row.body);
+  const linked = slugs.length
+    ? await db
+        .select({ slug: wikiPages.slug, title: wikiPages.title })
+        .from(wikiPages)
+        .where(and(eq(wikiPages.versionId, versionId), inArray(wikiPages.slug, slugs)))
+    : [];
+  return {
+    page: { slug: row.slug, title: row.title, body: row.body, sources },
+    links: slugs.map((s) => ({ slug: s, title: linked.find((l) => l.slug === s)?.title ?? null })),
+  };
 }
 
 /** O índice que o Shearim escreve quando a Articuladora não deixou um: uma linha por página. */

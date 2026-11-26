@@ -1,5 +1,5 @@
 {
-  "id": "e51d1e4c-afe9-4ee0-bf49-6bdbd981eab8",
+  "id": "9bee9ff5-144b-45ff-8624-316f0fd2e160",
   "prevId": "db310926-d801-4bf3-87e1-d5cc5fc6157d",
   "version": "7",
   "dialect": "postgresql",
@@ -3808,6 +3808,88 @@
       },
       "isRLSEnabled": false
     },
+    "public.wiki_channels": {
+      "name": "wiki_channels",
+      "schema": "",
+      "columns": {
+        "wiki_id": {
+          "name": "wiki_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "channel_id": {
+          "name": "channel_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "linked_at": {
+          "name": "linked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "wiki_channels_channel_id_index": {
+          "name": "wiki_channels_channel_id_index",
+          "columns": [
+            {
+              "expression": "channel_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "wiki_channels_wiki_id_wikis_id_fk": {
+          "name": "wiki_channels_wiki_id_wikis_id_fk",
+          "tableFrom": "wiki_channels",
+          "tableTo": "wikis",
+          "columnsFrom": [
+            "wiki_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "wiki_channels_channel_id_channels_id_fk": {
+          "name": "wiki_channels_channel_id_channels_id_fk",
+          "tableFrom": "wiki_channels",
+          "tableTo": "channels",
+          "columnsFrom": [
+            "channel_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "wiki_channels_wiki_id_channel_id_pk": {
+          "name": "wiki_channels_wiki_id_channel_id_pk",
+          "columns": [
+            "wiki_id",
+            "channel_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.wiki_page_sources": {
       "name": "wiki_page_sources",
       "schema": "",
@@ -4173,12 +4255,6 @@
         "report": {
           "name": "report",
           "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "payer": {
-          "name": "payer",
-          "type": "text",
           "primaryKey": false,
           "notNull": false
         },

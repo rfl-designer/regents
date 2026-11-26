@@ -1,5 +1,6 @@
 import {
   formatBytes,
+  type WikiChannelDto,
   type WikiDto,
   type WikiPageRefDto,
   type WikiSourceDto,
@@ -87,12 +88,13 @@ export function WikisSettings() {
                 aria-expanded={w.id === openId}
                 onClick={() => setOpenId(w.id === openId ? null : w.id)}
               >
-                {w.id === openId ? "Fechar" : "Fontes"}
+                {w.id === openId ? "Fechar" : "Fontes e Canais"}
               </button>
             </div>
             <p className="hint">{w.description}</p>
             <WikiSync wiki={w} />
             {w.id === openId && <WikiSources wiki={w} onChanged={load} />}
+            {w.id === openId && <WikiChannels wiki={w} />}
           </li>
         ))}
       </ul>
@@ -279,6 +281,59 @@ function WikiSources({ wiki, onChanged }: { wiki: WikiDto; onChanged(): void }) 
         </span>
       )}
     </section>
+  );
+}
+
+/**
+ * Os Canais da Wiki (#81): ligada a um Canal, ela entra no contexto de todo Agente que responde
+ * ali, a Articuladora inclusive. Aparecem os Canais que o Admin vê.
+ */
+function WikiChannels({ wiki }: { wiki: WikiDto }) {
+  const [channels, setChannels] = useState<WikiChannelDto[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    wikiApi.channels(wiki.id).then(setChannels, () => setError("Não foi possível carregar os Canais."));
+  }, [wiki.id]);
+
+  async function toggle(channel: WikiChannelDto) {
+    setBusy(channel.id);
+    setError(null);
+    try {
+      setChannels(await wikiApi.setChannel(wiki.id, channel.id, !channel.linked));
+    } catch (err) {
+      setError(
+        messageOf(
+          err,
+          `A Wiki não foi ${channel.linked ? "desligada de" : "ligada a"} #${channel.name}. Tente de novo.`,
+        ),
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <fieldset aria-label={`Canais de ${wiki.name}`}>
+      <legend>Canais</legend>
+      <p className="hint">
+        Todo Agente que responde num Canal ligado consulta a Wiki ali.
+        {!wiki.currentVersion && " A Wiki só entra nas respostas depois da primeira Sincronização."}
+      </p>
+      {channels === null && !error && <p className="hint">Carregando…</p>}
+      {channels?.map((c) => (
+        <label key={c.id} className="hint">
+          <input type="checkbox" checked={c.linked} disabled={busy !== null} onChange={() => toggle(c)} /> #{c.name}
+          {c.kind === "private" && <span className="tag">privado</span>}
+        </label>
+      ))}
+      {error && (
+        <span className="error" role="alert">
+          {error}
+        </span>
+      )}
+    </fieldset>
   );
 }
 

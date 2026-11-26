@@ -1,4 +1,4 @@
-import type { AgentDto, ChannelDto, DmDto, MeDto, MemberSummaryDto, UnreadDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, DmDto, MeDto, MemberSummaryDto, UnreadDto, WikiDto } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { agentCapabilitiesText } from "./agent-tools";
 import { ApiFailure, api } from "./api";
@@ -24,6 +24,11 @@ interface Props {
   /** A Memória do Workspace está aberta (todo Membro a vê). */
   workspaceMemoryOpen: boolean;
   onOpenWorkspaceMemory(): void;
+  /** As Wikis que o Membro lê (o servidor decide pelo alcance). */
+  wikis: WikiDto[];
+  /** A Wiki aberta para ler, se alguma. */
+  openWikiId: string | null;
+  onOpenWiki(wikiId: string): void;
 }
 
 export type AdminView =
@@ -126,6 +131,25 @@ export function Sidebar(props: Props) {
         <button type="button" className="link" onClick={() => setOpeningDm(true)}>
           + Nova DM
         </button>
+      )}
+      {props.wikis.length > 0 && (
+        <>
+          <h2>Wikis</h2>
+          <ul aria-label="Wikis">
+            {props.wikis.map((w) => (
+              <li key={w.id} className="conversation-item">
+                <button
+                  type="button"
+                  className="conversation"
+                  aria-current={w.id === props.openWikiId ? "page" : undefined}
+                  onClick={() => props.onOpenWiki(w.id)}
+                >
+                  {w.name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
       <button
         type="button"

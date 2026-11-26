@@ -78,11 +78,11 @@ export const LOAD_SKILL: AutomaticTool = {
     required: ["nome"],
     additionalProperties: false,
   },
-  async presentFor(db, agentId) {
+  async presentFor(db, run) {
     const [any] = await db
       .select({ skillId: agentSkills.skillId })
       .from(agentSkills)
-      .where(eq(agentSkills.agentId, agentId))
+      .where(eq(agentSkills.agentId, run.agentId))
       .limit(1);
     return Boolean(any);
   },

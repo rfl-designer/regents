@@ -271,8 +271,15 @@
     {
       "idx": 38,
       "version": "7",
-      "when": 1795661673361,
-      "tag": "0038_sync-pela-conta",
+      "when": 1795660630821,
+      "tag": "0038_wiki-nos-canais",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1795662438874,
+      "tag": "0039_sync-pela-conta",
       "breakpoints": true
     }
   ]

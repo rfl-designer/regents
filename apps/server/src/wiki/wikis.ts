@@ -1,5 +1,5 @@
 import type { WikiDto, WikiSourcePending, WikiSourceState } from "@shearim/contracts";
-import { asc, eq, sql } from "drizzle-orm";
+import { asc, eq, isNotNull, sql } from "drizzle-orm";
 import { type Db, isUuid, schema } from "../db/client";
 import { activeAdminIds } from "../members";
 import { lastSyncOf } from "./sync-state";
@@ -68,6 +68,38 @@ export async function listWikis(db: Db): Promise<WikiDto[]> {
     .from(wikis)
     .orderBy(asc(sql`lower(${wikis.name})`));
   return Promise.all(all.map((w) => toWikiDto(db, w)));
+}
+
+/**
+ * Se o Membro lê a Wiki fora da administração (a barra lateral e a leitura das páginas): o ponto
+ * único do alcance (ADR 0014). A pública, todo Membro; a restrita, por ora ninguém (#83: a lista
+ * de Membros dela). O Admin não lê uma restrita por ser Admin: só na administração.
+ */
+export async function readableBy(
+  _db: Db,
+  wiki: Pick<typeof wikis.$inferSelect, "id" | "scope">,
+  _memberId: string,
+): Promise<boolean> {
+  return wiki.scope === "public";
+}
+
+/** A Wiki que o Membro lê: no alcance dele e com versão publicada. Fora disso, nada. */
+export async function readableWiki(db: Db, id: string, memberId: string) {
+  const wiki = await findWiki(db, id);
+  if (!wiki?.currentVersionId || !(await readableBy(db, wiki, memberId))) return undefined;
+  return wiki;
+}
+
+/** As Wikis que o Membro lê (a seção "Wikis" da barra lateral), por nome. */
+export async function listReadableWikis(db: Db, memberId: string): Promise<WikiDto[]> {
+  const all = await db
+    .select()
+    .from(wikis)
+    .where(isNotNull(wikis.currentVersionId))
+    .orderBy(asc(sql`lower(${wikis.name})`));
+  const readable = [];
+  for (const w of all) if (await readableBy(db, w, memberId)) readable.push(w);
+  return Promise.all(readable.map((w) => toWikiDto(db, w)));
 }
 
 /** Cria uma Wiki pública. `undefined` quando o nome já existe (sem diferenciar maiúsculas). */

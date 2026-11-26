@@ -1,12 +1,13 @@
-import type { CreateWikiInput } from "@shearim/contracts";
+import type { CreateWikiInput, WikiPageViewDto } from "@shearim/contracts";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
-import type { Db } from "../db/client";
+import { type Db, isUuid } from "../db/client";
 import { adminOnly, type Env } from "../members";
+import { channelForLink, linkWikiToChannel, unlinkWikiFromChannel, wikiChannelsFor } from "./reach";
 import { addSources, DEFAULT_SOURCE_MAX_BYTES, listSources, readUploads } from "./sources";
 import type { WikiSyncs } from "./sync";
-import { listVersions, pageDtos, versionNumbered } from "./versions";
-import { createWiki, findWiki, listWikis, wikiNamed } from "./wikis";
+import { listVersions, pageDtos, readPage, versionNumbered } from "./versions";
+import { createWiki, findWiki, listReadableWikis, listWikis, readableWiki, toWikiDto, wikiNamed } from "./wikis";
 
 const NAME_MAX = 80;
 
@@ -21,6 +22,25 @@ export function wikiRoutes(deps: { db: Db; clock: Clock; syncs: WikiSyncs; sourc
   const routes = new Hono<Env>();
 
   routes.get("/wiki-settings", adminOnly, async (c) => c.json(await listWikis(db)));
+
+  /** As Wikis que o Membro lê (a barra lateral): as do alcance dele, com versão publicada. */
+  routes.get("/wikis", async (c) => c.json(await listReadableWikis(db, c.get("member").id)));
+
+  /**
+   * Uma página da versão atual, para o Membro ler (#82). Fora do alcance, sem versão ou inexistente,
+   * a Wiki "não existe" (404), sem dizer qual caso é. Só leitura: a Wiki muda só pela
+   * Sincronização, e não há rota de edição de página, nem para o Admin.
+   */
+  routes.get("/wikis/:id/pages/:slug", async (c) => {
+    const wiki = await readableWiki(db, c.req.param("id"), c.get("member").id);
+    if (!wiki?.currentVersionId) return c.json({ error: "not_found", message: "Essa Wiki não existe." }, 404);
+    const read = await readPage(db, wiki.currentVersionId, c.req.param("slug"));
+    if (!read) {
+      return c.json({ error: "not_found", message: `Essa página não existe na Wiki ${wiki.name}.` }, 404);
+    }
+    const dto = await toWikiDto(db, wiki);
+    return c.json({ wiki: dto, version: dto.currentVersion!.number, ...read } satisfies WikiPageViewDto);
+  });
 
   routes.post("/wikis", adminOnly, async (c) => {
     const input = ((await c.req.json().catch(() => null)) ?? {}) as Partial<Record<keyof CreateWikiInput, unknown>>;
@@ -90,6 +110,30 @@ export function wikiRoutes(deps: { db: Db; clock: Clock; syncs: WikiSyncs; sourc
     if (!version) return c.json({ error: "not_found" }, 404);
     return c.json(await pageDtos(db, version));
   });
+
+  /**
+   * As ligações da Wiki a Canais (#81): os Canais que o Admin vê, com a marca de ligado. Todo Agente
+   * que responde num Canal ligado (a Articuladora inclusive) consulta a Wiki ali, dentro do alcance.
+   */
+  routes.get("/wikis/:id/channels", adminOnly, async (c) => {
+    const wiki = await findWiki(db, c.req.param("id"));
+    if (!wiki) return c.json({ error: "not_found" }, 404);
+    return c.json(await wikiChannelsFor(db, wiki.id, c.get("member").id));
+  });
+
+  /** Liga (`PUT`) ou desliga (`DELETE`) a Wiki de um Canal; vale na próxima resposta ali. */
+  for (const method of ["put", "delete"] as const) {
+    routes[method]("/wikis/:id/channels/:channel", adminOnly, async (c) => {
+      const me = c.get("member").id;
+      const wiki = await findWiki(db, c.req.param("id"));
+      const channelId = c.req.param("channel");
+      const channel = wiki && isUuid(channelId) ? await channelForLink(db, channelId, me) : undefined;
+      if (!wiki || !channel) return c.json({ error: "not_found" }, 404);
+      if (method === "put") await linkWikiToChannel(db, wiki.id, channel.id, clock.now());
+      else await unlinkWikiFromChannel(db, wiki.id, channel.id);
+      return c.json(await wikiChannelsFor(db, wiki.id, me));
+    });
+  }
 
   return routes;
 }

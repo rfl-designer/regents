@@ -42,6 +42,19 @@ export interface CreateWikiInput {
   description: string;
 }
 
+/**
+ * Um Canal na tela de ligações da Wiki: `GET /api/wikis/:id/channels` e a resposta de
+ * `PUT`/`DELETE /api/wikis/:id/channels/:channelId` (só Admin). Lista os Canais que o Admin vê
+ * (os públicos e os privados de que ele participa), por nome, com a marca de ligado. Todo Agente
+ * que responde num Canal ligado consulta a Wiki ali, dentro do alcance dela.
+ */
+export interface WikiChannelDto {
+  id: string;
+  name: string;
+  kind: "public" | "private";
+  linked: boolean;
+}
+
 export type WikiSourceFormat = "txt" | "md";
 export type WikiSourceState = "active" | "removed";
 
@@ -150,6 +163,65 @@ export interface WikiPageDto {
   title: string;
   body: string;
   sources: { id: string; fileName: string }[];
+}
+
+/** Um link `[[slug]]` de uma página: o título da página ligada, ou `null` (link quebrado). */
+export interface WikiLinkDto {
+  slug: string;
+  title: string | null;
+}
+
+/**
+ * Uma página para o Membro ler: `GET /api/wikis/:id/pages/:slug` (a versão atual, para quem a Wiki
+ * alcança; `404` com a mensagem fora disso). `version` é o número da versão lida (#85: a citação
+ * abre uma versão antiga, e `wiki.currentVersion` diz se há uma mais nova). `links` são os links
+ * do corpo, na ordem, sem repetir, cada um com o título da página ou `null` se ela não existe na
+ * versão lida.
+ */
+export interface WikiPageViewDto {
+  wiki: WikiDto;
+  version: number;
+  page: WikiPageDto;
+  links: WikiLinkDto[];
+}
+
+/** Um pedaço do corpo de uma página: texto puro, ou um link `[[slug]]` / `[[slug|texto]]`. */
+export type WikiBodyPart = { text: string } | { slug: string; label: string | null };
+
+const WIKI_LINK = /\[\[([^[\]|]+?)(?:\|([^[\]]*))?\]\]/g;
+
+/** O corpo da página em pedaços: o texto e os links `[[slug]]` (ou `[[slug|texto]]`), na ordem. */
+export function wikiBodyParts(body: string): WikiBodyPart[] {
+  const parts: WikiBodyPart[] = [];
+  let last = 0;
+  for (const m of body.matchAll(WIKI_LINK)) {
+    if (m.index > last) parts.push({ text: body.slice(last, m.index) });
+    parts.push({ slug: m[1]!.trim(), label: m[2]?.trim() || null });
+    last = m.index + m[0].length;
+  }
+  if (last < body.length) parts.push({ text: body.slice(last) });
+  return parts;
+}
+
+/** Os slugs que o corpo liga, na ordem, sem repetir. */
+export function wikiLinkSlugs(body: string): string[] {
+  const slugs = wikiBodyParts(body).flatMap((p) => ("slug" in p ? [p.slug] : []));
+  return [...new Set(slugs)];
+}
+
+/** A leitura da Wiki no PWA (#82): `/wiki/<id>/<slug>` (sem slug, o índice). */
+export const WIKI_READ_PREFIX = "/wiki/";
+
+export function wikiPagePath(wikiId: string, slug: string = WIKI_INDEX_SLUG): string {
+  return `${WIKI_READ_PREFIX}${wikiId}/${encodeURIComponent(slug)}`;
+}
+
+/** A página que o endereço pede (`/wiki/<id>/<slug>`), ou `null`. */
+export function wikiPageOfPath(pathname: string): { wikiId: string; slug: string } | null {
+  if (!pathname.startsWith(WIKI_READ_PREFIX)) return null;
+  const [wikiId, slug] = pathname.slice(WIKI_READ_PREFIX.length).split("/");
+  if (!wikiId) return null;
+  return { wikiId, slug: slug ? decodeURIComponent(slug) : WIKI_INDEX_SLUG };
 }
 
 /** O que muda na Wiki em tempo real, para quem a vê. */
