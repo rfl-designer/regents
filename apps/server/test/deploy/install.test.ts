@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { composeTag, REPO_ROOT, SETUP_ENV, TOKEN, tailnetStatus, world } from "./world";
+import { composeTag, download, REPO_ROOT, SETUP_ENV, tailnetStatus, world } from "./world";
 
 const PLIST = "Library/LaunchAgents/com.shearim.acordado.plist";
 
@@ -31,7 +31,7 @@ function inOrder(calls: string[], expected: string[]) {
 }
 
 describe("no Mac", () => {
-  test("com o Docker Desktop rodando: baixa a release com o gh, faz o setup, sobe e mantém o Mac acordado", async () => {
+  test("com o Docker Desktop rodando: baixa a release pública, faz o setup, sobe e mantém o Mac acordado", async () => {
     const w = await world();
     const installer = await w.release("1.2.3");
 
@@ -40,17 +40,14 @@ describe("no Mac", () => {
 
     const calls = w.calls();
     inOrder(calls, [
-      "gh auth status",
-      "gh release download v1.2.3 --repo rfl-designer/shearim --pattern shearim-compose.tar.gz",
-      "docker login ghcr.io -u rafa --password-stdin",
+      download("v1.2.3"),
       "docker compose up -d tailscale",
       "docker compose pull",
       "docker compose up -d",
       "launchctl bootstrap",
     ]);
-    // O token do gh vai pelo stdin do docker login, nunca na linha de comando.
-    expect(readFileSync(join(w.state, "docker-login-stdin"), "utf8")).toBe(`${TOKEN}\n`);
-    expect(calls.join("\n")).not.toContain(TOKEN);
+    // A imagem é pública: nada de conta no GitHub nem docker login.
+    expect(calls.filter((c) => /^gh |docker login/.test(c))).toEqual([]);
     // Usa o Docker que existe: não instala nada.
     expect(calls.filter((c) => /^(brew|colima|sudo|open) /.test(c))).toEqual([]);
 
@@ -89,7 +86,7 @@ describe("no Mac", () => {
     inOrder(w.calls(), [
       "brew install colima docker docker-compose",
       "brew services start colima",
-      "gh release download",
+      download("v1.2.3"),
       "docker compose up -d",
     ]);
     const { done } = checklist(r.stdout);
@@ -108,7 +105,7 @@ describe("no Mac", () => {
       const r = await w.run(installer, [], { env: SETUP_ENV, answers });
       expect(r.code, r.output).not.toBe(0);
       expect(r.stderr).toContain("Docker Desktop, OrbStack ou Colima");
-      expect(w.calls().filter((c) => /^(brew|gh release|launchctl)/.test(c))).toEqual([]);
+      expect(w.calls().filter((c) => /^(brew|curl|launchctl)/.test(c))).toEqual([]);
       expect(existsSync(w.installDir)).toBe(false);
     }
   });
@@ -136,7 +133,7 @@ describe("no Mac", () => {
     const r = await w.run(installer, [], { env: SETUP_ENV, answers: ["s"] });
     expect(r.code, r.output).not.toBe(0);
     expect(r.stderr).toContain("https://brew.sh");
-    expect(w.calls().filter((c) => /^(gh release|launchctl)/.test(c))).toEqual([]);
+    expect(w.calls().filter((c) => /^(curl|launchctl)/.test(c))).toEqual([]);
   });
 
   test("com o OrbStack instalado e parado: pergunta, abre o OrbStack e espera o Docker", async () => {
@@ -149,7 +146,7 @@ describe("no Mac", () => {
 
     const r = await w.run(installer, [], { env: SETUP_ENV, answers: ["s"] });
     expect(r.code, r.output).toBe(0);
-    inOrder(w.calls(), ["open -a OrbStack", "docker info", "gh release download"]);
+    inOrder(w.calls(), ["open -a OrbStack", "docker info", download("v1.2.3")]);
     expect(w.calls().filter((c) => c.startsWith("brew "))).toEqual([]);
     expect(checklist(r.stdout).todo).toContain("OrbStack");
   });
@@ -190,9 +187,8 @@ describe("no Linux", () => {
       "curl -fsSL https://get.docker.com",
       "sudo sh",
       "sudo usermod -aG docker quem-instala",
-      "gh release download",
+      download("v1.2.3"),
       "sudo ",
-      "docker login ghcr.io",
       "docker compose pull",
       "docker compose up -d",
     ]);
@@ -215,7 +211,7 @@ describe("no Linux", () => {
     const r = await w.run(installer, [], { env: SETUP_ENV, answers: ["n"] });
     expect(r.code, r.output).not.toBe(0);
     expect(r.stderr).toContain("https://docs.docker.com/engine/install/");
-    expect(w.calls().filter((c) => /^(curl|sudo|gh release)/.test(c))).toEqual([]);
+    expect(w.calls().filter((c) => /^(curl|sudo)/.test(c))).toEqual([]);
   });
 
   test("com o Docker parado: pergunta e o inicia e habilita no boot", async () => {
@@ -225,8 +221,8 @@ describe("no Linux", () => {
 
     const r = await w.run(installer, [], { env: SETUP_ENV, answers: ["s"] });
     expect(r.code, r.output).toBe(0);
-    inOrder(w.calls(), ["sudo systemctl enable --now docker", "gh release download"]);
-    expect(w.calls().filter((c) => c.startsWith("curl"))).toEqual([]);
+    inOrder(w.calls(), ["sudo systemctl enable --now docker", download("v1.2.3")]);
+    expect(w.calls().filter((c) => c.startsWith("curl -fsSL https://get.docker.com"))).toEqual([]);
   });
 
   test("com o Docker sem o Compose: instala o plugin", async () => {
@@ -237,41 +233,31 @@ describe("no Linux", () => {
 
     const r = await w.run(installer, ["--yes"], { env: SETUP_ENV });
     expect(r.code, r.output).toBe(0);
-    inOrder(w.calls(), ["sudo apt-get install -y docker-compose-plugin", "gh release download"]);
+    inOrder(w.calls(), ["sudo apt-get install -y docker-compose-plugin", download("v1.2.3")]);
     expect(checklist(r.stdout).done).toContain("O Docker sobe com o computador");
   });
 });
 
 describe("em qualquer sistema", () => {
-  test("sem o gh logado: para antes de tudo e diz como logar", async () => {
+  test("sem o curl: para antes de tudo e diz o que falta", async () => {
     const w = await world();
     const installer = await w.release("1.2.3");
-    w.set("gh-logged-out");
+    w.hide("curl");
 
     const r = await w.run(installer, [], { env: SETUP_ENV });
     expect(r.code).not.toBe(0);
-    expect(r.stderr).toContain("gh auth login");
-    expect(w.calls()).toEqual(["uname -s", "gh auth status"]);
+    expect(r.stderr).toContain("falta o curl");
+    expect(w.calls()).toEqual(["uname -s"]);
   });
 
-  test("sem o gh instalado: diz onde baixar", async () => {
+  test("uma release que não existe: diz o endereço que falhou e não cria a Instalação", async () => {
     const w = await world();
     const installer = await w.release("1.2.3");
-    w.hide("gh");
 
-    const r = await w.run(installer, [], { env: SETUP_ENV });
+    const r = await w.run(installer, ["--version", "v9.9.9"], { env: SETUP_ENV });
     expect(r.code).not.toBe(0);
-    expect(r.stderr).toContain("https://cli.github.com");
-  });
-
-  test("com o gh sem read:packages: pede a permissão antes do docker login", async () => {
-    const w = await world();
-    const installer = await w.release("1.2.3");
-    w.set("gh-scopes", "'gist', 'read:org', 'repo'");
-
-    const r = await w.run(installer, [], { env: SETUP_ENV });
-    expect(r.code, r.output).toBe(0);
-    inOrder(w.calls(), ["gh auth refresh -h github.com -s read:packages", "docker login ghcr.io"]);
+    expect(r.stderr).toContain("releases/download/v9.9.9/shearim-compose.tar.gz");
+    expect(existsSync(w.installDir)).toBe(false);
   });
 
   test("com a tailnet sem MagicDNS e HTTPS: não sobe o app, e o checklist mostra o que falta", async () => {
@@ -311,11 +297,13 @@ describe("em qualquer sistema", () => {
 
     const latest = await w.run(fromRepo, [], { env: SETUP_ENV });
     expect(latest.code, latest.output).toBe(0);
-    expect(w.calls()).toContain("gh release view --repo rfl-designer/shearim --json tagName --jq .tagName");
+    expect(w.calls().some((c) => c.startsWith(download()))).toBe(true);
+    expect(latest.stdout).toContain("ok: release v1.3.0");
     expect(readFileSync(join(w.installDir, "compose.yaml"), "utf8")).toContain(composeTag("1.3.0"));
 
     const pinned = await w.run(fromRepo, ["--version", "v1.2.3", "--dir", join(w.root, "outra")], { env: SETUP_ENV });
     expect(pinned.code, pinned.output).toBe(0);
+    expect(w.calls().some((c) => c.startsWith(download("v1.2.3")))).toBe(true);
     expect(readFileSync(join(w.root, "outra/compose.yaml"), "utf8")).toContain(composeTag("1.2.3"));
   });
 

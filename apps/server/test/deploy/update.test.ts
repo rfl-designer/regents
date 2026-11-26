@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { composeTag, SETUP_ENV, type World, world } from "./world";
+import { composeTag, download, SETUP_ENV, type World, world } from "./world";
 
 async function installed(version = "1.2.3") {
   const w = await world();
@@ -32,20 +32,18 @@ describe("deploy/update.sh", () => {
     expect(r.code, r.output).toBe(0);
 
     const calls = callsSince(w, n);
-    const order = [
-      "gh release download v1.3.0",
-      "docker compose config -q",
-      "docker login ghcr.io",
-      "docker compose pull",
-      "docker compose up -d",
-    ].map((want) => calls.findIndex((c) => c.startsWith(want)));
+    const order = [download(), "docker compose config -q", "docker compose pull", "docker compose up -d"].map((want) =>
+      calls.findIndex((c) => c.startsWith(want)),
+    );
     expect(
       order.every((i) => i >= 0),
       calls.join("\n"),
     ).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     // Nem setup de novo, nem nada instalado.
-    expect(calls.filter((c) => /^(brew|sudo|curl|launchctl)|up -d tailscale/.test(c))).toEqual([]);
+    expect(
+      calls.filter((c) => /^(brew|sudo|launchctl|curl -fsSL https:\/\/get)|up -d tailscale|docker login/.test(c)),
+    ).toEqual([]);
 
     expect(compose(w)).toContain(composeTag("1.3.0"));
     expect(snapshot(w)).toEqual(before);
@@ -58,6 +56,7 @@ describe("deploy/update.sh", () => {
 
     const r = await w.run(join(w.installDir, "deploy/update.sh"), ["v1.2.4"]);
     expect(r.code, r.output).toBe(0);
+    expect(w.calls().some((c) => c.startsWith(download("v1.2.4")))).toBe(true);
     expect(compose(w)).toContain(composeTag("1.2.4"));
   });
 

@@ -1,19 +1,24 @@
 /**
  * A máquina de quem instala, de mentira, para os testes do instalador e da atualização: os dublês
- * de `uname`, `gh`, `docker`, `launchctl`, `pmset`, `defaults`, `sleep`, mais as releases que o `gh`
- * "baixa" (empacotadas pelo `deploy/release.sh` de verdade).
+ * de `uname`, `curl`, `docker`, `launchctl`, `pmset`, `defaults`, `sleep`, mais as releases que o
+ * `curl` "baixa" das releases públicas (empacotadas pelo `deploy/release.sh` de verdade). Não há
+ * `gh`: o instalador não precisa de conta no GitHub.
  *
  * O estado mora em arquivos de `s.state`, que o teste muda antes de rodar o script:
  * `os` (Darwin/Linux), `docker-up` (o Docker responde), `docker-os` (o que `docker info` diz),
- * `tailnet.json` (o `tailscale status --json` do sidecar), `health` (do app), `gh-logged-out`,
- * `gh-scopes`, `latest` (a última release), `releases/<tag>/` (os assets).
+ * `tailnet.json` (o `tailscale status --json` do sidecar), `health` (do app), `latest` (a última
+ * release), `releases/<tag>/` (os assets).
  */
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { REPO_ROOT, type Sandbox, sandbox } from "./sandbox";
 
 export const RELEASE_SCRIPT = join(REPO_ROOT, "deploy/release.sh");
-export const TOKEN = "gho_tokenfalso";
+/** As releases públicas, de onde o instalador baixa. */
+export const RELEASES = "https://github.com/rfl-designer/shearim/releases";
+/** A chamada que baixa o compose da release `tag` (sem tag: a última). */
+export const download = (tag?: string) =>
+  `curl -fsSL ${RELEASES}/${tag ? `download/${tag}` : "latest/download"}/shearim-compose.tar.gz`;
 
 export type Tailnet = { magicDNS?: boolean; https?: boolean; tagged?: boolean; running?: boolean };
 
@@ -40,7 +45,7 @@ export type World = Sandbox & {
   set(file: string, content?: string): void;
   /** Tira o dublê do PATH (o comando "não está instalado"); o `brew install` o devolve. */
   hide(name: string): void;
-  /** Empacota a versão com o deploy/release.sh e a deixa para o `gh release download`. */
+  /** Empacota a versão com o deploy/release.sh e a deixa para o `curl` baixar. */
   release(version: string): Promise<string>;
   installDir: string;
 };
@@ -54,26 +59,6 @@ export async function world({ os = "Darwin" }: { os?: "Darwin" | "Linux" } = {})
 
   s.fake("uname", `case "$1" in -m) echo arm64 ;; *) cat "$STATE/os" ;; esac`);
   s.fake("sleep");
-  s.fake(
-    "gh",
-    `case "$*" in
-  "auth status"*)
-    if [ -f "$STATE/gh-logged-out" ]; then echo "You are not logged into any GitHub hosts. To log in, run: gh auth login" >&2; exit 1; fi
-    echo "github.com"
-    echo "  ✓ Logged in to github.com account rafa (keyring)"
-    if [ -f "$STATE/gh-scopes" ]; then scopes=$(cat "$STATE/gh-scopes"); else scopes="'gist', 'read:org', 'read:packages', 'repo'"; fi
-    echo "  - Token scopes: $scopes" ;;
-  "auth token") echo ${TOKEN} ;;
-  "auth refresh"*) echo "'read:packages', 'repo'" >"$STATE/gh-scopes" ;;
-  "api user --jq .login") echo rafa ;;
-  "release view"*) if [ -f "$STATE/latest" ]; then cat "$STATE/latest"; else echo v1.2.3; fi ;;
-  "release download"*)
-    tag=$3 dir=.
-    while [ $# -gt 0 ]; do [ "$1" = --dir ] && dir=$2; shift; done
-    cp "$STATE/releases/$tag/shearim-compose.tar.gz" "$dir/" 2>/dev/null || { echo "release not found" >&2; exit 1; } ;;
-  *) echo "gh falso: não sei responder a $*" >&2; exit 1 ;;
-esac`,
-  );
   s.fake(
     "docker",
     `up() {
@@ -118,12 +103,21 @@ esac`,
   s.fake("open", `case "$*" in "-a OrbStack"|"-a Docker") touch "$STATE/docker-up" ;; *) exit 1 ;; esac`);
   // Linux
   s.fake("sudo", `AS_ROOT=1 exec "$@"`);
+  // O script oficial do Docker e as releases públicas; o resto é 404 (o `-f` sai com 22).
   s.fake(
     "curl",
     `out="" url=""
 while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift ;; -*) ;; *) url=$1 ;; esac; shift; done
-[ "$url" = https://get.docker.com ] || exit 22
-cp "$STATE/get-docker.sh" "$out"`,
+case "$url" in
+  https://get.docker.com) cp "$STATE/get-docker.sh" "$out" ;;
+  ${RELEASES}/latest/download/*)
+    if [ -f "$STATE/latest" ]; then tag=$(cat "$STATE/latest"); else tag=v1.2.3; fi
+    cp "$STATE/releases/$tag/\${url##*/}" "$out" 2>/dev/null || { echo "curl: (22) 404" >&2; exit 22; } ;;
+  ${RELEASES}/download/*)
+    rest=\${url#${RELEASES}/download/}
+    cp "$STATE/releases/\${rest%%/*}/\${rest#*/}" "$out" 2>/dev/null || { echo "curl: (22) 404" >&2; exit 22; } ;;
+  *) echo "curl: (22) 404" >&2; exit 22 ;;
+esac`,
   );
   s.fake(
     "systemctl",

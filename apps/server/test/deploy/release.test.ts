@@ -1,6 +1,6 @@
 /**
  * O empacotamento da release (`deploy/release.sh`, rodado pelo workflow de release): o que o
- * instalador e a atualização baixam com o `gh`. Spec, módulo 13 ("Imagem" e "Distribuição").
+ * instalador e a atualização baixam com o `curl`, das releases públicas. Spec, módulo 13 ("Imagem" e "Distribuição").
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
