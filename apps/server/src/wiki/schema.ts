@@ -14,7 +14,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { members } from "../db/schema";
+import { channels, members } from "../db/schema";
 
 // As tabelas da Wiki (spec #74, ADR 0014 e 0015). Reexportadas por `db/schema.ts`, para o
 // drizzle-kit e o `schema` do cliente as verem.
@@ -193,4 +193,22 @@ export const wikiPageSources = pgTable(
       .references(() => wikiSources.id, { onDelete: "cascade" }),
   },
   (t) => [primaryKey({ columns: [t.pageId, t.sourceId] })],
+);
+
+/**
+ * A ligação de uma Wiki a um Canal (#81): todo Agente que responde no Canal (a Articuladora
+ * inclusive) a consulta ali, dentro do alcance dela. Some com a Wiki.
+ */
+export const wikiChannels = pgTable(
+  "wiki_channels",
+  {
+    wikiId: uuid()
+      .notNull()
+      .references(() => wikis.id, { onDelete: "cascade" }),
+    channelId: uuid()
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    linkedAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.wikiId, t.channelId] }), index().on(t.channelId)],
 );

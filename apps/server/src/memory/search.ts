@@ -41,7 +41,7 @@ export const SEARCH_MEMORY: AutomaticTool = {
     required: ["texto"],
     additionalProperties: false,
   },
-  presentFor: (db, agentId) => remembersNow(db, agentId),
+  presentFor: (db, run) => remembersNow(db, run.agentId),
   async run({ db, run }, raw) {
     const args = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
     const text = typeof args.texto === "string" ? args.texto.trim() : "";

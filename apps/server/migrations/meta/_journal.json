@@ -267,6 +267,13 @@
       "when": 1795657884293,
       "tag": "0037_sincronizacao",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1795660630821,
+      "tag": "0038_wiki-nos-canais",
+      "breakpoints": true
     }
   ]
 }

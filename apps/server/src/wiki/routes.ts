@@ -1,8 +1,9 @@
 import type { CreateWikiInput } from "@shearim/contracts";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
-import type { Db } from "../db/client";
+import { type Db, isUuid } from "../db/client";
 import { adminOnly, type Env } from "../members";
+import { channelForLink, linkWikiToChannel, unlinkWikiFromChannel, wikiChannelsFor } from "./reach";
 import { addSources, DEFAULT_SOURCE_MAX_BYTES, listSources, readUploads } from "./sources";
 import type { WikiSyncs } from "./sync";
 import { listVersions, pageDtos, versionNumbered } from "./versions";
@@ -90,6 +91,30 @@ export function wikiRoutes(deps: { db: Db; clock: Clock; syncs: WikiSyncs; sourc
     if (!version) return c.json({ error: "not_found" }, 404);
     return c.json(await pageDtos(db, version));
   });
+
+  /**
+   * As ligações da Wiki a Canais (#81): os Canais que o Admin vê, com a marca de ligado. Todo Agente
+   * que responde num Canal ligado (a Articuladora inclusive) consulta a Wiki ali, dentro do alcance.
+   */
+  routes.get("/wikis/:id/channels", adminOnly, async (c) => {
+    const wiki = await findWiki(db, c.req.param("id"));
+    if (!wiki) return c.json({ error: "not_found" }, 404);
+    return c.json(await wikiChannelsFor(db, wiki.id, c.get("member").id));
+  });
+
+  /** Liga (`PUT`) ou desliga (`DELETE`) a Wiki de um Canal; vale na próxima resposta ali. */
+  for (const method of ["put", "delete"] as const) {
+    routes[method]("/wikis/:id/channels/:channel", adminOnly, async (c) => {
+      const me = c.get("member").id;
+      const wiki = await findWiki(db, c.req.param("id"));
+      const channelId = c.req.param("channel");
+      const channel = wiki && isUuid(channelId) ? await channelForLink(db, channelId, me) : undefined;
+      if (!wiki || !channel) return c.json({ error: "not_found" }, 404);
+      if (method === "put") await linkWikiToChannel(db, wiki.id, channel.id, clock.now());
+      else await unlinkWikiFromChannel(db, wiki.id, channel.id);
+      return c.json(await wikiChannelsFor(db, wiki.id, me));
+    });
+  }
 
   return routes;
 }
