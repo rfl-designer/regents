@@ -38,37 +38,39 @@ deploy/release.sh 1.2.3 dist   # empacota a release (o workflow de release roda;
 
 ### Variáveis do servidor
 
+O servidor lê `REGENTS_<sufixo>`. O nome antigo, `SHEARIM_<sufixo>`, ainda vale como reserva: sem a `REGENTS_*`, ele lê a `SHEARIM_*` e escreve no log, uma vez, o nome novo. Com as duas, vale a `REGENTS_*`, e o log diz isso.
+
 | Variável | Padrão | Para quê |
 |---|---|---|
-| `SHEARIM_IDENTITY` | (obrigatória) | `tailnet` (o `whois` da LocalAPI; é o da imagem) ou `dev` (cookie). |
-| `TS_SOCKET` | `/var/run/tailscale/tailscaled.sock` | Socket do tailscaled, com `SHEARIM_IDENTITY=tailnet`. |
-| `DATABASE_URL` | (vazia) | Postgres. Vazia: PGlite em `SHEARIM_PGLITE_DIR`. |
+| `REGENTS_IDENTITY` | (obrigatória) | `tailnet` (o `whois` da LocalAPI; é o da imagem) ou `dev` (cookie). |
+| `TS_SOCKET` | `/var/run/tailscale/tailscaled.sock` | Socket do tailscaled, com `REGENTS_IDENTITY=tailnet`. |
+| `DATABASE_URL` | (vazia) | Postgres. Vazia: PGlite em `REGENTS_PGLITE_DIR`. |
 | `DATABASE_PASSWORD_FILE` | (vazia) | Arquivo com a senha do Postgres, à parte da URL (o segredo do compose). |
-| `SHEARIM_PGLITE_DIR` | `.data/pglite` | Pasta do PGlite de desenvolvimento. `memory://`: em memória, some ao parar (o e2e usa). |
+| `REGENTS_PGLITE_DIR` | `.data/pglite` | Pasta do PGlite de desenvolvimento. `memory://`: em memória, some ao parar (o e2e usa). |
 | `HOST` / `PORT` | `0.0.0.0` / `3000` | Onde escutar (`bun run dev` usa `127.0.0.1`). |
-| `SHEARIM_WEB_DIST` | `apps/web/dist` | Build do PWA servido em `/`. |
-| `SHEARIM_CLAUDE_BIN` | `claude` do `PATH` | O binário do Claude Code das Contas (ADR 0005) e das execuções pela Conta (ADR 0006). Sem ele, "Ligar minha Conta" mostra o erro na tela. Na imagem, `/usr/local/bin/claude`, fixado em `CLAUDE_CODE_VERSION` no `Dockerfile`, com `DISABLE_AUTOUPDATER=1`. |
-| `SHEARIM_ACCOUNTS_DIR` | `.data/accounts` | Pasta-raiz das Contas: uma pasta de `CLAUDE_CONFIG_DIR` por login, fora do backup (no compose, o volume `contas`). O Shearim nunca lê o que há dentro. |
-| `SHEARIM_MASTER_KEY_FILE` | `.data/secrets/master_key` | A chave mestra (32 bytes em hex, como o `deploy/setup.sh` grava, ou em base64), que cifra a Chave do Workspace. No compose, `/run/secrets/master_key`. Sem a variável, o arquivo padrão é gerado se faltar (só desenvolvimento); com ela, o arquivo tem que existir. Com outra chave mestra, o Admin grava a Chave de novo. |
-| `SHEARIM_ANTHROPIC_BASE_URL` | (a da Anthropic) | Onde fica a Messages API. O e2e aponta para a falsa. |
-| `SHEARIM_GITHUB_URL`, `SHEARIM_GITHUB_API_URL` | `https://github.com`, `https://api.github.com` | Onde fica o GitHub (a web e a API). O e2e aponta para o falso. |
-| `SHEARIM_BACKUPS_DIR` | `.data/backups` | `./backups`: dumps de antes de migrar e de restaurar, e os backups noturnos. No compose, `/backups`. |
-| `SHEARIM_BACKUP_AT` | `03:00` | Hora do backup noturno (comando `backup`), na hora local do container (`TZ`). |
-| `SHEARIM_PG_BIN_DIR` | (o `PATH`) | Pasta do `pg_dump`/`pg_restore`. |
-| `SHEARIM_PROXY_HOST` | `tailscale` | Com `SHEARIM_IDENTITY=tailnet`, o nome do sidecar na rede do compose: só uma conexão vinda dele tem o `X-Forwarded-For` lido (ADR 0008). |
-| `SHEARIM_VERSION` | `dev` | A versão na seção Instalação (a imagem traz a tag). |
-| `SHEARIM_VAPID_CONTACT` | `mailto:shearim@example.com` (só dev) | O `sub` do VAPID do push: `mailto:` com domínio real (a Apple recusa `localhost`). O `deploy/setup.sh` grava no `.env`. |
-| `SHEARIM_MAX_PER_ACCOUNT` | `2` | Respostas ao mesmo tempo pela Conta de um Membro (o roteamento fica fora). No compose, vem do `.env`. |
-| `SHEARIM_MAX_ON_KEY` | `4` | Execuções ao mesmo tempo pela Chave do Workspace (roteamento incluso). |
-| `SHEARIM_TOOL_TIMEOUT_S` | `60` | Prazo de uma chamada de Ferramenta sem prazo próprio (ADR 0003): estourado, vira falha da Ferramenta com motivo e a resposta segue. |
-| `SHEARIM_TOOL_MAX_TURNS` | `20` | Teto de turnos de Ferramenta de uma resposta: ao chegar nele, o Agente responde com o que tem, numa última chamada sem Ferramentas, e o Andamento mostra "parou no limite de Ferramentas". A continuação de um Pedido de aprovação conta do zero. |
-| `SHEARIM_APPROVAL_TTL_H` | `24` | Horas (aceita fração, ex. `0.5`) até um Pedido de aprovação sem decisão expirar (ADR 0011): o Andamento termina em "a aprovação expirou", sem continuação. |
-| `SHEARIM_MEMORY_MODEL` | `claude-haiku-5-5` | O modelo pequeno da extração da Memória (ADR 0013): a chamada curta que, depois de entregue a resposta de um Agente, lê a troca e guarda na Memória da Conversa o que uma pessoa disse. Um dos modelos aceitos dos Agentes. |
-| `SHEARIM_MEMORY_SUMMARY_CHARS` | `4000` | O orçamento, em caracteres, do resumo da Memória que entra em toda resposta de Agente. Passando dele, entram os itens mais recentes, e o resto fica de fora. |
-| `SHEARIM_WIKI_SOURCE_MAX_MB` | `5` | O tamanho máximo de uma Fonte da Wiki, em MB (1 MB = 1.000.000 bytes; aceita fração). Um arquivo maior é recusado na subida, com o motivo. |
-| `SHEARIM_WIKI_SYNC_MAX_TURNS` | `40` | O teto de turnos de Ferramenta de cada chamada da Sincronização da Wiki (uma por Fonte). No teto, a última chamada vai sem Ferramentas. |
-| `SHEARIM_WIKI_PART_MAX_CHARS` | `40000` | O tamanho de parte de uma Fonte da Wiki, em caracteres. Uma Fonte maior vai em partes, uma chamada da Sincronização por parte, com o corte na última quebra de parágrafo ou de título antes do limite. |
-| `SHEARIM_MAX_PROCESSES` | `8` | Processos `claude -p` ao mesmo tempo no host: todas as execuções pela Conta, roteamento incluso. Valor que não é inteiro maior que zero impede a subida. |
+| `REGENTS_WEB_DIST` | `apps/web/dist` | Build do PWA servido em `/`. |
+| `REGENTS_CLAUDE_BIN` | `claude` do `PATH` | O binário do Claude Code das Contas (ADR 0005) e das execuções pela Conta (ADR 0006). Sem ele, "Ligar minha Conta" mostra o erro na tela. Na imagem, `/usr/local/bin/claude`, fixado em `CLAUDE_CODE_VERSION` no `Dockerfile`, com `DISABLE_AUTOUPDATER=1`. |
+| `REGENTS_ACCOUNTS_DIR` | `.data/accounts` | Pasta-raiz das Contas: uma pasta de `CLAUDE_CONFIG_DIR` por login, fora do backup (no compose, o volume `contas`). O Shearim nunca lê o que há dentro. |
+| `REGENTS_MASTER_KEY_FILE` | `.data/secrets/master_key` | A chave mestra (32 bytes em hex, como o `deploy/setup.sh` grava, ou em base64), que cifra a Chave do Workspace. No compose, `/run/secrets/master_key`. Sem a variável, o arquivo padrão é gerado se faltar (só desenvolvimento); com ela, o arquivo tem que existir. Com outra chave mestra, o Admin grava a Chave de novo. |
+| `REGENTS_ANTHROPIC_BASE_URL` | (a da Anthropic) | Onde fica a Messages API. O e2e aponta para a falsa. |
+| `REGENTS_GITHUB_URL`, `REGENTS_GITHUB_API_URL` | `https://github.com`, `https://api.github.com` | Onde fica o GitHub (a web e a API). O e2e aponta para o falso. |
+| `REGENTS_BACKUPS_DIR` | `.data/backups` | `./backups`: dumps de antes de migrar e de restaurar, e os backups noturnos. No compose, `/backups`. |
+| `REGENTS_BACKUP_AT` | `03:00` | Hora do backup noturno (comando `backup`), na hora local do container (`TZ`). |
+| `REGENTS_PG_BIN_DIR` | (o `PATH`) | Pasta do `pg_dump`/`pg_restore`. |
+| `REGENTS_PROXY_HOST` | `tailscale` | Com `REGENTS_IDENTITY=tailnet`, o nome do sidecar na rede do compose: só uma conexão vinda dele tem o `X-Forwarded-For` lido (ADR 0008). |
+| `REGENTS_VERSION` | `dev` | A versão na seção Instalação (a imagem traz a tag). |
+| `REGENTS_VAPID_CONTACT` | `mailto:shearim@example.com` (só dev) | O `sub` do VAPID do push: `mailto:` com domínio real (a Apple recusa `localhost`). O `deploy/setup.sh` grava no `.env`. |
+| `REGENTS_MAX_PER_ACCOUNT` | `2` | Respostas ao mesmo tempo pela Conta de um Membro (o roteamento fica fora). No compose, vem do `.env`. |
+| `REGENTS_MAX_ON_KEY` | `4` | Execuções ao mesmo tempo pela Chave do Workspace (roteamento incluso). |
+| `REGENTS_TOOL_TIMEOUT_S` | `60` | Prazo de uma chamada de Ferramenta sem prazo próprio (ADR 0003): estourado, vira falha da Ferramenta com motivo e a resposta segue. |
+| `REGENTS_TOOL_MAX_TURNS` | `20` | Teto de turnos de Ferramenta de uma resposta: ao chegar nele, o Agente responde com o que tem, numa última chamada sem Ferramentas, e o Andamento mostra "parou no limite de Ferramentas". A continuação de um Pedido de aprovação conta do zero. |
+| `REGENTS_APPROVAL_TTL_H` | `24` | Horas (aceita fração, ex. `0.5`) até um Pedido de aprovação sem decisão expirar (ADR 0011): o Andamento termina em "a aprovação expirou", sem continuação. |
+| `REGENTS_MEMORY_MODEL` | `claude-haiku-5-5` | O modelo pequeno da extração da Memória (ADR 0013): a chamada curta que, depois de entregue a resposta de um Agente, lê a troca e guarda na Memória da Conversa o que uma pessoa disse. Um dos modelos aceitos dos Agentes. |
+| `REGENTS_MEMORY_SUMMARY_CHARS` | `4000` | O orçamento, em caracteres, do resumo da Memória que entra em toda resposta de Agente. Passando dele, entram os itens mais recentes, e o resto fica de fora. |
+| `REGENTS_WIKI_SOURCE_MAX_MB` | `5` | O tamanho máximo de uma Fonte da Wiki, em MB (1 MB = 1.000.000 bytes; aceita fração). Um arquivo maior é recusado na subida, com o motivo. |
+| `REGENTS_WIKI_SYNC_MAX_TURNS` | `40` | O teto de turnos de Ferramenta de cada chamada da Sincronização da Wiki (uma por Fonte). No teto, a última chamada vai sem Ferramentas. |
+| `REGENTS_WIKI_PART_MAX_CHARS` | `40000` | O tamanho de parte de uma Fonte da Wiki, em caracteres. Uma Fonte maior vai em partes, uma chamada da Sincronização por parte, com o corte na última quebra de parágrafo ou de título antes do limite. |
+| `REGENTS_MAX_PROCESSES` | `8` | Processos `claude -p` ao mesmo tempo no host: todas as execuções pela Conta, roteamento incluso. Valor que não é inteiro maior que zero impede a subida. |
 
 ## Layout
 
@@ -561,10 +563,39 @@ sh ~/regents/deploy/update.sh            # atualizar para a última release (ou:
 - **Docker no Mac:** usa o que responde (Docker Desktop, OrbStack ou Colima). Parado, pergunta e abre (`open -a OrbStack`/`open -a Docker`, `brew services start colima`). Sem nenhum, pergunta e instala o Colima com o Homebrew (`brew install colima docker docker-compose` e `brew services start colima`, que o sobe a cada login); sem Homebrew, para e aponta https://brew.sh.
 - **Mac acordado:** o LaunchAgent `~/Library/LaunchAgents/com.regents.acordado.plist` roda `/usr/bin/caffeinate -i -t 600` enquanto o `docker info` responde (e espera 60 s quando não). O instalador não muda nenhuma configuração de energia: só lê (`pmset -g`, `defaults read`).
 - **Checklist "Mantê-lo rodando"** no fim, com `[x]` no que o terminal verificou: Docker no login/boot (Colima pelo `brew services`, Docker Desktop pelo `AutoStart` do `settings-store.json`, Linux pelo `systemctl is-enabled docker`; OrbStack não dá para ver), Mac acordado (o LaunchAgent carregado), religar depois de falta de luz (`autorestart` do `pmset`; no Linux é a BIOS), login automático no Mac, suspensão mascarada no Linux, containers que voltam sozinhos, MagicDNS e HTTPS (do setup), o app respondendo e a cópia de `./backups` + `./secrets` (nunca marcada). Com a tailnet sem MagicDNS ou HTTPS, o app não sobe, o checklist mostra o que falta e o instalador sai 1.
-- **Atualização** (`deploy/update.sh [vX.Y.Z]`, que é o `install.sh --update`): baixa o compose da release (troca `compose.yaml` e `deploy/`; `.env`, `./secrets` e `./backups` ficam), confere com `docker compose config -q` (se o compose novo não fecha com o `.env`, volta o de antes e não reinicia nada) e roda `docker compose pull && docker compose up -d`. Avisa quando o `.env` fixa `REGENTS_VERSION` (aí sobe essa versão, não a da release). Mudanças à mão no `compose.yaml` se perdem: configuração só no `.env`.
+- **Atualização** (`deploy/update.sh [vX.Y.Z]`, que é o `install.sh --update`): baixa o compose da release (troca `compose.yaml` e `deploy/`; `.env`, `./secrets` e `./backups` ficam), confere com `docker compose config -q` (se o compose novo não fecha com o `.env`, volta o de antes e não reinicia nada) e roda `docker compose pull && docker compose up -d`. Avisa quando o `.env` fixa `REGENTS_VERSION` (aí sobe essa versão, não a da release). Mudanças à mão no `compose.yaml` se perdem: configuração só no `.env`. Numa Instalação que ainda é Shearim, a atualização faz antes a [migração do nome](#migração-do-nome-spec-96).
 - **Imagem e release** (`.github/workflows/release.yml`, numa tag `vX.Y.Z`): a imagem vai para `ghcr.io/rfl-designer/shearim:X.Y.Z` (amd64 e arm64), nunca `latest`, com `SHEARIM_VERSION=X.Y.Z`. O pacote no GHCR é público (Package settings › Change visibility), senão o `docker compose pull` de quem instala falha; o Claude Code fica fixado nela (`CLAUDE_CODE_VERSION` no `Dockerfile`, `DISABLE_AUTOUPDATER=1`). O `deploy/release.sh X.Y.Z dist` gera o `regents-compose.tar.gz` (o `compose.yaml` com `${REGENTS_VERSION:-X.Y.Z}` e sem `build:`, e o `deploy/`), uma cópia dele com o nome `shearim-compose.tar.gz` (a que o updater antigo baixa) e o `install.sh` com a tag; recusa `latest`. Sidecar e Postgres ficam fixados por versão e digest no compose.
-- **Testes** (`apps/server/test/deploy/`, no `bun run test`): rodam os scripts de verdade com `/bin/sh`, numa caixa de areia (`sandbox.ts`) com PATH fechado: os dublês de comando (`docker`, `brew`, `colima`, `open`, `launchctl`, `pmset`, `defaults`, `uname`, `sudo`, `curl`, `systemctl`, `apt-get`, `sleep`) e poucos utilitários inofensivos; qualquer outro comando dá "not found". `world.ts` monta a máquina de mentira (estado em arquivos, releases empacotadas pelo `release.sh` de verdade, que o dublê do `curl` serve nos endereços das releases públicas; não há `gh`). As variáveis `REGENTS_TTY` (de onde vêm as respostas), `REGENTS_EXTRA_PATH`, `REGENTS_APPLICATIONS` e `REGENTS_WAIT_SECONDS` existem para isso. O dublê do `docker compose config` confere as variáveis obrigatórias (`${VAR:?...}`) do compose contra o `.env`; com o `docker` instalado, os testes da Instalação nova rodam também o `docker compose config` de verdade (sem o daemon). O `shellcheck` dos scripts roda no mesmo arquivo (pulado sem o `shellcheck` instalado).
+- **Testes** (`apps/server/test/deploy/`, no `bun run test`): rodam os scripts de verdade com `/bin/sh`, numa caixa de areia (`sandbox.ts`) com PATH fechado: os dublês de comando (`docker`, `brew`, `colima`, `open`, `launchctl`, `pmset`, `defaults`, `uname`, `sudo`, `curl`, `systemctl`, `apt-get`, `sleep`) e poucos utilitários inofensivos; qualquer outro comando dá "not found". `world.ts` monta a máquina de mentira (estado em arquivos, releases empacotadas pelo `release.sh` de verdade, que o dublê do `curl` serve nos endereços das releases públicas; não há `gh`). As variáveis `REGENTS_TTY` (de onde vêm as respostas), `REGENTS_EXTRA_PATH`, `REGENTS_APPLICATIONS` e `REGENTS_WAIT_SECONDS` existem para isso. No dublê do `docker`, cada volume é uma pasta, e o `docker run` roda o `sh -c` nas pastas dos volumes montados. O dublê do `docker compose config` confere as variáveis obrigatórias (`${VAR:?...}`) do compose contra o `.env`; com o `docker` instalado, os testes da Instalação nova rodam também o `docker compose config` de verdade (sem o daemon). O `shellcheck` dos scripts roda no mesmo arquivo (pulado sem o `shellcheck` instalado).
 - **Smoke manual:** instalar num Mac (com Docker Desktop ou OrbStack, e num sem Docker, aceitando o Colima) e num Linux sem Docker; conferir o checklist, que o Mac não dorme (`pmset -g assertions` mostra o `caffeinate`) e que a URL abre; depois, publicar uma segunda tag e rodar `deploy/update.sh` (o `.env` e `./secrets` iguais, a seção Instalação com a versão nova).
+
+### Migração do nome (Spec #96)
+
+O produto se chamava Shearim (ADR 0016). Uma Instalação que ainda é Shearim passa a ser Regents na primeira atualização com o instalador novo, uma vez, sem perder dados e com a mesma URL. Na pasta da Instalação, que fica onde está (por exemplo, `~/shearim`):
+
+```sh
+curl -fsSL https://github.com/rfl-designer/regents/releases/latest/download/install.sh | sh -s -- --update --dir ~/shearim
+```
+
+- **Quando ela acontece:** o `.env` tem `SHEARIM_*` e não tem `REGENTS_*`, ou existe o volume `shearim_pgdata` e não existe `regents_pgdata`. Sem nenhum desses sinais, a atualização é a de sempre. Depois da migração, as atualizações são as de sempre (`sh deploy/update.sh`).
+- **Antes de mudar algo**, o instalador mostra o que muda (o `.env`, os volumes e o projeto do Compose) e o que fica (o hostname e a URL, a tag da tailnet e o papel e o banco do Postgres) e pede o sim. Com `--yes`, não pergunta. Com o não, ou sem terminal e sem `--yes`, nada muda.
+- **O que ela faz**, nesta ordem:
+  1. Baixa o compose da release.
+  2. Faz um backup com o Shearim ainda de pé: o `pg_dump` do Postgres da Instalação em `./backups/shearim-pre-migracao-<hora UTC>.dump`, que a retenção não apaga e o `restore` aceita.
+  3. Para o projeto `shearim` (`docker compose down`, sem `-v`: os volumes ficam).
+  4. Copia os volumes `shearim_ts-state`, `shearim_ts-socket`, `shearim_pgdata` e `shearim_contas` para `regents_<nome>` (`cp -a` como root, com o mesmo dono e as mesmas permissões, na imagem do Postgres que a Instalação já tem). Os volumes `regents_*` são criados com os rótulos do Compose do projeto `regents`.
+  5. Reescreve o `.env`: cada `SHEARIM_<sufixo>` vira `REGENTS_<sufixo>` com o mesmo valor (uma `SHEARIM_VERSION` vira `REGENTS_VERSION`, e o aviso de versão fixada continua). Entram as linhas que guardam o de antes: `TS_HOSTNAME` (o que já estava, ou `shearim`), `REGENTS_TAILNET_TAG=tag:shearim`, `REGENTS_POSTGRES_USER=shearim` e `REGENTS_POSTGRES_DB=shearim`. O `.env` de antes fica em `.env.shearim`.
+  6. No Mac, troca o LaunchAgent: sai o `com.shearim.acordado`, entra o `com.regents.acordado`.
+  7. Sobe o projeto `regents` (`docker compose pull && docker compose up -d`) e espera o app responder.
+  8. No fim, lista os volumes antigos, o comando para apagá-los e como trocar o hostname.
+- **Numa nova execução**, um volume já copiado não é copiado de novo (fica marcado em `.migracao-regents/`, pasta que sai no fim), e o `.env` novo sai sempre do `.env.shearim`, sem linha duplicada.
+- **Por que o hostname, a tag e o banco ficam:** trocar o hostname ou a tag muda a URL e a identidade do nó na tailnet. O Postgres não renomeia o papel da própria sessão, e o nome do banco não aparece para ninguém.
+- **Apagar os volumes antigos:** os `shearim_*` ficam intactos, como volta segura. Quando o Regents estiver bem (as conversas, os aparelhos e as Contas no lugar), apague-os para liberar o disco:
+
+  ```sh
+  docker volume rm shearim_ts-state shearim_ts-socket shearim_pgdata shearim_contas
+  ```
+
+- **Trocar o hostname depois:** mude `TS_HOSTNAME` no `.env` (e, para a tag, `REGENTS_TAILNET_TAG`, que tem de estar nos `tagOwners` da tailnet) e rode `docker compose up -d`. A URL muda, e param: o app na Tela de Início (instale de novo pela URL nova), as notificações push (cada aparelho liga de novo) e o GitHub App da Instalação (a URL de callback é a antiga).
 
 ### Backup, restauração e migrações (#38)
 
