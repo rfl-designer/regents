@@ -205,6 +205,7 @@ export function createApp(deps: AppDeps) {
     model,
     secrets,
     ledger,
+    accounts,
     maxToolTurns: deps.wiki?.syncMaxToolTurns,
   });
   // A volta da Conta (ou a troca da Chave, ou do orçamento) solta quem espera por ela na fila.

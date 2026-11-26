@@ -1,13 +1,13 @@
 import { WIKI_INDEX_SLUG, type WikiSyncDto, type WikiSyncStepDto } from "@shearim/contracts";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { articuladoraOf } from "../articuladora";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
 import type { EventHub } from "../events";
 import type { KeyLedger } from "../key-budget";
 import { failureReason, type Spent, STALL_MS, streamCall } from "../model/call";
-import type { ModelPort } from "../model/port";
-import { keyCallEnded, keyPayer } from "../payer";
+import type { ModelPort, Payer } from "../model/port";
+import { accountCallEnded, accountOrKey, keyCallEnded, type PayingAccounts } from "../payer";
 import type { SecretBox } from "../secrets";
 import { Draft, type DraftSource, draftTools } from "./draft";
 import { syncPrompt, syncSystem } from "./rules";
@@ -60,10 +60,9 @@ export interface WikiSyncs {
  * Fonte, pelas Ferramentas internas do rascunho (`draft.ts`); o Shearim publica a versão no fim,
  * numa transação só (`versions.ts`). O modelo é o da Articuladora, e o gasto conta no orçamento dela.
  *
- * Quem paga é decidido a cada chamada. Hoje, a Chave do Workspace (`payer.ts`); a Conta do Admin
- * que iniciou, com a Chave como reserva, vem no #80 (`accountCallEnded`, sessão MCP). A vigia de
- * cada chamada é a das execuções (`model/call.ts`); a nova tentativa, o cancelamento e o reinício
- * vêm no #86.
+ * Quem paga é decidido a cada chamada (`call`): a Conta do Admin que iniciou, com a Chave do
+ * Workspace como reserva (`payer.ts`). A vigia de cada chamada é a das execuções (`model/call.ts`);
+ * a nova tentativa, o cancelamento e o reinício vêm no #86.
  */
 export function createWikiSyncs(deps: {
   db: Db;
@@ -72,6 +71,8 @@ export function createWikiSyncs(deps: {
   model: ModelPort;
   secrets: SecretBox;
   ledger: KeyLedger;
+  /** As Contas: o que a chamada pela Conta viu (limite, login caído) e a pasta segura enquanto roda. */
+  accounts: PayingAccounts;
   /** O teto de turnos de Ferramenta de cada chamada (padrão: `DEFAULT_SYNC_MAX_TURNS`). */
   maxToolTurns?: number;
 }): WikiSyncs {
@@ -113,59 +114,101 @@ export function createWikiSyncs(deps: {
     if (failed) await publish(syncId);
   }
 
+  /** Grava quem paga a chamada que vai sair e anuncia, se mudou (o "pela Chave do Workspace"). */
+  async function paidBy(syncId: string, payer: Payer["kind"]) {
+    const [changed] = await db
+      .update(wikiSyncs)
+      .set({ payer })
+      .where(
+        and(
+          eq(wikiSyncs.id, syncId),
+          eq(wikiSyncs.state, "running"),
+          or(isNull(wikiSyncs.payer), ne(wikiSyncs.payer, payer)),
+        ),
+      )
+      .returning({ id: wikiSyncs.id });
+    if (changed) await publish(syncId);
+  }
+
   /**
    * Uma chamada de modelo: a Articuladora leva uma Fonte para o rascunho. Devolve se terminou bem;
    * senão, a Sincronização já foi encerrada com o motivo (ou o servidor está parando).
+   *
+   * Quem paga é decidido antes de cada chamada (`accountOrKey`): a Conta de quem iniciou, Ligada;
+   * senão a Chave utilizável; senão a Sincronização falha "sem quem pague". Pela Conta, as
+   * Ferramentas internas vão pela sessão do endpoint MCP que o cérebro da Conta abre para este
+   * `claude -p` e fecha quando ele sai. Troca no meio: se a Conta bate no limite ou cai, o que a
+   * chamada escreveu no rascunho é desfeito e a chamada é refeita inteira por quem a tabela disser
+   * agora (a mesma tentativa).
    */
   async function call(
-    sync: { id: string; wiki: { name: string; description: string } },
+    sync: { id: string; startedBy: { id: string; name: string }; wiki: { name: string; description: string } },
     controller: AbortController,
     draft: Draft,
     source: DraftSource & { text: string },
     position: { current: number; total: number },
   ): Promise<boolean> {
     const articuladora = await articuladoraOf(db);
-    const payer = await keyPayer({ db, secrets, ledger }, articuladora.id);
-    if (payer.kind === "none") {
-      await fail(sync.id, payer.reason);
-      return false;
+    for (;;) {
+      const payer = await accountOrKey({ db, clock, secrets, ledger }, sync.startedBy.id, articuladora.id);
+      if (payer.kind === "none") {
+        await fail(
+          sync.id,
+          `sem quem pague: a Conta do Claude de ${sync.startedBy.name} ${payer.account}, e ${payer.key}`,
+        );
+        return false;
+      }
+      // A pasta da Conta fica segura até o fim do `claude -p`; se ela acabou de sair de uso (a Conta
+      // foi ligada de novo), decide de novo.
+      const release = payer.kind === "account" ? deps.accounts.lease(payer.configDir) : undefined;
+      if (release === null) continue;
+      const before = draft.snapshot();
+      const spent: Spent = { startedAt: clock.now() };
+      let end: Awaited<ReturnType<typeof streamCall>>["end"];
+      try {
+        await paidBy(sync.id, payer.kind);
+        ({ end } = await streamCall({
+          model,
+          clock,
+          controller,
+          spent,
+          stallMs: STALL_MS,
+          request: {
+            model: articuladora.model,
+            system: syncSystem(sync.wiki),
+            messages: [
+              {
+                role: "user",
+                content: syncPrompt({ index: draft.pages.get(WIKI_INDEX_SLUG)?.body ?? null, source, ...position }),
+              },
+            ],
+            payer,
+            tools: draftTools(draft, source),
+            maxToolTurns: deps.maxToolTurns ?? DEFAULT_SYNC_MAX_TURNS,
+          },
+        }));
+      } finally {
+        release?.();
+        // O uso que a API informou conta no orçamento da Articuladora, chegando ou não ao fim.
+        if (payer.kind === "key") {
+          await keyCallEnded(ledger, { agentId: articuladora.id, wikiSyncId: sync.id }, spent, end);
+        }
+      }
+      if (controller.signal.aborted) {
+        if (controller.signal.reason === "stalled") await fail(sync.id, SYNC_STALL_REASON);
+        return false;
+      }
+      // #86: a nova tentativa automática e o cancelamento entram aqui, com o mesmo `before`.
+      if (payer.kind === "account" && (await accountCallEnded(deps.accounts, payer, end)) === "decide_again") {
+        draft.restore(before);
+        continue;
+      }
+      if (end?.type !== "done") {
+        await fail(sync.id, failureReason(end));
+        return false;
+      }
+      return true;
     }
-    const spent: Spent = { startedAt: clock.now() };
-    let end: Awaited<ReturnType<typeof streamCall>>["end"];
-    try {
-      ({ end } = await streamCall({
-        model,
-        clock,
-        controller,
-        spent,
-        stallMs: STALL_MS,
-        request: {
-          model: articuladora.model,
-          system: syncSystem(sync.wiki),
-          messages: [
-            {
-              role: "user",
-              content: syncPrompt({ index: draft.pages.get(WIKI_INDEX_SLUG)?.body ?? null, source, ...position }),
-            },
-          ],
-          payer,
-          tools: draftTools(draft, source),
-          maxToolTurns: deps.maxToolTurns ?? DEFAULT_SYNC_MAX_TURNS,
-        },
-      }));
-    } finally {
-      // O uso que a API informou conta no orçamento da Articuladora, chegando ou não ao fim.
-      await keyCallEnded(ledger, { agentId: articuladora.id, wikiSyncId: sync.id }, spent, end);
-    }
-    if (controller.signal.aborted) {
-      if (controller.signal.reason === "stalled") await fail(sync.id, SYNC_STALL_REASON);
-      return false;
-    }
-    if (end?.type !== "done") {
-      await fail(sync.id, failureReason(end));
-      return false;
-    }
-    return true;
   }
 
   /** O trabalho: uma chamada por Fonte nova, num rascunho, e a publicação no fim. */
@@ -177,6 +220,11 @@ export function createWikiSyncs(deps: {
       .returning();
     if (!row) return;
     const wiki = (await findWiki(db, row.wikiId))!;
+    const [who] = await db
+      .select({ name: members.displayName })
+      .from(members)
+      .where(eq(members.id, row.startedByMemberId));
+    const starter = { id: row.startedByMemberId, name: who?.name ?? "" };
     const plan = await planOf(db, wiki.id);
     const draft = new Draft(await pagesOfVersion(db, plan.version), plan.target);
     const total = plan.news.length;
@@ -187,14 +235,10 @@ export function createWikiSyncs(deps: {
         .select({ id: wikiSources.id, fileName: wikiSources.fileName, text: wikiSources.text })
         .from(wikiSources)
         .where(eq(wikiSources.id, news.id));
-      if (!(await call({ id: syncId, wiki }, controller, draft, source!, position))) return;
+      if (!(await call({ id: syncId, startedBy: starter, wiki }, controller, draft, source!, position))) return;
     }
     await step(syncId, { kind: "publishing" });
     const report = draft.report();
-    const [starter] = await db
-      .select({ name: members.displayName })
-      .from(members)
-      .where(eq(members.id, row.startedByMemberId));
     const now = clock.now();
     const published = await db.transaction(async (tx) => {
       // A Sincronização pode ter sido encerrada enquanto publicava: aí nada muda.
@@ -210,7 +254,7 @@ export function createWikiSyncs(deps: {
         pages: draft.pages,
         sources: plan.target.map((s) => s.id),
         report,
-        logEntry: (number) => logEntry({ number, by: starter?.name ?? "", at: now, news: plan.news, report }),
+        logEntry: (number) => logEntry({ number, by: starter.name, at: now, news: plan.news, report }),
         now,
       });
       return true;

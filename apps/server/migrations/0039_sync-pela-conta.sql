@@ -1,0 +1,1 @@
+ALTER TABLE "wiki_syncs" ADD COLUMN "payer" text;

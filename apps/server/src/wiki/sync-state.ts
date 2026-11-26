@@ -26,6 +26,7 @@ async function selectSyncs(db: Db, where: SQL, limit?: number): Promise<WikiSync
     reason: s.reason,
     report: s.report,
     version: version ?? null,
+    payer: s.payer,
     startedBy: { id: s.startedByMemberId, name: starterName },
     createdAt: s.createdAt.toISOString(),
     finishedAt: s.finishedAt?.toISOString() ?? null,
