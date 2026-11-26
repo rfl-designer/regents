@@ -16,6 +16,8 @@ import { REPO_ROOT, type Sandbox, sandbox } from "./sandbox";
 export const RELEASE_SCRIPT = join(REPO_ROOT, "deploy/release.sh");
 /** As releases públicas, de onde o instalador baixa. */
 export const RELEASES = "https://github.com/rfl-designer/regents/releases";
+/** As mesmas releases pelo nome antigo do repositório, que o updater de uma Instalação Shearim usa. */
+const OLD_RELEASES = "https://github.com/rfl-designer/shearim/releases";
 /** A chamada que baixa o compose da release `tag` (sem tag: a última). */
 export const download = (tag?: string) =>
   `curl -fsSL ${RELEASES}/${tag ? `download/${tag}` : "latest/download"}/regents-compose.tar.gz`;
@@ -111,11 +113,13 @@ esac`,
   s.fake("open", `case "$*" in "-a OrbStack"|"-a Docker") touch "$STATE/docker-up" ;; *) exit 1 ;; esac`);
   // Linux
   s.fake("sudo", `AS_ROOT=1 exec "$@"`);
-  // O script oficial do Docker e as releases públicas; o resto é 404 (o `-f` sai com 22).
+  // O script oficial do Docker e as releases públicas; o resto é 404 (o `-f` sai com 22). As
+  // releases pelo nome antigo do repositório vêm das mesmas: o GitHub redireciona o nome antigo.
   s.fake(
     "curl",
     `out="" url=""
 while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift ;; -*) ;; *) url=$1 ;; esac; shift; done
+case "$url" in ${OLD_RELEASES}/*) url=${RELEASES}\${url#${OLD_RELEASES}} ;; esac
 case "$url" in
   https://get.docker.com) cp "$STATE/get-docker.sh" "$out" ;;
   ${RELEASES}/latest/download/*)

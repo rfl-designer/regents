@@ -71,8 +71,11 @@ services:
       DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
       # Cifra a Chave do Workspace no banco (Contas e Chave). Sem ela, um dump não basta.
       REGENTS_MASTER_KEY_FILE: /run/secrets/master_key
-      # `sub` do VAPID (Push). Precisa de domínio real: a Apple recusa localhost.
-      REGENTS_VAPID_CONTACT: ${REGENTS_VAPID_CONTACT:?rode o instalador novo com --update (veja o README)}
+      # `sub` do VAPID (Push). Precisa de domínio real: a Apple recusa localhost. A falta dela é o
+      # que para o updater antigo de uma Instalação Shearim (o `.env` dela tem SHEARIM_VAPID_CONTACT):
+      # o `docker compose config -q` dele falha, ele volta o compose de antes e mostra esta mensagem.
+      # `~/shearim` é a pasta padrão das Instalações Shearim. Sem `}`, `: ` nem ` #` na mensagem.
+      REGENTS_VAPID_CONTACT: ${REGENTS_VAPID_CONTACT:?rode o instalador novo com --update (veja o README), na pasta da Instalação, como em curl -fsSL https://github.com/rfl-designer/regents/releases/latest/download/install.sh | sh -s -- --update --dir ~/shearim}
       # Pasta-raiz das Contas: o volume `contas` abaixo.
       REGENTS_ACCOUNTS_DIR: /data/contas
       # A versão na seção Instalação: a mesma tag da imagem.

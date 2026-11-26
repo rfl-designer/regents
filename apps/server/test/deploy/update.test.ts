@@ -3,9 +3,9 @@
  * configurações no `.env` (e os segredos) e roda `docker compose pull` e `docker compose up -d`.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { composeTag, download, SETUP_ENV, type World, world } from "./world";
+import { composeTag, download, SETUP_ENV, tailnetStatus, type World, world } from "./world";
 
 async function installed(version = "1.2.3") {
   const w = await world();
@@ -93,5 +93,74 @@ describe("deploy/update.sh", () => {
     const r = await w.run(installer, ["--update", "--dir", join(w.root, "nada")]);
     expect(r.code).not.toBe(0);
     expect(r.stderr).toContain("não parece uma Instalação");
+  });
+});
+
+/**
+ * O updater antigo (Spec #96, história 34): uma Instalação que ainda é Shearim roda o
+ * `sh deploy/update.sh` de hábito, e ele chega à release nova do Regents. O updater é o da release
+ * v0.1.2 de verdade (`fixtures/shearim-v0.1.2`, o pacote publicado, igual ao `deploy/` da `main`
+ * antes da troca do nome): ele roda o `install.sh --update` antigo, que baixa
+ * `shearim-compose.tar.gz` de `rfl-designer/shearim` (o GitHub redireciona para `regents`).
+ */
+describe("o updater antigo, numa Instalação Shearim, diante da release nova", () => {
+  const OLD = join(import.meta.dir, "fixtures/shearim-v0.1.2");
+
+  // O que o instalador antigo lê no lugar das REGENTS_* da caixa de areia.
+  const oldEnv = (w: World) => ({
+    SHEARIM_EXTRA_PATH: join(w.root, "extra-bin"),
+    SHEARIM_APPLICATIONS: join(w.root, "Applications"),
+    SHEARIM_TTY: "/dev/null",
+    SHEARIM_WAIT_SECONDS: "1",
+    TS_AUTHKEY: "tskey-auth-falsa",
+    SHEARIM_CONTACT_EMAIL: "rafa@example.com",
+  });
+
+  // A Instalação da v0.1.2, feita pelo instalador da v0.1.2.
+  async function shearimInstalled() {
+    const w = await world();
+    const dir = join(w.state, "releases/v0.1.2");
+    mkdirSync(dir, { recursive: true });
+    const tar = await w.run("-c", [`tar -czf "${dir}/shearim-compose.tar.gz" -C "${OLD}" compose.yaml deploy`]);
+    if (tar.code !== 0) throw new Error(tar.output);
+    w.set("tailnet.json", tailnetStatus().replaceAll("regents", "shearim"));
+    const r = await w.run(join(OLD, "deploy/install.sh"), [], { env: oldEnv(w) });
+    if (r.code !== 0) throw new Error(r.output);
+    return { w, installDir: join(w.home, "shearim") };
+  }
+
+  // O compose.yaml e cada arquivo de deploy/, com o conteúdo.
+  const deployFiles = (dir: string) =>
+    ["compose.yaml", ...readdirSync(join(dir, "deploy"), { recursive: true }).map((f) => join("deploy", String(f)))]
+      .filter((f) => statSync(join(dir, f)).isFile())
+      .sort()
+      .map((f) => [f, readFileSync(join(dir, f), "utf8")]);
+
+  test("volta o compose e o deploy/ de antes, não reinicia nada e mostra o comando do instalador novo com --update", async () => {
+    const { w, installDir } = await shearimInstalled();
+    await w.release("0.2.0");
+    w.set("latest", "v0.2.0");
+    const before = deployFiles(installDir);
+    expect(before.map(([f]) => f)).toContain("deploy/update.sh");
+    const env = readFileSync(join(installDir, ".env"), "utf8");
+    const n = w.calls().length;
+
+    const r = await w.run(join(installDir, "deploy/update.sh"), [], { cwd: installDir, env: oldEnv(w) });
+    expect(r.code).not.toBe(0);
+
+    // Ele baixou a release nova pelo nome antigo do pacote, e foi o compose dela que não fechou.
+    const calls = w.calls().slice(n);
+    const oldDownload =
+      "curl -fsSL https://github.com/rfl-designer/shearim/releases/latest/download/shearim-compose.tar.gz";
+    expect(calls.some((c) => c.startsWith(oldDownload))).toBe(true);
+    expect(r.stderr).toContain("REGENTS_VAPID_CONTACT");
+
+    expect(deployFiles(installDir)).toEqual(before);
+    expect(readFileSync(join(installDir, ".env"), "utf8")).toBe(env);
+    expect(calls.filter((c) => /^docker compose (pull|up|down|stop|start|restart|rm|create)/.test(c))).toEqual([]);
+
+    expect(r.output).toContain(
+      "curl -fsSL https://github.com/rfl-designer/regents/releases/latest/download/install.sh | sh -s -- --update --dir ~/shearim",
+    );
   });
 });
