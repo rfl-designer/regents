@@ -64,3 +64,31 @@ export function syncPrompt(input: {
     "Leve esta Fonte para as páginas da Wiki, seguindo as regras.",
   ].join("\n");
 }
+
+/**
+ * A mensagem da chamada de uma Fonte removida (#88): o índice do rascunho, o nome da Fonte e as
+ * páginas que ela tocava. O Shearim já tirou do rascunho as páginas que vinham só dela e tirou a
+ * Fonte das outras; a Articuladora reescreve estas sem o que vinha dela e arruma o índice e os links.
+ */
+export function removalPrompt(input: {
+  index: string | null;
+  source: { fileName: string };
+  removed: readonly string[];
+  rewrite: readonly string[];
+  current: number;
+  total: number;
+}) {
+  const list = (slugs: readonly string[]) => (slugs.length ? slugs.join(", ") : "nenhuma");
+  return [
+    "## Índice do rascunho",
+    input.index?.trim() || "(a Wiki ainda não tem páginas)",
+    "",
+    `## Fonte removida: ${input.source.fileName} (Fonte ${input.current} de ${input.total})`,
+    `O Admin removeu a Fonte ${input.source.fileName}. O que vinha só dela sai da Wiki.`,
+    `- O Shearim já tirou do rascunho as páginas que vinham só dela: ${list(input.removed)}.`,
+    `- Estas páginas também vêm de outras Fontes: ${list(input.rewrite)}. Leia cada uma (ler_pagina) e reescreva-a (escrever_pagina) sem o que só a Fonte removida sustentava.`,
+    `- Tire do índice e dos links ([[slug]]) as páginas que saíram. Não cite mais ${input.source.fileName} em nenhuma página.`,
+    "",
+    "Tire esta Fonte da Wiki, seguindo as regras.",
+  ].join("\n");
+}

@@ -44,6 +44,30 @@ export class Draft {
     for (const [slug, p] of snapshot) this.pages.set(slug, { ...p, sources: [...p.sources] });
   }
 
+  /**
+   * Tira uma Fonte removida do rascunho (#88): a página que vinha só dela sai; a que vinha dela e de
+   * outra perde a Fonte e fica para a Articuladora reescrever sem ela. O índice e o log nunca saem.
+   * Depois disso, nenhuma página do rascunho cita a Fonte, e a escrita não aceita o nome dela
+   * (ela não está em `sources`).
+   */
+  takeOut(sourceId: string): { removed: string[]; rewrite: string[] } {
+    const removed: string[] = [];
+    const rewrite: string[] = [];
+    for (const [slug, page] of [...this.pages]) {
+      if (!page.sources.includes(sourceId)) continue;
+      const rest = page.sources.filter((id) => id !== sourceId);
+      const special = slug === WIKI_INDEX_SLUG || slug === WIKI_LOG_SLUG;
+      if (rest.length === 0 && !special) {
+        this.pages.delete(slug);
+        removed.push(slug);
+        continue;
+      }
+      this.pages.set(slug, { ...page, sources: rest });
+      if (!special) rewrite.push(slug);
+    }
+    return { removed: removed.sort(), rewrite: rewrite.sort() };
+  }
+
   fileNameOf(sourceId: string) {
     return this.sources.find((s) => s.id === sourceId)?.fileName ?? "uma Fonte removida";
   }
@@ -126,10 +150,11 @@ const SPECS: ToolSpec[] = [
 /**
  * As Ferramentas internas de uma chamada da Sincronização, presas ao rascunho: ler, escrever e
  * remover página. Escritas à mão (fora da porta de Ferramentas): não vão para o Andamento de
- * nenhuma execução e nunca são oferecidas a uma resposta em conversa. `current` é a Fonte da
- * chamada: uma página escrita sem `fontes` vem dela (mais as que já tinha).
+ * nenhuma execução e nunca são oferecidas a uma resposta em conversa. `current` é a Fonte nova da
+ * chamada: uma página escrita sem `fontes` vem dela (mais as que já tinha). Sem `current` (a
+ * remoção de uma Fonte), uma página escrita sem `fontes` mantém as que já tinha.
  */
-export function draftTools(draft: Draft, current: DraftSource): ExecutionTools {
+export function draftTools(draft: Draft, current?: DraftSource): ExecutionTools {
   const ok = (content: string): ToolResult => ({ content, isError: false });
   const error = (content: string): ToolResult => ({ content, isError: true });
   const slugOf = (input: Record<string, unknown>) => (typeof input.slug === "string" ? input.slug.trim() : "");
@@ -147,8 +172,9 @@ export function draftTools(draft: Draft, current: DraftSource): ExecutionTools {
     const body = typeof input.corpo === "string" ? input.corpo : "";
     if (!body.trim()) return error("o corpo da página está vazio");
     let sources: string[];
-    if (input.fontes === undefined) {
-      sources = [...new Set([...(draft.pages.get(slug)?.sources ?? []), current.id])];
+    const kept = draft.pages.get(slug)?.sources ?? [];
+    if (input.fontes === undefined && (current || kept.length)) {
+      sources = [...new Set([...kept, ...(current ? [current.id] : [])])];
     } else {
       if (!Array.isArray(input.fontes) || input.fontes.length === 0) {
         return error("diga de quais Fontes a página veio (o nome do arquivo de cada uma)");

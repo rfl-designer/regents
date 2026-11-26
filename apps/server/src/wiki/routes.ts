@@ -17,7 +17,7 @@ import {
   wikiChannelsFor,
   wikiReachFor,
 } from "./reach";
-import { addSources, DEFAULT_SOURCE_MAX_BYTES, listSources, readUploads } from "./sources";
+import { addSources, DEFAULT_SOURCE_MAX_BYTES, listSources, readUploads, removeSource } from "./sources";
 import type { WikiSyncs } from "./sync";
 import { listVersions, pageDtos, readPage, versionNumbered } from "./versions";
 import {
@@ -120,6 +120,24 @@ export function wikiRoutes(deps: {
       return c.json({ error: "source_exists", message }, 409);
     }
     return c.json(sources, 201);
+  });
+
+  /**
+   * Remove uma Fonte (#88) e devolve a lista nova. A Wiki atual não muda: a Fonte que uma versão
+   * reflete fica "a remover" até a próxima Sincronização; a que nenhuma reflete sai direto.
+   */
+  routes.delete("/wikis/:id/sources/:source", adminOnly, async (c) => {
+    const wiki = await findWiki(db, c.req.param("id"));
+    const sourceId = c.req.param("source");
+    if (!wiki || !isUuid(sourceId)) return c.json({ error: "not_found" }, 404);
+    const removed = await removeSource(db, { wikiId: wiki.id, sourceId, now: clock.now() });
+    if (!removed) return c.json({ error: "not_found", message: "Essa Fonte não está ativa nesta Wiki." }, 404);
+    if (removed === "sync_running") {
+      const message = "Há uma Sincronização em curso nesta Wiki. Remova a Fonte quando ela terminar.";
+      return c.json({ error: "sync_running", message }, 409);
+    }
+    events.publish(await wikiAudience(db, wiki), { type: "wiki.updated", wiki: await toWikiDto(db, wiki) });
+    return c.json(await listSources(db, wiki.id));
   });
 
   /**
