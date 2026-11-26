@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { type Db, schema } from "../db/client";
 import { type AutomaticTool, ToolFailure } from "../tools/port";
+import { input } from "../tools/workspace-read";
 
 const { skills, agentSkills } = schema;
 
@@ -54,8 +55,8 @@ export async function skillCatalog(db: Db, agentId: string): Promise<string> {
 }
 
 const nameOf = (raw: unknown) => {
-  const args = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-  return typeof args.nome === "string" ? args.nome.trim() : "";
+  const { nome } = input(raw);
+  return typeof nome === "string" ? nome.trim() : "";
 };
 
 /**

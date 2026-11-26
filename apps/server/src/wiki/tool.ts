@@ -1,8 +1,9 @@
 import { WIKI_INDEX_SLUG } from "@shearim/contracts";
 import type { Db } from "../db/client";
 import { type AutomaticTool, ToolFailure } from "../tools/port";
+import { input } from "../tools/workspace-read";
 import { recordWikiRead } from "./citations";
-import { type Answer, type WikiInReach, wikiInReachNamed, wikisInReach } from "./reach";
+import { type Answer, wikiInReachNamed, wikisInReach } from "./reach";
 import { pageOfVersion } from "./versions";
 
 /** O nome da Ferramenta, que o catálogo no contexto cita. */
@@ -34,15 +35,10 @@ interface ReadInput {
 }
 
 const inputOf = (raw: unknown): ReadInput => {
-  const args = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const args = input(raw);
   const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
   return { wiki: text(args.wiki), page: text(args.pagina) };
 };
-
-/** A página `slug` da versão (o `log` com as voltas a ela, #89), ou nada. */
-function pageOf(db: Db, wiki: WikiInReach, slug: string) {
-  return pageOfVersion(db, wiki.versionId, slug);
-}
 
 /**
  * O que "ler a Wiki" lê: a Wiki do alcance, a versão atual dela e a página (o índice, sem página).
@@ -52,7 +48,8 @@ async function resolve(db: Db, answer: Answer, input: ReadInput) {
   const wiki = input.wiki ? await wikiInReachNamed(db, answer, input.wiki) : undefined;
   if (!wiki) return { wiki };
   const slug = input.page || WIKI_INDEX_SLUG;
-  return { wiki, slug, page: await pageOf(db, wiki, slug) };
+  // A página da versão (o `log` com as voltas a ela, #89), ou nada.
+  return { wiki, slug, page: await pageOfVersion(db, wiki.versionId, slug) };
 }
 
 /**
@@ -90,9 +87,9 @@ export const READ_WIKI: AutomaticTool = {
     return { label: `lendo ${page?.title ?? slug} da Wiki ${wiki.name}` };
   },
   async run({ db, run }, raw) {
-    const input = inputOf(raw);
-    if (!input.wiki) throw new ToolFailure("diga o nome da Wiki");
-    const { wiki, slug, page } = await resolve(db, run, input);
+    const asked = inputOf(raw);
+    if (!asked.wiki) throw new ToolFailure("diga o nome da Wiki");
+    const { wiki, slug, page } = await resolve(db, run, asked);
     if (!wiki) throw new ToolFailure("não há uma Wiki com esse nome nesta conversa");
     if (!page) throw new ToolFailure(`essa página não existe na Wiki ${wiki.name}`);
     // A leitura confere as citações da resposta (#85): só a que deu certo, na versão lida.
