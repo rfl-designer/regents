@@ -321,3 +321,27 @@ describe("o token da sessão MCP da Sincronização", () => {
     LONGO,
   );
 });
+
+describe("o orçamento da Articuladora, com a Conta", () => {
+  test(
+    "como nas execuções, o orçamento só vale para a Chave: com ele estourado, a Conta de quem clicou segue pagando, e o gasto dela não entra no gasto na Chave",
+    async () => {
+      const t = await testApp();
+      const wiki = await wikiComFontes(t, { chave: true });
+      const agentes: { id: string; builtin: boolean; keySpendUsd: number }[] = await (
+        await t.as(juliana).get("/api/agents")
+      ).json();
+      const sophya = agentes.find((a) => a.builtin)!;
+      expect((await t.as(juliana).patch(`/api/agents/${sophya.id}`, { monthlyBudgetUsd: 0 })).status).toBe(200);
+      t.claude.script({ syncRuns: [escreve("ganchos", "aula-01.md"), { kind: "reply", text: "Pronto." }] });
+
+      expect((await sincronizar(t, wiki)).status).toBe(202);
+      expect(await terminada(t, wiki)).toMatchObject({ state: "done", version: 1, payer: "account" });
+      expect(t.claude.syncs()).toHaveLength(2);
+      expect(t.anthropic.syncs).toHaveLength(0);
+      const depois: typeof agentes = await (await t.as(juliana).get("/api/agents")).json();
+      expect(depois.find((a) => a.builtin)!.keySpendUsd).toBe(0);
+    },
+    LONGO,
+  );
+});
