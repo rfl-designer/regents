@@ -290,7 +290,7 @@ describe("o que a busca alcança", () => {
 
       expect(resultado.content).toContain("O orçamento do evento é de 10 mil.");
       const tudo = systemDe(pedido) + resultado.content + JSON.stringify(andamento);
-      expect(tudo).not.toContain("2027");
+      expect(tudo).not.toContain("fecha em março");
       expect(tudo).not.toContain("centavos");
       expect(tudo).not.toContain("financeiro");
     },
@@ -316,7 +316,7 @@ describe("o que a busca alcança", () => {
       const juntos = await buscar(t, ana, emGrupo.id, "orçamento", "@faro o que tem do orçamento?");
       expect(juntos.resultado.content).toContain("O orçamento da viagem é da Ana.");
       const tudo = juntos.resultado.content + systemDe(juntos.pedido) + JSON.stringify(juntos.andamento);
-      expect(tudo).not.toContain("2027");
+      expect(tudo).not.toContain("fecha em março");
       expect(tudo).not.toContain("centavos");
       expect(tudo).not.toContain("financeiro");
     },
@@ -335,7 +335,7 @@ describe("o que a busca alcança", () => {
       const { resultado, pedido, andamento } = await buscar(t, bruno, comBruno.id, "orçamento", "e o orçamento?");
 
       const tudo = resultado.content + systemDe(pedido) + JSON.stringify(andamento);
-      expect(tudo).not.toContain("2027");
+      expect(tudo).not.toContain("fecha em março");
       expect(tudo).not.toContain("centavos");
       expect(tudo).not.toContain("financeiro");
     },
