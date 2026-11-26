@@ -2,6 +2,7 @@ import type {
   AccountDto,
   AgentDto,
   AgentGitHubDto,
+  AgentSkillDto,
   AgentToolDto,
   ApiError,
   ApprovalRequestDto,
@@ -14,6 +15,7 @@ import type {
   CreateChannelInput,
   CreateConnectorInput,
   CreateConnectorLoginInput,
+  CreateSkillInput,
   DeviceDto,
   DmDto,
   ExecutionDto,
@@ -36,12 +38,14 @@ import type {
   PushSubscriptionInput,
   SendMessageInput,
   SetPresenceInput,
+  SkillDto,
   SubmitAccountCodeInput,
   UnreadDto,
   UnreadMessagesDto,
   UpdateAgentInput,
   UpdateChannelSettingsInput,
   UpdateProfileInput,
+  UpdateSkillInput,
   WorkspaceContextDto,
   WorkspaceKeyDto,
 } from "@shearim/contracts";
@@ -192,6 +196,14 @@ export const api = {
   createAgent: (input: CreateAgentInput) => call<AgentDto>("/api/agents", json("POST", input)),
   addAgent: (channelId: string, agentId: string) =>
     call<ChannelDto>(`/api/channels/${channelId}/agents`, json("POST", { agentId })),
+  skills: () => call<SkillDto[]>("/api/skills"),
+  createSkill: (input: CreateSkillInput) => call<SkillDto>("/api/skills", json("POST", input)),
+  updateSkill: (skillId: string, input: UpdateSkillInput) =>
+    call<SkillDto>(`/api/skills/${skillId}`, json("PATCH", input)),
+  deleteSkill: (skillId: string) => call<void>(`/api/skills/${skillId}`, { method: "DELETE" }),
+  agentSkills: (agentId: string) => call<AgentSkillDto[]>(`/api/agents/${agentId}/skills`),
+  setAgentSkill: (agentId: string, skillId: string, active: boolean) =>
+    call<AgentSkillDto[]>(`/api/agents/${agentId}/skills/${skillId}`, { method: active ? "PUT" : "DELETE" }),
   workspaceContext: () => call<WorkspaceContextDto>("/api/workspace-context"),
   setWorkspaceContext: (context: string) =>
     call<WorkspaceContextDto>("/api/workspace-context", json("PUT", { context })),

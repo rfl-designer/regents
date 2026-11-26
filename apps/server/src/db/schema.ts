@@ -982,3 +982,43 @@ export const memoryItems = pgTable(
     ),
   ],
 );
+
+/** De onde veio uma Habilidade: escrita na tela ou importada de um `SKILL.md` (spec #74). */
+export const skillOrigin = pgEnum("skill_origin", ["written", "imported"]);
+
+/**
+ * Uma Habilidade (spec #74): um procedimento escrito por gente, com nome (único no Workspace, sem
+ * diferenciar maiúsculas), descrição (diz quando usar) e corpo em markdown. Só o Admin escreve. O
+ * Agente vê o nome e a descrição das ativas nele e carrega o corpo pela Ferramenta.
+ */
+export const skills = pgTable(
+  "skills",
+  {
+    id: uuid().primaryKey(),
+    name: text().notNull(),
+    description: text().notNull(),
+    body: text().notNull(),
+    origin: skillOrigin().notNull().default("written"),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+    updatedAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [uniqueIndex("skills_name_lower_unique").on(sql`lower(${t.name})`)],
+);
+
+/**
+ * A Habilidade ativa num Agente (a Articuladora inclusive): o Admin liga e desliga na tela do
+ * Agente. Apagar a Habilidade a tira de todos os Agentes na hora.
+ */
+export const agentSkills = pgTable(
+  "agent_skills",
+  {
+    agentId: uuid()
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    skillId: uuid()
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+    activatedAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.agentId, t.skillId] }), index().on(t.skillId)],
+);

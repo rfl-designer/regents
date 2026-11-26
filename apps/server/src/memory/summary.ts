@@ -39,7 +39,7 @@ export interface MemorySummary {
 }
 
 const PRECEDENCE =
-  "O que os Agentes guardaram de conversas anteriores. O Contexto do Workspace, as Instruções do Canal e as suas instruções valem acima da Memória: quando se contradizem, siga-os.";
+  "O que os Agentes guardaram de conversas anteriores. O Contexto do Workspace vale acima das Instruções do Canal, que valem acima das suas instruções e das suas Habilidades, que valem acima da Memória: quando se contradizem, siga o que vale mais.";
 
 /**
  * As conversas de origem cuja Memória do Agente entra numa resposta (#68, ADR 0012): as do alcance

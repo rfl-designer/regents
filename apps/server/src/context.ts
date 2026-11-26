@@ -8,6 +8,7 @@ import { remembers } from "./memory/enabled";
 import { DEFAULT_SUMMARY_CHARS, memorySummary } from "./memory/summary";
 import type { ModelMessage } from "./model/port";
 import { workspaceMapFor } from "./routing";
+import { skillCatalog } from "./skills/tool";
 import type { ToolSpec } from "./tools/port";
 import { readWorkspaceContext } from "./workspace-context";
 
@@ -45,6 +46,8 @@ export type Call =
  *    não promete ações, quem chamou);
  * 2. o Contexto do Workspace;
  * 3. as instruções do Agente;
+ * 3a. o catálogo das Habilidades ativas nele (`skillCatalog`: o nome e a descrição; o corpo vem
+ *     pela Ferramenta "carregar Habilidade");
  * 4. as Instruções do Canal;
  * 5. o resumo da Memória (`memorySummary`, com a precedência e o orçamento da Instalação);
  * 6. quem é quem (pessoas com nome e "sobre mim", Agentes com nome e descrição);
@@ -150,6 +153,7 @@ export async function buildContext(
     preamble,
     section("Contexto do Workspace", await readWorkspaceContext(db)),
     section("Suas instruções", agent.instructions),
+    section("Suas Habilidades", await skillCatalog(db, row.id)),
     section("Instruções do Canal", conversation!.instructions),
     memory.text,
     section("Quem é quem", whoIsWho),

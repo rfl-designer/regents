@@ -40,6 +40,7 @@ import { closeNotificationsOf, showBadge, usePush } from "./notifications";
 import { ProfileView } from "./ProfileView";
 import { InstallOnIphone, PushBanners } from "./PushBanners";
 import { type AdminView, Sidebar } from "./Sidebar";
+import { SkillsSettings } from "./SkillsAdmin";
 import { WorkspaceContextSettings } from "./WorkspaceContext";
 import { WorkspaceMemory } from "./WorkspaceMemory";
 
@@ -95,6 +96,7 @@ const SCREENS: Record<Screen, { path?: string; admin?: true; render(ctx: ScreenC
   context: { admin: true, render: () => <WorkspaceContextSettings /> },
   settings: { admin: true, render: () => <ChannelSettings /> },
   agents: { path: AGENTS_PATH, admin: true, render: () => <AgentsSettings /> },
+  skills: { admin: true, render: () => <SkillsSettings /> },
   connectors: { path: CONNECTORS_PATH, admin: true, render: () => <ConnectorsSettings /> },
   key: { path: WORKSPACE_KEY_PATH, admin: true, render: () => <WorkspaceKeySettings /> },
   github: { path: GITHUB_PATH, admin: true, render: () => <GitHubSettings /> },
