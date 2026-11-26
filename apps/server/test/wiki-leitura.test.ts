@@ -214,6 +214,7 @@ describe("a Sincronização, para quem lê a Wiki", () => {
       const primeira = await cerebro.nextSync();
       for (const input of CURSO) await primeira.request.tools!.call("escrever_pagina", input, primeira.signal);
       await primeira.emit(fim);
+      await (await cerebro.nextSync()).emit(fim); // a revisão
       const { wiki: publicada } = await doBruno.next("wiki.updated");
       expect(publicada).toMatchObject({ id: curso.id, currentVersion: { number: 1 } });
       const lista: WikiDto[] = await (await t.as(bruno).get("/api/wikis")).json();
@@ -236,6 +237,7 @@ describe("a Sincronização, para quem lê a Wiki", () => {
       expect(durante).toMatchObject({ version: 1, wiki: { lastSync: { state: "running" } } });
 
       await segunda.emit(fim);
+      await (await cerebro.nextSync()).emit(fim); // a revisão
       const novo = await eventually("a versão 2 chegar ao Bruno", async () => {
         const wiki = doBruno.received().findLast((e) => e.type === "wiki.updated")?.wiki;
         return wiki?.currentVersion?.number === 2 ? wiki : undefined;

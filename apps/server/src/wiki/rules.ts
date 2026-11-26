@@ -24,6 +24,8 @@ export const SYNC_SKILL = {
 export const READ_PAGE = "ler_pagina";
 export const WRITE_PAGE = "escrever_pagina";
 export const REMOVE_PAGE = "remover_pagina";
+/** Só da revisão (#87): aponta uma contradição entre páginas, que entra no relatório. */
+export const POINT_CONTRADICTION = "apontar_contradicao";
 
 /** O `system` de cada chamada da Sincronização: a marca, a Wiki e as regras. */
 export function syncSystem(wiki: { name: string; description: string }) {
@@ -47,19 +49,30 @@ export function syncSystem(wiki: { name: string; description: string }) {
   ].join("\n");
 }
 
-/** A mensagem de cada chamada: o índice do rascunho e a Fonte. */
+/**
+ * A mensagem de cada chamada: o índice do rascunho e a Fonte, ou uma parte dela (#87: uma Fonte
+ * grande vai em partes, uma chamada por parte, e cada parte vê o índice que a anterior deixou).
+ */
 export function syncPrompt(input: {
   index: string | null;
-  source: { fileName: string; text: string };
+  source: { fileName: string };
+  text: string;
   current: number;
   total: number;
+  part?: { current: number; total: number };
 }) {
+  const part = input.part ? `, parte ${input.part.current} de ${input.part.total}` : "";
   return [
     "## Índice do rascunho",
     input.index?.trim() || "(a Wiki ainda não tem páginas)",
     "",
-    `## Fonte nova: ${input.source.fileName} (Fonte ${input.current} de ${input.total})`,
-    input.source.text,
+    `## Fonte nova: ${input.source.fileName} (Fonte ${input.current} de ${input.total}${part})`,
+    ...(input.part
+      ? [
+          `Esta é a parte ${input.part.current} de ${input.part.total} da Fonte: as partes anteriores já estão no rascunho, e as seguintes vêm depois.`,
+        ]
+      : []),
+    input.text,
     "",
     "Leve esta Fonte para as páginas da Wiki, seguindo as regras.",
   ].join("\n");
@@ -90,5 +103,39 @@ export function removalPrompt(input: {
     `- Tire do índice e dos links ([[slug]]) as páginas que saíram. Não cite mais ${input.source.fileName} em nenhuma página.`,
     "",
     "Tire esta Fonte da Wiki, seguindo as regras.",
+  ].join("\n");
+}
+
+/**
+ * A mensagem da chamada de revisão (o lint, #87), depois de todas as Fontes: o índice do rascunho,
+ * as páginas e os links quebrados de agora. A Articuladora abre as páginas de que precisa, corrige
+ * links e o índice e aponta as contradições (`apontar_contradicao`). O que sobrar quebrado, a
+ * conferência em código põe no relatório.
+ */
+export function reviewPrompt(input: {
+  index: string | null;
+  pages: readonly { slug: string; title: string }[];
+  brokenLinks: readonly { from: { slug: string }; slug: string }[];
+}) {
+  const pages = input.pages.map((p) => `- ${p.slug}: ${p.title}`);
+  const broken = input.brokenLinks.map((b) => `- em ${b.from.slug}: [[${b.slug}]]`);
+  return [
+    "## Índice do rascunho",
+    input.index?.trim() || "(a Wiki ainda não tem índice)",
+    "",
+    "## Páginas do rascunho",
+    ...(pages.length ? pages : ["(nenhuma)"]),
+    "",
+    "## Links quebrados",
+    ...(broken.length ? broken : ["(nenhum)"]),
+    "",
+    "## Revisão da Wiki",
+    "Todas as Fontes já estão no rascunho. Revise a Wiki inteira, seguindo as regras:",
+    "- Abra as páginas de que precisar (ler_pagina).",
+    "- Corrija os links quebrados e ligue as páginas que tratam do mesmo assunto (escrever_pagina). Uma página reescrita mantém as Fontes que já tinha.",
+    `- Toda página entra no índice (${WIKI_INDEX_SLUG}).`,
+    `- Quando duas páginas (ou uma página consigo mesma) disserem coisas que não podem valer juntas, aponte a contradição (${POINT_CONTRADICTION}), com as páginas e o que se contradiz. Não escolha um lado: o Admin corrige a Fonte.`,
+    "",
+    'Quando terminar a revisão, responda só "Pronto.".',
   ].join("\n");
 }

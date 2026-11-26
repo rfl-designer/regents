@@ -298,7 +298,8 @@ describe("voltar a uma versão anterior", () => {
       expect(sync).toMatchObject({ state: "done", version: 3 });
       // O relatório compara com a 1: carrossel nasce de novo, ganchos fica como na 1.
       expect(sync!.report).toMatchObject({ created: [{ slug: "carrossel" }], updated: [], removed: [] });
-      const [, fechamento] = t.anthropic.syncs.slice(-2);
+      // A Fonte (antes da revisão, a última).
+      const [, fechamento] = t.anthropic.syncs.slice(-3, -1);
       expect(toolResults(fechamento!.body)[0]!.content).toContain("Os 3 primeiros segundos.");
 
       const paginas = await paginasDe(t, wiki, 3);
@@ -325,10 +326,12 @@ describe("quem volta e quando", () => {
       const t = await testApp({ keyBrain: cerebro.brain });
       await workspace(t);
       const wiki = await criarWiki(t);
+      const fim = { type: "done" as const, usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 };
       const umaVersao = async (file: File, versao: number) => {
         await subir(t, wiki, file);
         await sincronizar(t, wiki);
-        await (await cerebro.nextSync()).emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
+        await (await cerebro.nextSync()).emit(fim);
+        await (await cerebro.nextSync()).emit(fim); // a revisão
         expect(await terminada(t, wiki, versao)).toMatchObject({ state: "done" });
       };
       await umaVersao(AULA_1(), 1);
@@ -352,7 +355,8 @@ describe("quem volta e quando", () => {
       });
       expect(await naAdministracao(t, wiki)).toMatchObject({ currentVersion: { number: 2 } });
 
-      await chamada.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
+      await chamada.emit(fim);
+      await (await cerebro.nextSync()).emit(fim); // a revisão
       expect(await terminada(t, wiki, 3)).toMatchObject({ state: "done" });
       expect((await voltar(t, wiki, 1)).status).toBe(200);
       expect(await naAdministracao(t, wiki)).toMatchObject({ currentVersion: { number: 1 } });

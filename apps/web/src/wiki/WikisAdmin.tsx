@@ -201,7 +201,11 @@ function pageList(pages: WikiPageRefDto[]) {
   return pages.map((p) => p.title).join(", ");
 }
 
-/** O relatório da última Sincronização: as páginas criadas, alteradas e removidas. */
+/**
+ * O relatório de uma Sincronização: as páginas criadas, alteradas e removidas, as contradições
+ * que a revisão apontou e o que a conferência achou quebrado (#87). A Wiki já foi publicada assim:
+ * o Admin corrige a Fonte e sincroniza de novo.
+ */
 function SyncReport({
   report,
   label = "Relatório da Sincronização",
@@ -210,12 +214,25 @@ function SyncReport({
   label?: string;
 }) {
   const nothing = report.created.length + report.updated.length + report.removed.length === 0;
+  const { contradictions, check } = report;
   return (
     <ul className="hint" aria-label={label}>
       {nothing && <li>Nenhuma página mudou.</li>}
       {report.created.length > 0 && <li>Páginas criadas: {pageList(report.created)}</li>}
       {report.updated.length > 0 && <li>Páginas alteradas: {pageList(report.updated)}</li>}
       {report.removed.length > 0 && <li>Páginas removidas: {pageList(report.removed)}</li>}
+      {contradictions.map((c, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: a lista do relatório não muda de ordem.
+        <li key={i} className="error">
+          Contradição em {pageList(c.pages)}: {c.text}
+        </li>
+      ))}
+      {check.brokenLinks.length > 0 && (
+        <li>Links quebrados: {check.brokenLinks.map((b) => `[[${b.slug}]] em ${b.from.title}`).join(", ")}</li>
+      )}
+      {check.withoutSources.length > 0 && <li>Páginas sem Fonte: {pageList(check.withoutSources)}</li>}
+      {check.outsideIndex.length > 0 && <li>Páginas fora do índice: {pageList(check.outsideIndex)}</li>}
+      {check.orphans.length > 0 && <li>Páginas sem link de entrada: {pageList(check.orphans)}</li>}
     </ul>
   );
 }

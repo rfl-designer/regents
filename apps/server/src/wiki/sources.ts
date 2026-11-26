@@ -40,13 +40,15 @@ export const DEFAULT_SOURCE_MAX_BYTES = 5_000_000;
 /**
  * O que a Instalação ajusta na Wiki: o tamanho máximo de uma Fonte (`SHEARIM_WIKI_SOURCE_MAX_MB`,
  * aceita fração) e o teto de turnos de Ferramenta de cada chamada da Sincronização
- * (`SHEARIM_WIKI_SYNC_MAX_TURNS`). O que falta fica com o padrão; valor inválido é erro.
+ * (`SHEARIM_WIKI_SYNC_MAX_TURNS`) e o tamanho de parte de uma Fonte, em caracteres
+ * (`SHEARIM_WIKI_PART_MAX_CHARS`). O que falta fica com o padrão; valor inválido é erro.
  */
 export function wikiFromEnv(env: Record<string, string | undefined>): {
   sourceMaxBytes?: number;
   syncMaxToolTurns?: number;
+  partMaxChars?: number;
 } {
-  const out: { sourceMaxBytes?: number; syncMaxToolTurns?: number } = {};
+  const out: { sourceMaxBytes?: number; syncMaxToolTurns?: number; partMaxChars?: number } = {};
   const raw = env.SHEARIM_WIKI_SOURCE_MAX_MB?.trim();
   if (raw) {
     const mb = Number(raw);
@@ -55,15 +57,20 @@ export function wikiFromEnv(env: Record<string, string | undefined>): {
     }
     out.sourceMaxBytes = Math.round(mb * 1_000_000);
   }
-  const turns = env.SHEARIM_WIKI_SYNC_MAX_TURNS?.trim();
-  if (turns) {
-    const n = Number(turns);
-    if (!Number.isInteger(n) || n < 1) {
-      throw new Error(`SHEARIM_WIKI_SYNC_MAX_TURNS=${turns} não é um número inteiro maior que zero.`);
-    }
-    out.syncMaxToolTurns = n;
-  }
+  const turns = positiveInt(env, "SHEARIM_WIKI_SYNC_MAX_TURNS");
+  if (turns) out.syncMaxToolTurns = turns;
+  const part = positiveInt(env, "SHEARIM_WIKI_PART_MAX_CHARS");
+  if (part) out.partMaxChars = part;
   return out;
+}
+
+/** Um inteiro maior que zero na variável `name`, ou `undefined` se ela falta; inválido é erro. */
+function positiveInt(env: Record<string, string | undefined>, name: string) {
+  const raw = env[name]?.trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) throw new Error(`${name}=${raw} não é um número inteiro maior que zero.`);
+  return n;
 }
 
 /** Por que um arquivo não vira Fonte: o código do erro HTTP e o motivo, em pt-BR. */

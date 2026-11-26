@@ -181,7 +181,7 @@ function estadosVistos(eventos: ServerEvent[]) {
 
 describe("o estado da Sincronização em tempo real", () => {
   test(
-    'o Admin e quem vê a Wiki acompanham "Fonte 1 de 2", "Fonte 2 de 2", "publicando" e "concluída"',
+    'o Admin e quem vê a Wiki acompanham "Fonte 1 de 2", "Fonte 2 de 2", "revisando a Wiki", "publicando" e "concluída"',
     async () => {
       const t = await testApp();
       const wiki = await wikiComDuasAulas(t);
@@ -192,7 +192,14 @@ describe("o estado da Sincronização em tempo real", () => {
       await sincronizar(t, wiki);
       await terminada(t, wiki);
 
-      const esperado = ["queued", "em curso: Fonte 1 de 2", "em curso: Fonte 2 de 2", "publicando", "concluída"];
+      const esperado = [
+        "queued",
+        "em curso: Fonte 1 de 2",
+        "em curso: Fonte 2 de 2",
+        "revisando a Wiki",
+        "publicando",
+        "concluída",
+      ];
       for (const aba of [daJuliana, doBruno]) {
         const visto = await eventually("o anúncio da conclusão", async () => {
           const estados = estadosVistos(aba.received());
@@ -242,6 +249,10 @@ describe("tudo ou nada: a Wiki só muda no fim", () => {
       expect(fontes.map((f) => f.pending)).toEqual(["new", "new"]);
 
       await segunda.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
+      // A revisão (#87) também trabalha no rascunho: a Wiki segue sem versão até o fim dela.
+      const revisao = await cerebro.nextSync();
+      expect(await versoesDe(t, wiki)).toEqual([]);
+      await revisao.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
       expect(await terminada(t, wiki)).toMatchObject({ state: "done", version: 1 });
       expect(await naAdministracao(t, wiki)).toMatchObject({ currentVersion: { number: 1 }, pending: 0 });
       expect((await paginasDe(t, wiki, 1)).map((p) => p.slug)).toEqual(["ganchos", "index", "log"]);
@@ -268,10 +279,12 @@ describe("uma Sincronização por Wiki", () => {
       expect(body.message).toContain("Juliana");
 
       await chamada.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
-      const ultima = await cerebro.nextSync();
-      await ultima.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
+      const segunda = await cerebro.nextSync();
+      await segunda.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
+      const revisao = await cerebro.nextSync();
+      await revisao.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
       expect(await terminada(t, wiki)).toMatchObject({ id: primeiro.id, state: "done" });
-      expect(cerebro.syncs).toHaveLength(2);
+      expect(cerebro.syncs).toHaveLength(3);
     },
     LONGO,
   );
@@ -359,8 +372,9 @@ describe("o que cada chamada da Sincronização recebe", () => {
       await sincronizar(t, wiki);
       await terminada(t, wiki);
 
-      // Duas chamadas por Fonte: a que escreve e a que fecha, depois dos resultados das Ferramentas.
-      expect(t.anthropic.syncs).toHaveLength(4);
+      // Duas chamadas por Fonte: a que escreve e a que fecha, depois dos resultados das Ferramentas;
+      // e a revisão (#87), no fim.
+      expect(t.anthropic.syncs).toHaveLength(5);
       // Nenhuma delas entra na fila das respostas.
       expect(t.anthropic.requests).toHaveLength(0);
       const [primeira, , segunda] = t.anthropic.syncs.map(textoDe);
@@ -474,6 +488,14 @@ describe("o relatório da Sincronização", () => {
         ],
         updated: [],
         removed: [],
+        contradictions: [],
+        // O carrossel liga os ganchos; nenhuma página liga o carrossel (o índice não conta).
+        check: {
+          brokenLinks: [],
+          withoutSources: [],
+          outsideIndex: [],
+          orphans: [{ slug: "carrossel", title: "Carrossel" }],
+        },
       };
       expect((await terminada(t, wiki)).report).toEqual(esperado);
       expect((await versoesDe(t, wiki))[0]!.report).toEqual(esperado);
@@ -500,7 +522,7 @@ describe("nada a sincronizar", () => {
       const body = await res.json();
       expect(body.error).toBe("nothing_to_sync");
       expect(body.message.toLowerCase()).toContain("nada a sincronizar");
-      expect(t.anthropic.syncs).toHaveLength(4);
+      expect(t.anthropic.syncs).toHaveLength(5);
       expect(await versoesDe(t, wiki)).toHaveLength(1);
     },
     LONGO,
@@ -540,16 +562,17 @@ describe("o modelo e o orçamento são os da Articuladora", () => {
       const agentes: AgentDto[] = await (await t.as(juliana).get("/api/agents")).json();
       const sophya = agentes.find((a) => a.builtin)!;
       expect((await t.as(juliana).patch(`/api/agents/${sophya.id}`, { model: "claude-opus-5-5" })).status).toBe(200);
-      // Opus: US$ 4 por milhão de tokens de entrada. Cada chamada gasta US$ 1.
+      // Opus: US$ 4 por milhão de tokens de entrada. Cada chamada (as duas Fontes e a revisão) gasta US$ 1.
       const UM_DOLAR = { input_tokens: 250_000, output_tokens: 0 };
-      t.anthropic.sync({ text: "Pronto.", usage: UM_DOLAR }, { text: "Pronto.", usage: UM_DOLAR });
+      const pronto = { text: "Pronto.", usage: UM_DOLAR };
+      t.anthropic.sync(pronto, pronto, pronto);
       await sincronizar(t, wiki);
       expect(await terminada(t, wiki)).toMatchObject({ state: "done" });
 
-      expect(t.anthropic.syncs.map((r) => r.body.model)).toEqual(["claude-opus-5-5", "claude-opus-5-5"]);
-      expect(t.anthropic.syncs.map((r) => r.apiKey)).toEqual([CHAVE, CHAVE]);
+      expect(t.anthropic.syncs.map((r) => r.body.model)).toEqual(Array(3).fill("claude-opus-5-5"));
+      expect(t.anthropic.syncs.map((r) => r.apiKey)).toEqual([CHAVE, CHAVE, CHAVE]);
       const depois: AgentDto[] = await (await t.as(juliana).get("/api/agents")).json();
-      expect(depois.find((a) => a.id === sophya.id)).toMatchObject({ keySpendUsd: 2 });
+      expect(depois.find((a) => a.id === sophya.id)).toMatchObject({ keySpendUsd: 3 });
     },
     LONGO,
   );

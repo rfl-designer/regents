@@ -97,9 +97,10 @@ export interface AppDeps {
   /**
    * A Wiki: o tamanho máximo de uma Fonte, em bytes (`SHEARIM_WIKI_SOURCE_MAX_MB`; padrão 5 MB), e o
    * teto de turnos de Ferramenta de cada chamada da Sincronização (`SHEARIM_WIKI_SYNC_MAX_TURNS`;
-   * padrão 40).
+   * padrão 40) e o tamanho de parte de uma Fonte grande, em caracteres
+   * (`SHEARIM_WIKI_PART_MAX_CHARS`; padrão 40.000).
    */
-  wiki?: { sourceMaxBytes?: number; syncMaxToolTurns?: number };
+  wiki?: { sourceMaxBytes?: number; syncMaxToolTurns?: number; partMaxChars?: number };
 }
 
 export type AppHooks = JoinRequestHooks & ExecutionHooks & KeyHooks & AccountHooks;
@@ -207,6 +208,7 @@ export function createApp(deps: AppDeps) {
     ledger,
     accounts,
     maxToolTurns: deps.wiki?.syncMaxToolTurns,
+    partMaxChars: deps.wiki?.partMaxChars,
     notify: push.notify,
   });
   // A volta da Conta (ou a troca da Chave, ou do orçamento) solta quem espera por ela na fila.
