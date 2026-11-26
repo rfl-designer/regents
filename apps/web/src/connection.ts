@@ -21,20 +21,20 @@ export interface Notice {
 const NOTICES: Record<NoticeKind, Omit<Notice, "kind">> = {
   offline: {
     title: "Você está sem internet",
-    detail: "Confira o Wi-Fi ou os dados móveis deste aparelho. O Shearim volta sozinho quando a internet voltar.",
+    detail: "Confira o Wi-Fi ou os dados móveis deste aparelho. O Regents volta sozinho quando a internet voltar.",
   },
   updating: {
-    title: "Atualizando o Shearim",
+    title: "Atualizando o Regents",
     detail: "A conversa volta em alguns segundos.",
   },
   identity_unavailable: {
-    title: "O Shearim não consegue falar com o Tailscale",
+    title: "O Regents não consegue falar com o Tailscale",
     detail:
-      "O servidor está no ar, mas não consegue confirmar quem é você. Avise quem cuida da Instalação. O Shearim tenta de novo sozinho.",
+      "O servidor está no ar, mas não consegue confirmar quem é você. Avise quem cuida da Instalação. O Regents tenta de novo sozinho.",
   },
   unreachable: {
-    title: "Sem conexão com o Shearim",
-    detail: "Confira se o Tailscale está ligado neste aparelho. O Shearim tenta de novo sozinho.",
+    title: "Sem conexão com o Regents",
+    detail: "Confira se o Tailscale está ligado neste aparelho. O Regents tenta de novo sozinho.",
   },
   reconnecting: {
     title: "Reconectando…",
@@ -46,7 +46,7 @@ export function notice(kind: NoticeKind): Notice {
   return { kind, ...NOTICES[kind] };
 }
 
-/** Quanto tempo o 1012 segura "Atualizando o Shearim" antes de virar "Sem conexão" (uma atualização que não volta). */
+/** Quanto tempo o 1012 segura "Atualizando o Regents" antes de virar "Sem conexão" (uma atualização que não volta). */
 const UPDATE_GRACE_MS = 2 * 60_000;
 /** De quanto em quanto tempo, com o WebSocket caído, pergunta ao servidor se ele responde. */
 const PROBE_MS = 2_000;
@@ -89,7 +89,7 @@ export function useOnline() {
 
 /**
  * O aviso de conexão com a conversa aberta. Com o WebSocket caído e internet, pergunta ao servidor
- * (`GET /api/me`) a cada `PROBE_MS` para separar "Reconectando…" de "Sem conexão com o Shearim".
+ * (`GET /api/me`) a cada `PROBE_MS` para separar "Reconectando…" de "Sem conexão com o Regents".
  * Um 403 (a identidade sumiu, deixou de ser Membro) vai para `onLost`: a conversa não volta sozinha.
  */
 export function useConnectionNotice(onLost: (err: unknown) => void): Notice | null {
@@ -125,7 +125,7 @@ export function useConnectionNotice(onLost: (err: unknown) => void): Notice | nu
     };
   }, [probing, onLost]);
 
-  // "Atualizando o Shearim" tem prazo: quando vence, o aviso muda sem esperar outro evento.
+  // "Atualizando o Regents" tem prazo: quando vence, o aviso muda sem esperar outro evento.
   useEffect(() => {
     if (live.updatingSince === null) return;
     setNow(Date.now());

@@ -243,7 +243,7 @@ function EditAgent({ agent, onSaved }: { agent: AgentDto; onSaved(agent: AgentDt
       </label>
       {agent.builtin ? (
         <p className="hint">
-          A descrição, as instruções e o jeito de decidir quem responde da Articuladora são do Shearim.
+          A descrição, as instruções e o jeito de decidir quem responde da Articuladora são do Regents.
         </p>
       ) : (
         <>
@@ -398,7 +398,7 @@ function AgentSkills({ agent }: { agent: AgentDto }) {
         // A Habilidade do Shearim ("Sincronizar a Wiki", na Articuladora): sempre ativa, só para leitura.
         s.builtin ? (
           <label key={s.id} className="hint">
-            <input type="checkbox" checked disabled /> {s.name} <span className="tag">do Shearim</span>
+            <input type="checkbox" checked disabled /> {s.name} <span className="tag">do Regents</span>
             <br />
             <small>{s.description}</small>
           </label>

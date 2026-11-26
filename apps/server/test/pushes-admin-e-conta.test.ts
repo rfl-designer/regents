@@ -117,7 +117,7 @@ describe("pushes do Admin", () => {
         expect(push.payload).toMatchObject({
           web_push: 8030,
           notification: {
-            title: "Lucas pede para entrar no Shearim",
+            title: "Lucas pede para entrar no Regents",
             body: "lucas@outra.com · macbook-do-lucas · de outra tailnet",
             icon: "https://exemplo.com/lucas.png",
             navigate: expect.stringMatching(/\/membros$/),
@@ -138,7 +138,7 @@ describe("pushes do Admin", () => {
       await t.as({ id: "2002", login: "maria@exemplo.com", name: "Maria" }).post("/api/join-request");
       const segundo = await daJuliana.next(ESPERA);
       expect(segundo.payload.notification).toMatchObject({
-        title: "Maria pede para entrar no Shearim",
+        title: "Maria pede para entrar no Regents",
         body: "maria@exemplo.com",
       });
       expect(segundo.payload.notification).not.toHaveProperty("icon");

@@ -12,7 +12,7 @@ import { addAgent } from "./participation";
 
 /** A descrição pública dela (o que todo Membro vê e o que os outros Agentes leem em "quem é quem"). */
 export const ARTICULADORA_DESCRIPTION =
-  "A Articuladora do Shearim: está em todo Canal, decide a cada mensagem se alguém precisa responder, responde ela mesma ou passa para os Agentes do Canal, e conhece todos os Agentes do Workspace.";
+  "A Articuladora do Regents: está em todo Canal, decide a cada mensagem se alguém precisa responder, responde ela mesma ou passa para os Agentes do Canal, e conhece todos os Agentes do Workspace.";
 
 /** As instruções dela quando responde (a resposta dela e a Menção a ela). */
 export const ARTICULADORA_INSTRUCTIONS = [

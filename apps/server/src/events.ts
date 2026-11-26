@@ -112,7 +112,7 @@ export function createEventHub() {
     connections.clear();
     for (const c of all) {
       for (const fn of closeListeners) fn(c.id);
-      c.close(EVENTS_CLOSE_UPDATING, "o Shearim vai reiniciar");
+      c.close(EVENTS_CLOSE_UPDATING, "o Regents vai reiniciar");
     }
   }
 

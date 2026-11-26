@@ -135,7 +135,7 @@ export function createInstallation(deps: {
       if (!(await firstTime(alert.kind, ref))) continue;
       if (alert.kind === "backup_failed") {
         await notifyAdmins({
-          title: "O backup do Shearim falhou",
+          title: "O backup do Regents falhou",
           body: alert.error,
           tag: "instalacao-backup",
           urgency: "high",
@@ -164,7 +164,7 @@ export function createInstallation(deps: {
         await notifyAdmins({
           title: days === 1 ? "A chave do nó vence amanhã" : `A chave do nó vence em ${days} dias`,
           body:
-            `Em ${dayAndTime(expiresAt)} a Instalação sai da tailnet e o Shearim para de abrir. ` +
+            `Em ${dayAndTime(expiresAt)} a Instalação sai da tailnet e o Regents para de abrir. ` +
             "Renove a chave do nó (ou desligue o vencimento) no painel do Tailscale, em Machines.",
           tag: "instalacao-chave-do-no",
           urgency: "normal",

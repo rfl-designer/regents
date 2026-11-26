@@ -36,7 +36,7 @@ export function adminPushes(deps: { db: Db; notify: Push["notify"] }): JoinReque
       later(
         "do Pedido de entrada",
         toAdmins({
-          title: `${request.displayName} pede para entrar no Shearim`,
+          title: `${request.displayName} pede para entrar no Regents`,
           body: line.join(" · "),
           path: MEMBERS_PATH,
           // Um por pedido: dois pedidos seguidos não se substituem.

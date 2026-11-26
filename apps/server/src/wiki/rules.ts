@@ -17,7 +17,7 @@ export const SYNC_SKILL = {
   id: "shearim:sincronizar-a-wiki",
   name: "Sincronizar a Wiki",
   description:
-    'Quando o Admin aperta "Sincronizar" numa Wiki: leva as Fontes pendentes para as páginas, com links entre elas e o índice. É do Shearim e não se edita.',
+    'Quando o Admin aperta "Sincronizar" numa Wiki: leva as Fontes pendentes para as páginas, com links entre elas e o índice. É do Regents e não se edita.',
 } as const;
 
 /** As Ferramentas internas da Sincronização: só dela, nunca de uma resposta em conversa. */

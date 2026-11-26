@@ -1186,7 +1186,7 @@ export function createExecutions(deps: {
       } catch (err) {
         if (!controller.signal.aborted) {
           console.error("regents: execução falhou", err);
-          await fail(job, "erro inesperado no Shearim").catch(() => {});
+          await fail(job, "erro inesperado no Regents").catch(() => {});
         }
       } finally {
         running.delete(job.id);

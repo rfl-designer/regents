@@ -123,7 +123,7 @@ describe("backup noturno", () => {
     const { backup } = await installation(t);
     const uid = process.getuid!();
     expect(backup.last).toMatchObject({ ok: false, file: null });
-    expect(backup.last!.error).toContain(`não deixa o usuário do Shearim (uid ${uid}) gravar`);
+    expect(backup.last!.error).toContain(`não deixa o usuário do Regents (uid ${uid}) gravar`);
     expect(backup.last!.error).toContain(`sudo chown ${uid}:${uid} backups`);
     expect(dumper.dumps).toEqual([]);
   });
@@ -185,7 +185,7 @@ describe("avisos ao Admin sobre o backup", () => {
 
     const push = await celularDaJuliana.next({ timeoutMs: 5_000 });
     expect(push.payload.notification).toMatchObject({
-      title: "O backup do Shearim falhou",
+      title: "O backup do Regents falhou",
       body: "pg_dump: error: connection to server failed",
       navigate: expect.stringMatching(/\/instalacao$/),
       tag: "instalacao-backup",
@@ -236,7 +236,7 @@ describe("avisos ao Admin sobre o backup", () => {
 
     // Os pushes saem em fila: quando o da Juliana chega, o do Bruno já teria chegado.
     expect((await celularDaJuliana.next({ timeoutMs: 5_000 })).payload.notification.title).toBe(
-      "O backup do Shearim falhou",
+      "O backup do Regents falhou",
     );
     expect(t.push.deliveries.filter((d) => d.endpoint === celularDoBruno.subscription.endpoint)).toEqual([]);
     expect((await t.as(bruno).get("/api/installation")).status).not.toBe(200);

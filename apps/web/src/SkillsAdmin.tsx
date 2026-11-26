@@ -159,7 +159,7 @@ function ImportSkill(props: { onImported(skill: SkillDto): void }) {
     <form className="settings-row" onSubmit={submit} aria-label="Importar SKILL.md">
       <p className="hint">
         Ou importe a Habilidade de um SKILL.md, de um .zip ou de uma pasta com ele: o nome e a descrição saem do
-        frontmatter. Scripts e outros arquivos ficam de fora, porque os Agentes do Shearim não executam código.
+        frontmatter. Scripts e outros arquivos ficam de fora, porque os Agentes do Regents não executam código.
       </p>
       <div className="row">
         <input
@@ -194,7 +194,7 @@ function ImportSkill(props: { onImported(skill: SkillDto): void }) {
           <p className="hint">Habilidade {result.skill.name} importada.</p>
           {result.ignored.length > 0 && (
             <>
-              <p className="hint">Ficaram de fora (os Agentes do Shearim não executam código):</p>
+              <p className="hint">Ficaram de fora (os Agentes do Regents não executam código):</p>
               <ul className="micro" aria-label="Arquivos ignorados">
                 {result.ignored.map((path) => (
                   <li key={path}>{path}</li>

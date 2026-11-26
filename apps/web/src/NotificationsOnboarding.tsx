@@ -28,7 +28,7 @@ export function NotificationsOnboarding({ push }: { push: PushState }) {
         <>
           <p role="alert">
             As notificações estão bloqueadas neste navegador. Para receber os avisos de Menção e de DM, libere as
-            notificações do Shearim nas configurações do site.
+            notificações do Regents nas configurações do site.
           </p>
           <div className="actions">
             <button type="button" onClick={close}>
@@ -38,7 +38,7 @@ export function NotificationsOnboarding({ push }: { push: PushState }) {
         </>
       ) : (
         <>
-          <p>Receba um aviso quando alguém mencionar você ou escrever numa DM sua, mesmo com o Shearim fechado.</p>
+          <p>Receba um aviso quando alguém mencionar você ou escrever numa DM sua, mesmo com o Regents fechado.</p>
           {outcome?.kind === "failed" && <p role="alert">Não consegui ligar as notificações: {outcome.detail}</p>}
           <div className="actions">
             <button
