@@ -28,7 +28,7 @@ import {
 } from "react";
 import { AgentPanel } from "./AgentView";
 import { Avatar } from "./Avatar";
-import { agentToolsText } from "./agent-tools";
+import { agentCapabilitiesText } from "./agent-tools";
 import { api } from "./api";
 import { hourMinute, weekdayShort } from "./format";
 import { useDropDeletedAgents, useServerEvents } from "./live";
@@ -1377,7 +1377,7 @@ function AddAgent({
           <option key={a.id} value={a.id}>
             {a.name}
             {a.description ? ` · ${a.description}` : ""}
-            {` · ${agentToolsText(a)}`}
+            {` · ${agentCapabilitiesText(a)}`}
           </option>
         ))}
       </select>

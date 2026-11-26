@@ -10,7 +10,7 @@ import {
 } from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
-import { agentToolsText } from "./agent-tools";
+import { agentCapabilitiesText } from "./agent-tools";
 import { api, messageOf } from "./api";
 import { dateTimeShort } from "./format";
 import { INCIDENT_TEXT, usd } from "./KeyBanners";
@@ -165,7 +165,7 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
           </button>
         </div>
         <p className="body">{a.description || "Sem descrição."}</p>
-        <p className="hint">{agentToolsText(a)}</p>
+        <p className="hint">{agentCapabilitiesText(a)}</p>
         <p className="hint">{a.memoryEnabled ? "Memória ligada" : "Memória desligada: não guarda nem lê"}</p>
         <p className={a.overBudget ? "error" : "hint"}>
           Gasto na Chave este mês: {usd.format(a.keySpendUsd ?? 0)}
