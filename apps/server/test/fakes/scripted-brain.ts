@@ -13,8 +13,14 @@
  * `nextRun`/`runs`: sem `scriptExtractions`, ela responde sozinha que não há nada a guardar;
  * com `scriptExtractions: true`, o teste a pega em `nextExtraction()` e emite os eventos dela. No
  * texto emitido, a operação sem `mensagem` cita a última mensagem de pessoa da troca.
+ *
+ * A Sincronização da Wiki (ADR 0015), reconhecida pela marca no `system` (`isSyncRequest`),
+ * também não entra em `nextRun`: sem `scriptSyncs`, cada chamada dela termina sozinha sem escrever
+ * nada ("Pronto."); com `scriptSyncs: true`, o teste a pega em `nextSync()`, chama as Ferramentas
+ * do rascunho (`run.request.tools!.call(...)`) e emite os eventos dela.
  */
 import type { ModelBrain, ModelEvent, ModelRequest } from "../../src/model/port";
+import { SYNC_MARKER } from "../../src/wiki/rules";
 import { citeLastPersonText } from "./memory-citation";
 
 export interface ScriptedRun {
@@ -30,6 +36,11 @@ const TERMINAL = new Set<ModelEvent["type"]>(["done", "failed", "auth_failed", "
 export function isExtractionRequest(request: ModelRequest) {
   const properties = (request.output?.schema as { properties?: object } | undefined)?.properties;
   return Boolean(properties && "operacoes" in properties);
+}
+
+/** Uma chamada da Sincronização da Wiki, pela marca das regras da Wiki no `system`. */
+export function isSyncRequest(request: ModelRequest) {
+  return request.system.includes(SYNC_MARKER);
 }
 
 /** Uma fila de chamadas na ordem em que chegaram, com a espera pela próxima. */
@@ -60,14 +71,20 @@ function arrivals(what: string) {
   };
 }
 
-export function scriptedBrain(opts: { scriptExtractions?: boolean } = {}) {
+export function scriptedBrain(opts: { scriptExtractions?: boolean; scriptSyncs?: boolean } = {}) {
   const replies = arrivals("a chamada");
   const extractions = arrivals("a extração");
+  const syncs = arrivals("a chamada da Sincronização");
 
   const brain: ModelBrain = {
     async *run(request, signal) {
       if (isExtractionRequest(request) && !opts.scriptExtractions) {
         yield { type: "text", text: JSON.stringify({ operacoes: [] }) };
+        yield { type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 };
+        return;
+      }
+      if (isSyncRequest(request) && !opts.scriptSyncs) {
+        yield { type: "text", text: "Pronto." };
         yield { type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 };
         return;
       }
@@ -85,7 +102,7 @@ export function scriptedBrain(opts: { scriptExtractions?: boolean } = {}) {
             notify?.();
           }),
       };
-      (isExtractionRequest(request) ? extractions : replies).push(run);
+      (isExtractionRequest(request) ? extractions : isSyncRequest(request) ? syncs : replies).push(run);
       const aborted = new Promise<void>((r) => signal.addEventListener("abort", () => r(), { once: true }));
       try {
         for (;;) {
@@ -116,5 +133,9 @@ export function scriptedBrain(opts: { scriptExtractions?: boolean } = {}) {
     extractions: extractions.runs,
     /** A próxima extração da Memória (só com `scriptExtractions`). */
     nextExtraction: extractions.next,
+    /** As chamadas da Sincronização que chegaram (só com `scriptSyncs`). */
+    syncs: syncs.runs,
+    /** A próxima chamada da Sincronização (só com `scriptSyncs`). */
+    nextSync: syncs.next,
   };
 }

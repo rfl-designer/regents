@@ -31,11 +31,22 @@ export interface FakeClaude {
   callsOf(kind: "auth login" | "auth status" | "auth logout" | "-p"): FakeClaudeCall[];
   /** Os starts do `-p` da extração da Memória (fora de `calls` e `callsOf("-p")`). */
   extractions(): FakeClaudeCall[];
+  /** Os starts do `-p` da Sincronização da Wiki (fora de `calls` e `callsOf("-p")`). */
+  syncs(): FakeClaudeCall[];
   /** Os sinais que os `-p` levaram, em ordem (de um só processo, com `pid`). */
   signals(pid?: number): FakeClaudeSignal[];
   /** O que os `-p` fizeram como clientes MCP (`{ tool }`), em ordem. */
   mcp(): FakeMcpEntry[];
   dispose(): void;
+}
+
+/** Um log de starts (`calls.jsonl`, `extractions.jsonl`, `syncs.jsonl`), vazio se ainda não há. */
+function readCalls(log: string): FakeClaudeCall[] {
+  if (!existsSync(log)) return [];
+  return readFileSync(log, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l) as FakeClaudeCall);
 }
 
 const sh = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
@@ -58,14 +69,8 @@ export function fakeClaude(script: FakeClaudeScript = {}): FakeClaude {
         .filter(Boolean)
         .map((l) => JSON.parse(l) as FakeClaudeCall);
     },
-    extractions() {
-      const log = join(home, "extractions.jsonl");
-      if (!existsSync(log)) return [];
-      return readFileSync(log, "utf8")
-        .split("\n")
-        .filter(Boolean)
-        .map((l) => JSON.parse(l) as FakeClaudeCall);
-    },
+    extractions: () => readCalls(join(home, "extractions.jsonl")),
+    syncs: () => readCalls(join(home, "syncs.jsonl")),
     signals(pid) {
       const log = join(home, "signals.jsonl");
       if (!existsSync(log)) return [];

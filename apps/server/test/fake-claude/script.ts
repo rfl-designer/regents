@@ -154,6 +154,14 @@ export interface FakeClaudeScript {
    */
   memoryRuns?: FakeRun[];
   memoryRun?: FakeRun;
+  /**
+   * A Sincronização da Wiki (ADR 0015), reconhecida pela marca no `--system-prompt`: fila própria,
+   * um por start (cada chamada da Sincronização é um `-p`), que não come `runs`. Vazia, vale
+   * `syncRun`, e sem ele a chamada termina sem escrever nada ("Pronto."). As escritas no rascunho
+   * são passos `{ tool: { name: "escrever_pagina", input } }`, pela sessão MCP da Sincronização (#80).
+   */
+  syncRuns?: FakeRun[];
+  syncRun?: FakeRun;
 }
 
 export const FAKE_LOGIN_CODE = "codigo-da-pagina-da-anthropic";

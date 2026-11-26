@@ -340,6 +340,7 @@ export const executions = pgTable(
 
 /**
  * Uso por execução (Spec, Esquema): Agente, pagador e custo de cada chamada que terminou bem.
+ * Também o de cada chamada de uma Sincronização da Wiki, que não é execução (ADR 0015).
  * Só a Chave grava aqui (o gasto da Conta é da assinatura do Membro e não aparece para o Admin).
  * O gasto do mês de um Agente é a soma de `cost_usd` com `month` = o mês do relógio (UTC).
  */
@@ -347,9 +348,13 @@ export const executionUsage = pgTable(
   "execution_usage",
   {
     id: uuid().primaryKey(),
-    executionId: uuid()
-      .notNull()
-      .references(() => executions.id),
+    /** A execução que gastou; nula no gasto de uma Sincronização da Wiki (`wikiSyncId`). */
+    executionId: uuid().references(() => executions.id),
+    /**
+     * A Sincronização da Wiki que gastou (ADR 0015): conta no orçamento da Articuladora. Sem FK: o
+     * gasto do mês fica mesmo que a Wiki (e as Sincronizações dela) seja apagada.
+     */
+    wikiSyncId: uuid(),
     agentId: uuid()
       .notNull()
       .references(() => agents.id),
@@ -363,7 +368,10 @@ export const executionUsage = pgTable(
     month: text().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull(),
   },
-  (t) => [index().on(t.agentId, t.month)],
+  (t) => [
+    index().on(t.agentId, t.month),
+    check("execution_usage_one_origin", sql`num_nonnulls(${t.executionId}, ${t.wikiSyncId}) = 1`),
+  ],
 );
 
 /**

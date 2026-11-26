@@ -14,8 +14,14 @@
  * `api.extractions` guarda as que chegaram, e sem roteiro ela não guarda nada (`operacoes: []`).
  * A operação roteirizada sem `mensagem` cita a última mensagem de pessoa da troca.
  * Assim, o roteiro e as contagens das respostas (`reply`, `requests`) não mudam por causa dela.
+ *
+ * A Sincronização da Wiki (ADR 0015) também tem fila e registro próprios, reconhecida pela marca
+ * no `system` (`isSync`): `api.sync({...})` roteiriza as próximas chamadas dela (cada turno do
+ * vai-e-vem de Ferramentas é uma chamada), `api.syncs` guarda as que chegaram, e sem roteiro ela
+ * termina sem escrever nada ("Pronto.").
  */
 
+import { SYNC_MARKER } from "../../src/wiki/rules";
 import { citeLastPerson } from "./memory-citation";
 
 /** O que o falso responde a uma chamada. Sem nada, responde um texto curto. */
@@ -93,6 +99,13 @@ export interface FakeMessagesApi {
   extractions: RecordedRequest[];
   /** Espera até `n` extrações terem chegado. */
   waitForExtractions(n: number, timeoutMs?: number): Promise<RecordedRequest[]>;
+  /**
+   * Roteiriza as próximas chamadas da Sincronização da Wiki, na ordem: cada turno é uma chamada
+   * (ex. `{ toolUse: [{ name: "escrever_pagina", input }] }` e, depois, `{ text: "Pronto." }`).
+   */
+  sync(...replies: FakeReply[]): void;
+  /** As chamadas da Sincronização que chegaram (fora de `requests`). */
+  syncs: RecordedRequest[];
   /** Só estas credenciais passam; as outras recebem 401 `authentication_error`. Vazio: qualquer uma. */
   acceptKeys(...keys: string[]): void;
   requests: RecordedRequest[];
@@ -154,6 +167,15 @@ export function isExtraction(body: RecordedRequest["body"]) {
   return Boolean(format?.schema?.properties && "operacoes" in format.schema.properties);
 }
 
+/** Uma chamada da Sincronização da Wiki (ADR 0015), pela marca das regras da Wiki no `system`. */
+export function isSync(body: RecordedRequest["body"]) {
+  const system = typeof body.system === "string" ? body.system : (body.system ?? []).map((b) => b.text).join("\n");
+  return system.includes(SYNC_MARKER);
+}
+
+/** A chamada da Sincronização sem roteiro: termina sem escrever nada. */
+export const SYNC_DONE: FakeReply = { text: "Pronto." };
+
 /**
  * A extração que não guarda nada: o padrão quando o teste não a roteiriza. De graça (sem tokens),
  * para não mexer no gasto na Chave de quem não está testando a Memória.
@@ -177,12 +199,16 @@ export async function startFakeMessagesApi(
     defaultReply?: (req: RecordedRequest) => FakeReply;
     /** O padrão da extração da Memória sem roteiro (padrão: `NOTHING_TO_REMEMBER`). */
     defaultExtraction?: (req: RecordedRequest) => FakeReply;
+    /** O padrão da chamada da Sincronização sem roteiro (padrão: `SYNC_DONE`). */
+    defaultSync?: (req: RecordedRequest) => FakeReply;
   } = {},
 ): Promise<FakeMessagesApi> {
   const script: FakeReply[] = [];
   const memoryScript: FakeReply[] = [];
+  const syncScript: FakeReply[] = [];
   const requests: RecordedRequest[] = [];
   const extractions: RecordedRequest[] = [];
+  const syncs: RecordedRequest[] = [];
   const accepted = new Set<string>();
   const arrivals: (() => void)[] = [];
   let pings = 0;
@@ -375,7 +401,8 @@ export async function startFakeMessagesApi(
         body,
       };
       const extraction = isExtraction(body);
-      (extraction ? extractions : requests).push(recorded);
+      const sync = isSync(body);
+      (extraction ? extractions : sync ? syncs : requests).push(recorded);
       for (const wake of arrivals.splice(0)) wake();
 
       if (!recorded.apiKey) return errorResponse(401, "authentication_error", "x-api-key header is required");
@@ -384,7 +411,9 @@ export async function startFakeMessagesApi(
       }
       let reply = extraction
         ? (memoryScript.shift() ?? opts.defaultExtraction?.(recorded) ?? NOTHING_TO_REMEMBER)
-        : (script.shift() ?? defaultReply(recorded));
+        : sync
+          ? (syncScript.shift() ?? opts.defaultSync?.(recorded) ?? SYNC_DONE)
+          : (script.shift() ?? defaultReply(recorded));
       // A operação roteirizada sem citação cita a última mensagem de pessoa (`memory-citation.ts`).
       if (extraction && reply.json !== undefined) {
         reply = { ...reply, json: citeLastPerson(reply.json, lastUserText(body)) };
@@ -406,6 +435,8 @@ export async function startFakeMessagesApi(
     reply: (...replies) => script.push(...replies),
     remember: (...replies) => memoryScript.push(...replies),
     extractions,
+    sync: (...replies) => syncScript.push(...replies),
+    syncs,
     acceptKeys: (...keys) => {
       accepted.clear();
       for (const k of keys) accepted.add(k);

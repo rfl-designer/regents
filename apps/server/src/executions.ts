@@ -44,24 +44,17 @@ import {
 import { publishMemory } from "./memory/items";
 import { recordMentions } from "./mentions";
 import { findMessage } from "./messages";
-import {
-  type ModelEvent,
-  type ModelPort,
-  type ModelRequest,
-  type ModelUsage,
-  NOT_STRUCTURED_REASON,
-  type Payer,
-  type TerminalModelEvent,
-} from "./model/port";
+import { failureOpts, failureReason, type Spent, STALL_MS, type StallWatch, streamCall } from "./model/call";
+import { type ModelPort, type ModelRequest, NOT_STRUCTURED_REASON, type Payer } from "./model/port";
 import { outcomeOf, recordOutcome } from "./outcomes";
 import { audienceOf } from "./participation";
+import { accountCallEnded, keyCallEnded, keyUsable, type PayingAccounts } from "./payer";
 import type { Push } from "./push";
 import type { Reading } from "./reading";
 import { buildRouting, parseDecision, ROUTING_SCHEMA } from "./routing";
 import type { SecretBox } from "./secrets";
 import { recordFollows } from "./threads";
 import { type ToolPort, toolCallsOf, withoutConnect } from "./tools/port";
-import { readWorkspaceKey } from "./workspace-key";
 
 const { executions, agents, channels, messages, accounts, approvalRequests, executionToolCalls } = schema;
 type Row = typeof executions.$inferSelect;
@@ -72,8 +65,7 @@ type Row = typeof executions.$inferSelect;
  */
 export type ExecutionKind = Row["kind"];
 
-/** Vigia (ADR 0003): quanto um passo pode ficar sem progresso antes de virar falha. */
-export const STALL_MS = 2 * 60_000;
+export { STALL_MS };
 /** O motivo do que o Agente apagado tinha aberto, e do que chega para ele depois (#65). */
 export const AGENT_DELETED_REASON = "o Agente foi apagado";
 /** A nova tentativa automática sai 10 s depois da falha. */
@@ -147,26 +139,7 @@ const RESTART_DURING_ACTION = "o servidor reiniciou durante a ação";
 /** Por que uma execução em andamento foi interrompida (o `reason` do `AbortSignal`). */
 type Interruption = "stalled" | "cancelled" | "shutdown" | "approval";
 
-/**
- * O que as execuções pedem às Contas: marcar o que a execução pela Conta viu, para que as
- * próximas nem tentem por ela (Spec, módulo 6, "Troca no meio").
- */
-export interface PayingAccounts {
-  markLimited(memberId: string, configDir: string, until: Date | null): Promise<void>;
-  markNeedsRelink(memberId: string, configDir: string): Promise<void>;
-  /**
-   * Segura a pasta `configDir` enquanto um `claude -p` roda nela: depois de ligar de novo, a pasta
-   * antiga só é apagada quando o último solta (ADR 0005). `null` quando a pasta já saiu de uso (a
-   * Conta acabou de ser ligada de novo): a execução volta para a fila e decide de novo quem paga.
-   */
-  lease(configDir: string): (() => void) | null;
-  /** O fim com sucesso pela pasta `configDir`: a validade (`credential_expires_at`) e o uso extra. */
-  runEnded(
-    memberId: string,
-    configDir: string,
-    seen: { credentialExpiresAt?: Date; extraUsage?: boolean },
-  ): Promise<void>;
-}
+export type { PayingAccounts } from "./payer";
 
 /** Ganchos de domínio das execuções. */
 export interface ExecutionHooks {
@@ -476,17 +449,8 @@ export function createExecutions(deps: {
     return at.length ? new Date(Math.min(...at.map((d) => d.getTime()))) : null;
   }
 
-  /**
-   * "Chave utilizável" (Spec, módulo 6): existe Chave e o Agente tem orçamento no mês (conferido
-   * antes de cada execução pela Chave, inclusive na troca no meio). Sem ela, o motivo (o de todos,
-   * sem a Conta).
-   */
-  async function keyUsableFor(agent: Agent): Promise<{ apiKey: string } | { reason: string }> {
-    const apiKey = await readWorkspaceKey(db, secrets);
-    if (!apiKey) return { reason: "o Workspace não tem Chave" };
-    const budget = await ledger.usable(agent.id);
-    return budget.ok ? { apiKey } : { reason: budget.reason };
-  }
+  /** "Chave utilizável" para o Agente agora (`payer.ts`). */
+  const keyUsableFor = (agent: Agent) => keyUsable({ db, secrets, ledger }, agent.id);
 
   /**
    * Quem paga esta execução, pela tabela da Spec, decidido de novo a cada tentativa (o "Tentar de
@@ -593,32 +557,18 @@ export function createExecutions(deps: {
       const request = await build(payer);
       spent.startedAt = clock.now();
       result = await complete(job, controller, request, spent);
-      if (payer.kind === "key") {
-        const end = result?.end;
-        if (end?.type === "auth_failed" || end?.type === "billing_failed") await ledger.refused(end.type);
-        return result;
-      }
     } finally {
       release?.();
       // Pela Chave, conta o uso que a API informou, chegando ou não ao fim (cancelada, parada pela
-      // vigia, falha no meio), no modelo que respondeu.
-      if (payer.kind === "key" && spent.usage) {
-        await ledger.charged(job, { ...spent.usage, startedAt: spent.startedAt, succeeded: spent.succeeded === true });
+      // vigia, falha no meio), no modelo que respondeu; e a recusa da Chave abre o incidente.
+      if (payer.kind === "key") {
+        await keyCallEnded(ledger, { agentId: job.agentId, executionId: job.id }, spent, result?.end);
       }
     }
     if (!result || payer.kind !== "account") return result;
-    if (result.end?.type === "limit" || result.end?.type === "auth_failed") {
-      if (result.end.type === "limit") {
-        await deps.accounts.markLimited(payer.memberId, payer.configDir, result.end.resetsAt);
-      } else {
-        await deps.accounts.markNeedsRelink(payer.memberId, payer.configDir);
-      }
+    if ((await accountCallEnded(deps.accounts, payer, result.end)) === "decide_again") {
       await requeue(job);
       return undefined;
-    }
-    if (result.end?.type === "done") {
-      const { credentialExpiresAt, extraUsage } = result.end;
-      await deps.accounts.runEnded(payer.memberId, payer.configDir, { credentialExpiresAt, extraUsage });
     }
     return result;
   }
@@ -923,10 +873,6 @@ export function createExecutions(deps: {
   async function complete(job: Row, controller: AbortController, request: ModelRequest, spent: Spent) {
     const { signal } = controller;
     const step = (job.step as ExecutionStep | null) ?? "writing";
-    const watchdog = stallWatch(clock, STALL_MS, () => controller.abort("stalled" satisfies Interruption));
-    watchdogs.set(job.id, watchdog);
-    let text = "";
-    let end: TerminalModelEvent | undefined;
     let apiRetrying = false;
     /** "tentando de novo (n/m)" aparece, e some quando a resposta volta a andar. */
     async function showApiRetry(retry: { attempt: number; max: number } | null) {
@@ -945,25 +891,20 @@ export function createExecutions(deps: {
         .where(and(eq(executions.id, job.id), eq(executions.state, "running")));
       await publish(job.id);
     }
-    try {
-      for await (const event of model.run(request, signal)) {
-        if (isProgress(event)) watchdog.reset();
+    const { text, end } = await streamCall({
+      model,
+      clock,
+      request,
+      controller,
+      spent,
+      stallMs: STALL_MS,
+      async onEvent(event) {
         if (event.type === "api_retry") await showApiRetry(event);
         else if ((event.type === "text" || event.type === "thinking") && apiRetrying) await showApiRetry(null);
-        if (event.type === "text") text += event.text;
         else if (event.type === "tool_limit") await showToolLimit();
-        else if (event.type === "usage")
-          spent.usage = { model: event.model, usage: event.usage, costUsd: event.costUsd };
-        else if (event.type === "done") {
-          end = event;
-          spent.usage = { model: request.model, usage: event.usage, costUsd: event.costUsd };
-          spent.succeeded = true;
-        } else if (event.type !== "thinking" && event.type !== "api_retry") end = event;
-      }
-    } finally {
-      watchdog.cancel();
-      watchdogs.delete(job.id);
-    }
+      },
+      onWatch: (watch) => (watch ? watchdogs.set(job.id, watch) : watchdogs.delete(job.id)),
+    });
     if (signal.aborted) {
       // Na vigia, é falha. No cancelamento, já está gravado. No reinício, continua "em andamento"
       // até a próxima subida.
@@ -1533,15 +1474,6 @@ type Choice =
   /** Ninguém paga: "Agentes não agem" (ou a extração que não guardou), com o motivo de todos e o do autor. */
   | { kind: "none"; reason: string; authorReason?: string }
   | { kind: "hold"; until: Date | null };
-/**
- * O que a API informou que a chamada gastou até agora (o gasto na Chave conta mesmo sem o fim) e
- * se ela chegou ao `done`.
- */
-type Spent = {
-  startedAt: Date;
-  usage?: { model: string; usage: ModelUsage; costUsd: number };
-  succeeded?: boolean;
-};
 /** Os tetos que uma execução ocupa enquanto roda. */
 type Slots = { key?: true; process?: true; account?: string };
 
@@ -1609,68 +1541,6 @@ function onTurn(now: Date) {
     and(eq(executions.kind, "memory"), none(extractionAhead)),
     and(ne(executions.kind, "memory"), none(ahead)),
   )!;
-}
-
-/** Contam como progresso para a vigia: texto, pensamento e nova tentativa da API (nunca `ping`). */
-function isProgress(event: ModelEvent) {
-  return (
-    event.type === "text" || event.type === "thinking" || event.type === "tool_limit" || event.type === "api_retry"
-  );
-}
-
-/**
- * Um prazo que recomeça a cada progresso e chama `onStall` se vencer. `pause` o suspende (uma
- * Ferramenta rodando, com o prazo dela) até `resume`, que recomeça a contagem.
- */
-function stallWatch(clock: Clock, ms: number, onStall: () => void) {
-  let cancel = clock.after(ms, onStall);
-  let paused = false;
-  const arm = () => {
-    cancel();
-    cancel = clock.after(ms, onStall);
-  };
-  return {
-    reset() {
-      if (!paused) arm();
-    },
-    pause() {
-      paused = true;
-      cancel();
-    },
-    resume() {
-      paused = false;
-      arm();
-    },
-    cancel: () => cancel(),
-  };
-}
-type StallWatch = ReturnType<typeof stallWatch>;
-
-/** Falhas que uma nova tentativa não conserta: a credencial e o pedido em si. */
-function isRetryable(end: TerminalModelEvent | undefined) {
-  if (end?.type === "auth_failed" || end?.type === "billing_failed") return false;
-  if (end?.type === "failed") return end.retryable;
-  return true;
-}
-
-function failureOpts(end: TerminalModelEvent | undefined) {
-  return {
-    retryable: isRetryable(end),
-    ...(end?.type === "failed" && end.authorReason ? { authorReason: end.authorReason } : {}),
-  };
-}
-
-function failureReason(end: TerminalModelEvent | undefined) {
-  switch (end?.type) {
-    case "auth_failed":
-      return "a Chave do Workspace foi recusada pela Anthropic";
-    case "billing_failed":
-      return "a Chave do Workspace está sem crédito";
-    case "failed":
-      return end.reason;
-    default:
-      return "a resposta parou no meio";
-  }
 }
 
 /** Estados em que o motivo aparece. */

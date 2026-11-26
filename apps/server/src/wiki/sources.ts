@@ -16,15 +16,33 @@ export interface SourceUpload {
 /** O tamanho máximo padrão de uma Fonte: 5 MB (um curso transcrito inteiro cabe em poucas Fontes). */
 export const DEFAULT_SOURCE_MAX_BYTES = 5_000_000;
 
-/** O tamanho máximo de uma Fonte na Instalação: `SHEARIM_WIKI_SOURCE_MAX_MB` (aceita fração). */
-export function wikiFromEnv(env: Record<string, string | undefined>): { sourceMaxBytes?: number } {
+/**
+ * O que a Instalação ajusta na Wiki: o tamanho máximo de uma Fonte (`SHEARIM_WIKI_SOURCE_MAX_MB`,
+ * aceita fração) e o teto de turnos de Ferramenta de cada chamada da Sincronização
+ * (`SHEARIM_WIKI_SYNC_MAX_TURNS`). O que falta fica com o padrão; valor inválido é erro.
+ */
+export function wikiFromEnv(env: Record<string, string | undefined>): {
+  sourceMaxBytes?: number;
+  syncMaxToolTurns?: number;
+} {
+  const out: { sourceMaxBytes?: number; syncMaxToolTurns?: number } = {};
   const raw = env.SHEARIM_WIKI_SOURCE_MAX_MB?.trim();
-  if (!raw) return {};
-  const mb = Number(raw);
-  if (!Number.isFinite(mb) || mb <= 0) {
-    throw new Error(`SHEARIM_WIKI_SOURCE_MAX_MB=${raw} não é um número maior que zero.`);
+  if (raw) {
+    const mb = Number(raw);
+    if (!Number.isFinite(mb) || mb <= 0) {
+      throw new Error(`SHEARIM_WIKI_SOURCE_MAX_MB=${raw} não é um número maior que zero.`);
+    }
+    out.sourceMaxBytes = Math.round(mb * 1_000_000);
   }
-  return { sourceMaxBytes: Math.round(mb * 1_000_000) };
+  const turns = env.SHEARIM_WIKI_SYNC_MAX_TURNS?.trim();
+  if (turns) {
+    const n = Number(turns);
+    if (!Number.isInteger(n) || n < 1) {
+      throw new Error(`SHEARIM_WIKI_SYNC_MAX_TURNS=${turns} não é um número inteiro maior que zero.`);
+    }
+    out.syncMaxToolTurns = n;
+  }
+  return out;
 }
 
 /** Por que um arquivo não vira Fonte: o código do erro HTTP e o motivo, em pt-BR. */

@@ -4,6 +4,8 @@ import type { Clock } from "../clock";
 import type { Db } from "../db/client";
 import { adminOnly, type Env } from "../members";
 import { addSources, DEFAULT_SOURCE_MAX_BYTES, listSources, readUploads } from "./sources";
+import type { WikiSyncs } from "./sync";
+import { listVersions, pageDtos, versionNumbered } from "./versions";
 import { createWiki, findWiki, listWikis, wikiNamed } from "./wikis";
 
 const NAME_MAX = 80;
@@ -13,7 +15,7 @@ const NAME_MAX = 80;
  * mesmo as Wikis restritas a uma lista sem ele (`403 not_admin` para os outros). Isso não dá a ele
  * leitura delas nas conversas: ali vale o alcance (ADR 0014).
  */
-export function wikiRoutes(deps: { db: Db; clock: Clock; sourceMaxBytes?: number }) {
+export function wikiRoutes(deps: { db: Db; clock: Clock; syncs: WikiSyncs; sourceMaxBytes?: number }) {
   const { db, clock } = deps;
   const sourceMaxBytes = deps.sourceMaxBytes ?? DEFAULT_SOURCE_MAX_BYTES;
   const routes = new Hono<Env>();
@@ -60,6 +62,33 @@ export function wikiRoutes(deps: { db: Db; clock: Clock; sourceMaxBytes?: number
       return c.json({ error: "source_exists", message }, 409);
     }
     return c.json(sources, 201);
+  });
+
+  /**
+   * "Sincronizar" (ADR 0015): o clique do Admin autoriza a Sincronização inteira, sem Pedido de
+   * aprovação. Ela começa na hora (202) e segue em tempo real (`wiki_sync.updated`). Recusada com
+   * o motivo (409) quando já há uma em curso na Wiki ou quando não há nada pendente.
+   */
+  routes.post("/wikis/:id/sync", adminOnly, async (c) => {
+    const wiki = await findWiki(db, c.req.param("id"));
+    if (!wiki) return c.json({ error: "not_found" }, 404);
+    const sync = await deps.syncs.request(wiki.id, c.get("member").id);
+    if ("error" in sync) return c.json(sync, 409);
+    return c.json(sync, 202);
+  });
+
+  routes.get("/wikis/:id/versions", adminOnly, async (c) => {
+    const wiki = await findWiki(db, c.req.param("id"));
+    if (!wiki) return c.json({ error: "not_found" }, 404);
+    return c.json(await listVersions(db, wiki.id));
+  });
+
+  /** As páginas de uma versão, por slug (a administração: o Admin vê toda Wiki, mesmo restrita). */
+  routes.get("/wikis/:id/versions/:number/pages", adminOnly, async (c) => {
+    const wiki = await findWiki(db, c.req.param("id"));
+    const version = wiki && (await versionNumbered(db, wiki.id, Number(c.req.param("number"))));
+    if (!version) return c.json({ error: "not_found" }, 404);
+    return c.json(await pageDtos(db, version));
   });
 
   return routes;

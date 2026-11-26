@@ -3,6 +3,8 @@
  * Só tipos (e constantes pequenas). Nada de runtime pesado aqui.
  */
 
+import type { WikiServerEvent } from "./wiki";
+
 // ---------- identidade e Membros ----------
 
 /** Por que uma requisição chegou sem identidade da tailnet (ADR 0007). */
@@ -1005,6 +1007,11 @@ export interface AgentSkillDto {
   name: string;
   description: string;
   active: boolean;
+  /**
+   * Uma Habilidade do Shearim, e não do Workspace ("Sincronizar a Wiki", na Articuladora): sempre
+   * ativa, só para leitura (não se ativa, desativa nem edita).
+   */
+  builtin?: true;
 }
 
 // ---------- Pedido de aprovação (ADR 0011) ----------
@@ -1312,6 +1319,8 @@ export type ServerEvent =
   /** Um Pedido de aprovação novo, ou que mudou de estado: para quem vê a conversa. */
   | { type: "approval.created"; approval: ApprovalRequestDto }
   | { type: "approval.updated"; approval: ApprovalRequestDto }
+  /** A Sincronização e a Wiki (spec #74), para quem vê a Wiki. */
+  | WikiServerEvent
   /**
    * As não-lidas do Membro mudaram (chegou mensagem numa conversa dele, ou ele leu algo em
    * qualquer aba ou aparelho). Vai só para as conexões do próprio Membro.

@@ -34,6 +34,10 @@
  * que respondeu (#65). Com `[sem citar: <texto>]`, devolve também o texto sem citar mensagem
  * nenhuma, que o Shearim descarta e mostra no Andamento.
  *
+ * A Sincronização da Wiki (reconhecida pela marca no `system`) escreve, para cada Fonte, uma página
+ * com o slug do nome do arquivo (sem a extensão), o título do primeiro `# título` da Fonte (ou o nome
+ * do arquivo) e o primeiro parágrafo de texto, e acrescenta a linha dela ao índice do rascunho.
+ *
  * O GitHub é o falso dos testes do servidor (`test/fakes/github-api.ts`), com `time/site` e
  * `time/infra` na conta do time: criar o App e instalá-lo passam por ele (o "navegador do Admin"
  * pode ser um `fetch` que segue os redirecionamentos à mão).
@@ -79,6 +83,7 @@ const delayMs = Number(process.env.FAKE_MESSAGES_API_DELAY_MS ?? 400);
 const failures = new Map<string, number>();
 const anthropic = await startFakeMessagesApi({
   defaultExtraction: lembrar,
+  defaultSync: sincronizar,
   defaultReply: (req) => {
     if (req.body.output_config) return desfecho(req);
     const [resultado] = toolResults(req.body);
@@ -116,6 +121,41 @@ const anthropic = await startFakeMessagesApi({
     return { text: "Oi! Tudo certo por aqui: o prazo é sexta-feira.", delayMs };
   },
 });
+/**
+ * Uma chamada da Sincronização: no primeiro turno, escreve a página da Fonte e o índice com ela; no
+ * seguinte (com os resultados das Ferramentas), termina.
+ */
+function sincronizar(req: RecordedRequest): FakeReply {
+  if (toolResults(req.body).length) return { text: "Pronto.", delayMs: 0 };
+  const prompt = lastUserText(req.body);
+  const indice = prompt.split("## Índice do rascunho\n")[1]?.split("\n\n## Fonte nova")[0] ?? "";
+  const fonte = prompt.match(/## Fonte nova: (.+?) \(Fonte \d+ de \d+\)\n([\s\S]*?)\n\nLeve esta Fonte/);
+  if (!fonte) return { text: "Pronto.", delayMs: 0 };
+  const [, arquivo, texto] = fonte as unknown as [string, string, string];
+  const slug = arquivo
+    .replace(/\.[^.]+$/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  const titulo = texto.match(/^# (.+)$/m)?.[1]?.trim() ?? arquivo;
+  const corpo =
+    texto
+      .split("\n\n")
+      .find((p) => p.trim() && !p.startsWith("#"))
+      ?.trim() ?? texto.trim();
+  const linhas = indice.startsWith("(") ? [] : indice.split("\n").filter(Boolean);
+  return {
+    toolUse: [
+      { name: "escrever_pagina", input: { slug, titulo, corpo, fontes: [arquivo] } },
+      {
+        name: "escrever_pagina",
+        input: { slug: "index", titulo: "Índice", corpo: [...linhas, `- [[${slug}]]: ${titulo}`].join("\n") },
+      },
+    ],
+    delayMs,
+  };
+}
+
 /**
  * A extração da Memória: guarda o `[lembrar: …]` da última mensagem de pessoa da troca (a que o
  * Agente respondeu). A entrada traz as mensagens de pessoa, uma por parágrafo, antes da resposta.

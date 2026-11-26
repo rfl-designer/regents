@@ -260,6 +260,13 @@
       "when": 1795656730144,
       "tag": "0036_wiki-e-fontes",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1795657884293,
+      "tag": "0037_sincronizacao",
+      "breakpoints": true
     }
   ]
 }
