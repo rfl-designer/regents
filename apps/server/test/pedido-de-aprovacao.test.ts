@@ -223,7 +223,7 @@ describe("a decisão do autor", () => {
       expect((await respostaA(t, geral.id, origem)).body).toBe("Pronto, avisei no #anuncios.");
       const [, continuacao] = respostas(t);
       expect(textoDe(continuacao!)).toContain("Postar em #anuncios: “@prisma a reunião mudou para 15h.”");
-      expect(textoDe(continuacao!)).toContain("Bruno aprovou, e o Shearim fez: mensagem postada em #anuncios");
+      expect(textoDe(continuacao!)).toContain("Bruno aprovou, e o Regents fez: mensagem postada em #anuncios");
       // A continuação não pediu de novo a escrita: só dois pedidos de resposta, nenhum roteamento.
       expect(t.anthropic.requests).toHaveLength(2);
       const noAnuncios = (await (
@@ -471,7 +471,7 @@ describe("responder em Thread e duas escritas", () => {
 
       expect((await respostaA(t, geral.id, origem)).body).toBe("Postei o aviso; a resposta na Thread ficou de fora.");
       const ultima = textoDe(respostas(t)[2]!);
-      expect(ultima).toContain("Bruno aprovou, e o Shearim fez: mensagem postada em #anuncios");
+      expect(ultima).toContain("Bruno aprovou, e o Regents fez: mensagem postada em #anuncios");
       expect(ultima).toContain("Bruno recusou, sem dar motivo");
       expect((await pedidos(t, geral.id)).map((p) => p.state)).toEqual(["approved", "rejected"]);
       const doAnuncios = await mensagens(t, anuncios.id);
@@ -898,7 +898,7 @@ describe("a escrita aprovada que não termina", () => {
       expect(respostasNoGeral.map((m) => m.body).sort()).toEqual(["Avisei.", "Tudo bem, não avisei."]);
       const continuacoes = respostas(t).slice(2).map(textoDe).join("\n");
       expect(continuacoes).toContain("Bruno recusou, sem dar motivo");
-      expect(continuacoes).toContain("Bruno aprovou, e o Shearim fez: mensagem postada em #anuncios");
+      expect(continuacoes).toContain("Bruno aprovou, e o Regents fez: mensagem postada em #anuncios");
     },
     LONGO,
   );

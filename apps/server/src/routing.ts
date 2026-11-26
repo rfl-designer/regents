@@ -217,7 +217,7 @@ export async function buildRouting(db: Db, articuladora: Agent, originMessageId:
   const spoke = inThread ? await spokeInThread(db, origin.threadRootId!, team) : [];
 
   const contract = [
-    `Você é ${articuladora.name}, a Articuladora do Shearim, um chat de time em que pessoas e Agentes conversam juntos.`,
+    `Você é ${articuladora.name}, a Articuladora do Regents, um chat de time em que pessoas e Agentes conversam juntos.`,
     inThread
       ? `Você está numa Thread do Canal #${channel!.name}, aberta pela mensagem de ${recent[0]!.author}. Dê o Desfecho da última mensagem, de ${author}: decida quem responde.`
       : `Você está no Canal #${channel!.name}. Dê o Desfecho da última mensagem, de ${author}: decida quem responde.`,

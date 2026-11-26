@@ -243,7 +243,7 @@ describe("a continuação depois da decisão", () => {
       expect(endpointDe(segunda!).token).not.toBe(endpointDe(primeira!).token);
       // A continuação sabe o que pediu e o que a autora decidiu (ADR 0011).
       expect(segunda!.stdin).toContain("A reunião mudou para 15h.");
-      expect(segunda!.stdin).toContain("Juliana aprovou, e o Shearim fez:");
+      expect(segunda!.stdin).toContain("Juliana aprovou, e o Regents fez:");
       expect(t.anthropic.requests).toHaveLength(0);
     },
     LONGO,

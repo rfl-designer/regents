@@ -162,7 +162,7 @@ export async function continuationNote(db: Db, approvalRequestId: string) {
       return `${asked} ${r.authorName} aprovou, mas o resultado é incerto: ${r.failure}. Não peça de novo; diga a quem escreveu para conferir.`;
     }
     if (r.failure) return `${asked} ${r.authorName} aprovou, mas a ação falhou: ${r.failure}.`;
-    return `${asked} ${r.authorName} aprovou, e o Shearim fez: ${r.result}.`;
+    return `${asked} ${r.authorName} aprovou, e o Regents fez: ${r.result}.`;
   });
   return [
     "Você já começou esta resposta e pediu escritas, que passaram por Pedido de aprovação de quem escreveu:",
