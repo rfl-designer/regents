@@ -1,10 +1,20 @@
-import { SKILL_BODY_MAX, SKILL_DESCRIPTION_MAX, SKILL_NAME_MAX, type UpdateSkillInput } from "@shearim/contracts";
+import {
+  type CreateSkillInput,
+  SKILL_BODY_MAX,
+  SKILL_DESCRIPTION_MAX,
+  SKILL_IMPORT_MAX_BYTES,
+  SKILL_NAME_MAX,
+  type SkillDto,
+  type SkillOrigin,
+  type UpdateSkillInput,
+} from "@shearim/contracts";
 import { and, eq } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { findAgent, lockLiveAgent } from "../agents";
 import type { Clock } from "../clock";
 import { type Db, isUuid, schema } from "../db/client";
 import { adminOnly, type Env } from "../members";
+import { readSkillFile } from "./import";
 import { agentSkillsOf, selectSkills, skillById } from "./skills";
 
 const { skills, agentSkills } = schema;
@@ -15,7 +25,8 @@ const { skills, agentSkills } = schema;
  *
  * O nome é único no Workspace sem diferenciar maiúsculas (`409 name_taken`); a descrição diz quando
  * usar e é obrigatória (`400 invalid_input`). Uma edição vale na próxima leitura; apagar tira a
- * Habilidade de todos os Agentes na hora.
+ * Habilidade de todos os Agentes na hora. Importar um `SKILL.md` (ou um `.zip` de skill) cria a
+ * Habilidade com as mesmas regras, marcada como importada.
  */
 export function skillRoutes(deps: { db: Db; clock: Clock }) {
   const { db, clock } = deps;
@@ -28,18 +39,40 @@ export function skillRoutes(deps: { db: Db; clock: Clock }) {
     return skill ? c.json(skill) : c.json({ error: "not_found" }, 404);
   });
 
-  routes.post("/skills", adminOnly, async (c) => {
-    const input = await fieldsOf(c, { partial: false });
-    if (input instanceof Response) return input;
+  /** Cria a Habilidade, ou responde `409 name_taken`. */
+  async function create(c: Context<Env>, input: CreateSkillInput, origin: SkillOrigin) {
     const now = clock.now();
     const id = crypto.randomUUID();
     const [created] = await db
       .insert(skills)
-      .values({ id, ...(input as Required<UpdateSkillInput>), createdAt: now, updatedAt: now })
+      .values({ id, ...input, origin, createdAt: now, updatedAt: now })
       .onConflictDoNothing()
       .returning({ id: skills.id });
-    if (!created) return nameTaken(c, input.name!);
-    return c.json(await skillById(db, id), 201);
+    return created ? ((await skillById(db, id)) as SkillDto) : nameTaken(c, input.name);
+  }
+
+  routes.post("/skills", adminOnly, async (c) => {
+    const input = await fieldsOf(c, { partial: false });
+    if (input instanceof Response) return input;
+    const skill = await create(c, input as CreateSkillInput, "written");
+    return skill instanceof Response ? skill : c.json(skill, 201);
+  });
+
+  routes.post("/skills/import", adminOnly, async (c) => {
+    const invalid = (message: string) => c.json({ error: "invalid_skill", message }, 400);
+    const form = await c.req.formData().catch(() => null);
+    const file = form?.get("file");
+    if (!(file instanceof File)) return invalid("Mande o arquivo SKILL.md ou o .zip da skill no campo file.");
+    if (file.size > SKILL_IMPORT_MAX_BYTES) {
+      const mb = SKILL_IMPORT_MAX_BYTES / 1024 / 1024;
+      return c.json({ error: "file_too_large", message: `O arquivo tem mais de ${mb} MB.` }, 413);
+    }
+    const read = await readSkillFile(file);
+    if ("error" in read) return invalid(read.error);
+    const input = checkFields(read.input, { partial: false });
+    if (typeof input === "string") return invalid(input);
+    const skill = await create(c, input as CreateSkillInput, "imported");
+    return skill instanceof Response ? skill : c.json({ skill, ignored: read.ignored }, 201);
   });
 
   routes.patch("/skills/:id", adminOnly, async (c) => {
@@ -104,8 +137,13 @@ export function skillRoutes(deps: { db: Db; clock: Clock }) {
 /** O nome, a descrição e o corpo conferidos (só os presentes, com `partial`), ou a resposta 400. */
 async function fieldsOf(c: Context<Env>, opts: { partial: boolean }): Promise<UpdateSkillInput | Response> {
   const raw = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
-  const invalid = (message: string) => c.json({ error: "invalid_input", message }, 400);
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return invalid("Mande o nome, a descrição e o corpo.");
+  const checked = checkFields(raw, opts);
+  return typeof checked === "string" ? c.json({ error: "invalid_input", message: checked }, 400) : checked;
+}
+
+/** Os campos conferidos (só os presentes, com `partial`), ou o motivo da recusa. */
+function checkFields(raw: Record<string, unknown> | null, opts: { partial: boolean }): UpdateSkillInput | string {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "Mande o nome, a descrição e o corpo.";
   const out: UpdateSkillInput = {};
   const rules = [
     ["name", "o nome da Habilidade", SKILL_NAME_MAX],
@@ -115,15 +153,13 @@ async function fieldsOf(c: Context<Env>, opts: { partial: boolean }): Promise<Up
   for (const [field, label, max] of rules) {
     const value = raw[field];
     if (value === undefined && opts.partial) continue;
-    if (value !== undefined && typeof value !== "string") return invalid(`O campo ${field} é um texto.`);
+    if (value !== undefined && typeof value !== "string") return `O campo ${field} é um texto.`;
     const text =
       field === "body" ? ((value as string | undefined) ?? "") : ((value as string | undefined) ?? "").trim();
-    if (field === "name" && !text) return invalid("Dê um nome à Habilidade.");
-    if (field === "description" && !text)
-      return invalid("A descrição diz quando usar a Habilidade: ela é obrigatória.");
-    if (field === "body" && !text.trim()) return invalid("Escreva o corpo da Habilidade: o procedimento em markdown.");
-    if (text.length > max)
-      return invalid(`${label[0]!.toUpperCase()}${label.slice(1)} tem no máximo ${max} caracteres.`);
+    if (field === "name" && !text) return "Dê um nome à Habilidade.";
+    if (field === "description" && !text) return "A descrição diz quando usar a Habilidade: ela é obrigatória.";
+    if (field === "body" && !text.trim()) return "Escreva o corpo da Habilidade: o procedimento em markdown.";
+    if (text.length > max) return `${label[0]!.toUpperCase()}${label.slice(1)} tem no máximo ${max} caracteres.`;
     out[field] = text;
   }
   return out;
