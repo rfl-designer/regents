@@ -290,7 +290,7 @@ describe("uma Sincronização por Wiki", () => {
   );
 });
 
-describe('"Sincronizar a Wiki" é uma Habilidade do Shearim', () => {
+describe('"Sincronizar a Wiki" é uma Habilidade do Regents', () => {
   test("a tela da Articuladora a mostra ativa e só para leitura; a de outro Agente, não", async () => {
     const t = await testApp();
     await workspace(t);
@@ -309,7 +309,7 @@ describe('"Sincronizar a Wiki" é uma Habilidade do Shearim', () => {
     const dela: AgentSkillDto[] = await (await t.as(juliana).get(`/api/agents/${sophya.id}/skills`)).json();
     const sincronizar = dela.find((h) => h.name === "Sincronizar a Wiki");
     expect(sincronizar).toMatchObject({ active: true, builtin: true });
-    expect(sincronizar!.description).toContain("Sincronizar");
+    expect(sincronizar!.description).toContain("É do Regents e não se edita.");
     // Só para leitura: nem desativar, nem ativar em outro Agente.
     expect((await t.as(juliana).delete(`/api/agents/${sophya.id}/skills/${sincronizar!.id}`)).status).toBe(404);
     expect((await t.as(juliana).put(`/api/agents/${faro.id}/skills/${sincronizar!.id}`)).status).toBe(404);

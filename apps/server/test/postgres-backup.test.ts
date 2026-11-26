@@ -165,6 +165,6 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
     const run = await runApp(["migrate"], env);
 
     expect(run.code).toBe(1);
-    expect(run.stderr).toContain("migrado por uma versão mais nova do Shearim");
+    expect(run.stderr).toContain("migrado por uma versão mais nova do Regents");
   }, 120_000);
 });

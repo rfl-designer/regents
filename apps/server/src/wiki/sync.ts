@@ -475,7 +475,7 @@ export function createWikiSyncs(deps: {
       const done = work(id, controller)
         .catch(async (err) => {
           console.error("regents: a Sincronização da Wiki falhou", err);
-          await fail(id, "erro inesperado no Shearim").catch(() => {});
+          await fail(id, "erro inesperado no Regents").catch(() => {});
         })
         .finally(() => running.delete(id));
       running.set(id, { controller, done });

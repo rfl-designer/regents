@@ -116,7 +116,7 @@ describe("banco migrado por uma versão mais nova", () => {
 
     for (const run of [migrated, served]) {
       expect(run.code).toBe(1);
-      expect(run.stderr).toContain("migrado por uma versão mais nova do Shearim");
+      expect(run.stderr).toContain("migrado por uma versão mais nova do Regents");
       expect(run.stderr).toContain("restore");
     }
     expect(served.stdout).not.toContain("ouvindo");

@@ -179,7 +179,7 @@ function checkFields(raw: Record<string, unknown> | null, opts: { partial: boole
 const reserved = (name: string) => name.trim().toLowerCase() === SYNC_SKILL.name.toLowerCase();
 
 const reservedName = (c: Context<Env>) =>
-  c.json({ error: "name_taken", message: `${SYNC_SKILL.name} é a Habilidade do Shearim: dê outro nome à sua.` }, 409);
+  c.json({ error: "name_taken", message: `${SYNC_SKILL.name} é a Habilidade do Regents: dê outro nome à sua.` }, 409);
 
 const nameTaken = (c: Context<Env>, name: string) =>
   c.json({ error: "name_taken", message: `Já existe uma Habilidade chamada ${name}.` }, 409);

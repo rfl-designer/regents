@@ -29,7 +29,7 @@ export async function writeAtomically(file: string, write: (tmp: string) => Prom
   } catch (err) {
     const uid = process.getuid?.() ?? 1000;
     throw new Error(
-      `a pasta ${dir} não deixa o usuário do Shearim (uid ${uid}) gravar (${(err as NodeJS.ErrnoException).code}). ` +
+      `a pasta ${dir} não deixa o usuário do Regents (uid ${uid}) gravar (${(err as NodeJS.ErrnoException).code}). ` +
         `Na pasta da Instalação, no host: sudo chown ${uid}:${uid} backups && chmod 700 backups`,
     );
   }

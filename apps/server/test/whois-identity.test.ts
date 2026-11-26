@@ -230,7 +230,9 @@ describe("entrada pela tailnet: o app com o whois de verdade", () => {
     expect(await res.json()).toEqual({ error: "identity_unavailable" });
     expect((await t.upgradeWith(juliana)).status).toBe(503);
     // A página do PWA também pergunta ao whois (#16): 503, não a página de "sem identidade".
-    expect((await t.request(juliana).get("/")).status).toBe(503);
+    const pagina = await t.request(juliana).get("/");
+    expect(pagina.status).toBe(503);
+    expect(await pagina.text()).toBe("O Regents não conseguiu falar com o tailscaled. Veja o log do app.");
   });
 
   test("o Pedido de entrada leva o aparelho, a foto e o sharee que o whois deu", async () => {

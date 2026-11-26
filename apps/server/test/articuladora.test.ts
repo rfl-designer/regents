@@ -20,7 +20,7 @@ async function criarCanal(t: TestApp, name: string, kind: "public" | "private"):
 }
 
 describe("a Articuladora existe em todo Workspace", () => {
-  test("todo Workspace vem com a Sophya, embutida, com descrição do Shearim e o identificador @sophya", async () => {
+  test("todo Workspace vem com a Sophya, embutida, com descrição do Regents e o identificador @sophya", async () => {
     const t = await testApp();
     await t.as(juliana).get("/api/me");
 
@@ -32,7 +32,7 @@ describe("a Articuladora existe em todo Workspace", () => {
         name: "Sophya",
         handle: "sophya",
         photo: null,
-        description: expect.stringContaining("Articuladora"),
+        description: expect.stringMatching(/^A Articuladora do Regents: /),
         model: "claude-sonnet-5-5",
         builtin: true,
         // Sem Ferramentas até o Admin conceder (Spec #44).
@@ -100,7 +100,7 @@ describe("o Admin adapta a Articuladora sem quebrar o Desfecho", () => {
     expect(geral!.participants).toContainEqual({ kind: "agent", id: sophya.id, displayName: "Ada", photo: FOTO });
   });
 
-  test("as instruções e a descrição dela são do Shearim: o Admin não as muda", async () => {
+  test("as instruções e a descrição dela são do Regents: o Admin não as muda", async () => {
     const t = await testApp();
     await t.as(juliana).get("/api/me");
     const sophya = await articuladora(t);
@@ -110,7 +110,10 @@ describe("o Admin adapta a Articuladora sem quebrar o Desfecho", () => {
 
     for (const res of [instrucoes, descricao]) {
       expect(res.status).toBe(403);
-      expect(await res.json()).toMatchObject({ error: "builtin_locked" });
+      expect(await res.json()).toEqual({
+        error: "builtin_locked",
+        message: "A descrição e as instruções da Articuladora são do Regents.",
+      });
     }
     expect(await articuladora(t)).toEqual(sophya);
   });
@@ -124,7 +127,7 @@ describe("o Admin adapta a Articuladora sem quebrar o Desfecho", () => {
     const doBruno = await t.as(bruno).patch(`/api/agents/${sophya.id}`, { name: "Bruna" });
 
     expect(apagar.status).toBe(403);
-    expect(await apagar.json()).toMatchObject({ error: "builtin_locked" });
+    expect(await apagar.json()).toEqual({ error: "builtin_locked", message: "A Articuladora é do Regents e não se apaga." });
     expect(doBruno.status).toBe(403);
     expect(await articuladora(t)).toEqual(sophya);
   });

@@ -308,7 +308,7 @@ describe("a falha se lê por is_error, assistant.error e terminal_reason", () =>
     expect(events).toEqual([
       {
         type: "failed",
-        reason: "o Shearim não conseguiu rodar a execução",
+        reason: "o Regents não conseguiu rodar a execução",
         authorReason: "o Claude Code não está instalado neste servidor",
         retryable: false,
       },

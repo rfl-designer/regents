@@ -136,7 +136,7 @@ export function accountBrain(opts: {
       closed();
       if (!(err instanceof ClaudeMissing)) throw err;
       yield accountFailure(
-        "o Shearim não conseguiu rodar a execução",
+        "o Regents não conseguiu rodar a execução",
         "o Claude Code não está instalado neste servidor",
         false,
       );
