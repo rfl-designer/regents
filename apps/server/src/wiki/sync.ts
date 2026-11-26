@@ -16,7 +16,7 @@ import { Draft, type DraftSource, draftTools } from "./draft";
 import { removalPrompt, syncPrompt, syncSystem } from "./rules";
 import { lockWiki } from "./sources";
 import { syncDto } from "./sync-state";
-import { currentVersionId, pagesOfVersion, publishVersion, sourcesOfVersion } from "./versions";
+import { currentVersionId, logTime, pagesOfVersion, publishVersion, sourcesOfVersion } from "./versions";
 import { findWiki, pendingOf, toWikiDto, wikiAudience } from "./wikis";
 
 const { wikiSyncs, wikiSources, members } = schema;
@@ -482,7 +482,7 @@ function logEntry(input: {
   removals: readonly { fileName: string }[];
   report: { created: { slug: string }[]; updated: { slug: string }[]; removed: { slug: string }[] };
 }) {
-  const when = `${input.at.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+  const when = logTime(input.at);
   const links = (refs: { slug: string }[]) => refs.map((r) => `[[${r.slug}]]`).join(", ");
   const names = (sources: readonly { fileName: string }[]) => sources.map((s) => s.fileName).join(", ");
   const lines = [`## Versão ${input.number} · ${when} · ${input.by}`];

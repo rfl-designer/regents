@@ -149,6 +149,38 @@ describe("Sincronização da Wiki", () => {
     await expect(wiki).toContainText("nada pendente");
   });
 
+  test('na versão 2, o Admin aperta "Voltar a esta versão" na 1: ela é a atual, e a Fonte da 2 volta a "nova"', {
+    timeout: 90_000,
+  }, async ({ app, screen }) => {
+    const nome = await wikiComFontes(app, screen, {
+      "ganchos.md": "# Ganchos\n\nO gancho vem nos 3 primeiros segundos.\n",
+    });
+    const wiki = screen.getByRole("listitem", `Wiki ${nome}`);
+    const estado = wiki.getByRole("status").filter({ hasText: "Sincronização" });
+    await wiki.getByRole("button", "Sincronizar").tap();
+    await expect(estado).toContainText("Sincronização concluída: versão 1", { timeout: 30_000 });
+    await wiki
+      .getByLabel("Subir Fontes (.txt ou .md)")
+      .setInputFiles(arquivos({ "carrossel.txt": "Uma ideia por cartão." }));
+    await expect(wiki).toContainText("1 Fonte pendente");
+    await wiki.getByRole("button", "Sincronizar").tap();
+    await expect(estado).toContainText("Sincronização concluída: versão 2", { timeout: 30_000 });
+
+    // A lista mostra cada versão com quem iniciou e o relatório.
+    const versoes = wiki.getByRole("list", `Versões de ${nome}`);
+    await expect(versoes.getByRole("list", "Relatório da versão 2")).toContainText("Páginas criadas: carrossel.txt");
+    await expect(versoes.getByRole("list", "Relatório da versão 1")).toContainText("Páginas criadas: Ganchos");
+
+    await versoes.getByRole("listitem", "Versão 1").getByRole("button", "Voltar a esta versão").tap();
+
+    await expect(versoes.getByRole("listitem", "Versão 1")).toContainText("atual");
+    await expect(versoes.getByRole("listitem", "Versão 2").getByRole("button", "Voltar a esta versão")).toBeEnabled();
+    await expect(wiki).toContainText("versão 1, sincronizada em");
+    await expect(wiki).toContainText("1 Fonte pendente");
+    const fontes = wiki.getByRole("list", `Fontes da Wiki ${nome}`);
+    await expect(fontes.getByRole("listitem").filter({ hasText: "carrossel.txt" })).toContainText("nova");
+  });
+
   test('a tela da Articuladora mostra "Sincronizar a Wiki" como Habilidade do Shearim, só para leitura', {
     timeout: 60_000,
   }, async ({ app, screen }) => {

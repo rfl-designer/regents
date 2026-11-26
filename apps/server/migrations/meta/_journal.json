@@ -302,6 +302,13 @@
       "when": 1795665783469,
       "tag": "0042_wiki-citacao",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1795668054082,
+      "tag": "0043_voltar-versao",
+      "breakpoints": true
     }
   ]
 }

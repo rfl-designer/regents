@@ -1,11 +1,9 @@
 import { WIKI_INDEX_SLUG } from "@shearim/contracts";
-import { and, eq } from "drizzle-orm";
-import { type Db, schema } from "../db/client";
+import type { Db } from "../db/client";
 import { type AutomaticTool, ToolFailure } from "../tools/port";
 import { recordWikiRead } from "./citations";
 import { type Answer, type WikiInReach, wikiInReachNamed, wikisInReach } from "./reach";
-
-const { wikiPages } = schema;
+import { pageOfVersion } from "./versions";
 
 /** O nome da Ferramenta, que o catálogo no contexto cita. */
 export const READ_WIKI_TITLE = "ler a Wiki";
@@ -41,13 +39,9 @@ const inputOf = (raw: unknown): ReadInput => {
   return { wiki: text(args.wiki), page: text(args.pagina) };
 };
 
-/** A página `slug` da versão, ou nada. */
-async function pageOf(db: Db, wiki: WikiInReach, slug: string) {
-  const [page] = await db
-    .select({ title: wikiPages.title, body: wikiPages.body })
-    .from(wikiPages)
-    .where(and(eq(wikiPages.versionId, wiki.versionId), eq(wikiPages.slug, slug)));
-  return page;
+/** A página `slug` da versão (o `log` com as voltas a ela, #89), ou nada. */
+function pageOf(db: Db, wiki: WikiInReach, slug: string) {
+  return pageOfVersion(db, wiki.versionId, slug);
 }
 
 /**

@@ -13,6 +13,19 @@ export async function lockWiki(tx: Tx, wikiId: string) {
   await tx.select({ id: wikis.id }).from(wikis).where(eq(wikis.id, wikiId)).for("update");
 }
 
+/**
+ * Trava a Wiki (`lockWiki`) e diz se ela está parada: sem Sincronização `queued` ou `running`. O
+ * que muda a base de uma Sincronização (remover Fonte, voltar a uma versão) só acontece assim.
+ */
+export async function lockIdleWiki(tx: Tx, wikiId: string): Promise<boolean> {
+  await lockWiki(tx, wikiId);
+  const [open] = await tx
+    .select({ id: wikiSyncs.id })
+    .from(wikiSyncs)
+    .where(and(eq(wikiSyncs.wikiId, wikiId), inArray(wikiSyncs.state, ["queued", "running"])));
+  return !open;
+}
+
 /** Uma Fonte pronta para guardar: o nome do arquivo, o formato e o texto. */
 export interface SourceUpload {
   fileName: string;
@@ -196,12 +209,7 @@ export async function addSources(
  */
 export async function removeSource(db: Db, input: { wikiId: string; sourceId: string; now: Date }) {
   return db.transaction(async (tx) => {
-    await lockWiki(tx, input.wikiId);
-    const [open] = await tx
-      .select({ id: wikiSyncs.id })
-      .from(wikiSyncs)
-      .where(and(eq(wikiSyncs.wikiId, input.wikiId), inArray(wikiSyncs.state, ["queued", "running"])));
-    if (open) return "sync_running" as const;
+    if (!(await lockIdleWiki(tx, input.wikiId))) return "sync_running" as const;
     const [source] = await tx
       .select({ id: wikiSources.id })
       .from(wikiSources)
