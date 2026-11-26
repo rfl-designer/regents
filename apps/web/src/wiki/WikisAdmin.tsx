@@ -116,8 +116,11 @@ const open = (s: WikiSyncDto | null) => s?.state === "queued" || s?.state === "r
  */
 function syncStateText(s: WikiSyncDto) {
   const paid = wikiSyncPayerText(s);
-  const text = stateText(s);
-  return paid && s.state !== "failed" ? `${text} · ${paid}` : text;
+  const parts = [stateText(s)];
+  // A chamada falhou uma vez e está na nova tentativa: o motivo fica à vista (ADR 0003).
+  if (s.state === "running" && s.attempt > 1) parts.push(`nova tentativa depois de: ${s.reason ?? "uma falha"}`);
+  if (paid && s.state !== "failed") parts.push(paid);
+  return parts.join(" · ");
 }
 
 function stateText(s: WikiSyncDto) {
@@ -150,6 +153,19 @@ function WikiSync({ wiki }: { wiki: WikiDto }) {
     }
   }
 
+  /** "Cancelar": o fim ("Sincronização cancelada") chega por `wiki_sync.updated`. */
+  async function cancel() {
+    setBusy(true);
+    setError(null);
+    try {
+      await wikiApi.cancelSync(wiki.id);
+    } catch (err) {
+      setError(messageOf(err, "A Sincronização não foi cancelada. Tente de novo."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const label = running ? "Sincronização em curso" : wiki.pending === 0 ? "Nada a sincronizar" : "Sincronizar";
   return (
     <section aria-label={`Sincronização de ${wiki.name}`}>
@@ -157,6 +173,11 @@ function WikiSync({ wiki }: { wiki: WikiDto }) {
         <button type="button" disabled={busy || running || wiki.pending === 0} onClick={start}>
           {label}
         </button>
+        {running && (
+          <button type="button" disabled={busy} onClick={cancel}>
+            Cancelar
+          </button>
+        )}
         {sync && (
           <span className={sync.state === "failed" ? "error" : "hint"} role="status">
             {syncStateText(sync)}

@@ -1,14 +1,17 @@
-import { WIKI_INDEX_SLUG, type WikiSyncDto, type WikiSyncStepDto } from "@shearim/contracts";
+import { WIKI_INDEX_SLUG, WIKIS_PATH, type WikiSyncDto, type WikiSyncStepDto } from "@shearim/contracts";
 import { and, asc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { articuladoraOf } from "../articuladora";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
 import type { EventHub } from "../events";
+import { RETRY_DELAY_MS } from "../executions";
 import type { KeyLedger } from "../key-budget";
-import { failureReason, type Spent, STALL_MS, streamCall } from "../model/call";
-import type { ModelPort, Payer } from "../model/port";
+import { failureReason, isRetryable, type Spent, STALL_MS, streamCall } from "../model/call";
+import type { ModelPort, Payer, TerminalModelEvent } from "../model/port";
 import { accountCallEnded, accountOrKey, keyCallEnded, type PayingAccounts } from "../payer";
+import type { Push } from "../push";
 import type { SecretBox } from "../secrets";
+import type { ExecutionTools } from "../tools/port";
 import { Draft, type DraftSource, draftTools } from "./draft";
 import { syncPrompt, syncSystem } from "./rules";
 import { syncDto } from "./sync-state";
@@ -22,6 +25,38 @@ export const DEFAULT_SYNC_MAX_TURNS = 40;
 
 /** O motivo da vigia numa chamada da Sincronização. */
 const SYNC_STALL_REASON = "a Articuladora ficou 2 minutos sem responder";
+
+/** O motivo da Sincronização que o servidor encontrou em curso ao subir. */
+const RESTART_REASON = "o servidor reiniciou";
+
+/** Cada chamada tem uma nova tentativa automática: a segunda falha encerra a Sincronização. */
+const MAX_ATTEMPTS = 2;
+
+/**
+ * O que uma chamada pede à Articuladora: o texto (montado antes da 1ª tentativa; a nova tentativa
+ * e a troca no meio voltam o rascunho ao mesmo ponto, então o texto vale de novo) e as Ferramentas
+ * internas sobre o rascunho.
+ */
+type SyncCall = { prompt: string; tools: ExecutionTools };
+
+/** A Sincronização em curso, como as chamadas dela a veem. */
+type SyncRun = { id: string; startedBy: { id: string; name: string }; wiki: { name: string; description: string } };
+
+/** Espera `ms` no relógio do Shearim; `false` se o `signal` abortou antes (cancelada, parada). */
+function pause(clock: Clock, ms: number, signal: AbortSignal) {
+  return new Promise<boolean>((resolve) => {
+    if (signal.aborted) return resolve(false);
+    const stop = () => {
+      cancel();
+      resolve(false);
+    };
+    const cancel = clock.after(ms, () => {
+      signal.removeEventListener("abort", stop);
+      resolve(true);
+    });
+    signal.addEventListener("abort", stop, { once: true });
+  });
+}
 
 /** Por que o pedido de Sincronização foi recusado, com o motivo em pt-BR. */
 export type SyncRefusal = { error: "nothing_to_sync" | "sync_running"; message: string };
@@ -50,7 +85,21 @@ export interface WikiSyncs {
    * já há uma em curso na Wiki ou se não há nada pendente.
    */
   request(wikiId: string, by: string): Promise<WikiSyncDto | SyncRefusal>;
-  /** Para na hora: interrompe as que estão rodando (o rascunho é descartado). */
+  /**
+   * O Admin cancelou: a Sincronização em curso na Wiki termina em `canceled` e a chamada em curso é
+   * interrompida (o rascunho é descartado). `undefined` quando não há nenhuma em curso.
+   */
+  cancel(wikiId: string): Promise<WikiSyncDto | undefined>;
+  /**
+   * A subida: nenhuma Sincronização sobrevive a um reinício (o rascunho estava na memória). Toda
+   * que ficou em `running` ou `queued` termina em `failed` ("o servidor reiniciou"), sem nova
+   * tentativa: a Wiki ficou como estava, e o Admin sincroniza de novo.
+   */
+  recover(): Promise<void>;
+  /**
+   * Para na hora (o servidor está parando): interrompe as que estão rodando e as deixa em
+   * `running`, sem gravar nada; a próxima subida as encerra (`recover`).
+   */
   stop(): Promise<void>;
 }
 
@@ -61,8 +110,10 @@ export interface WikiSyncs {
  * numa transação só (`versions.ts`). O modelo é o da Articuladora, e o gasto conta no orçamento dela.
  *
  * Quem paga é decidido a cada chamada (`call`): a Conta do Admin que iniciou, com a Chave do
- * Workspace como reserva (`payer.ts`). A vigia de cada chamada é a das execuções (`model/call.ts`);
- * a nova tentativa, o cancelamento e o reinício vêm no #86.
+ * Workspace como reserva (`payer.ts`). Cada chamada tem a vigia das execuções (`model/call.ts`) e
+ * uma nova tentativa automática; a segunda falha encerra a Sincronização com o motivo, e o Admin
+ * que iniciou recebe push em `done` e em `failed`. O Admin cancela (`cancel`); ao subir, o servidor
+ * encerra a que ficou em curso (`recover`). Falha, cancelamento e reinício descartam o rascunho.
  */
 export function createWikiSyncs(deps: {
   db: Db;
@@ -75,6 +126,8 @@ export function createWikiSyncs(deps: {
   accounts: PayingAccounts;
   /** O teto de turnos de Ferramenta de cada chamada (padrão: `DEFAULT_SYNC_MAX_TURNS`). */
   maxToolTurns?: number;
+  /** O push fora de conversa (`push.notify`): o fim, para o Admin que iniciou. */
+  notify?: Push["notify"];
 }): WikiSyncs {
   const { db, clock, events, model, secrets, ledger } = deps;
   /** As que estão rodando neste processo: o controle da chamada em curso e o fim do trabalho. */
@@ -87,6 +140,16 @@ export function createWikiSyncs(deps: {
     const wiki = await findWiki(db, sync.wikiId);
     if (!wiki) return;
     events.publish(await wikiAudience(db, wiki), { type: "wiki_sync.updated", sync });
+    return { sync, wiki };
+  }
+
+  /**
+   * Anuncia o fim e avisa por push o Admin que iniciou, em `done` e em `failed` (spec #74). O
+   * cancelamento não avisa: foi o próprio Admin.
+   */
+  async function finished(syncId: string) {
+    const seen = await publish(syncId);
+    if (seen) deps.notify?.(seen.sync.startedBy.id, syncNotice(seen.wiki.name, seen.sync));
   }
 
   async function publishWiki(wikiId: string) {
@@ -111,7 +174,7 @@ export function createWikiSyncs(deps: {
       .set({ state: "failed", step: null, reason, finishedAt: clock.now() })
       .where(and(eq(wikiSyncs.id, syncId), inArray(wikiSyncs.state, ["queued", "running"])))
       .returning({ id: wikiSyncs.id });
-    if (failed) await publish(syncId);
+    if (failed) await finished(syncId);
   }
 
   /** Grava quem paga a chamada que vai sair e anuncia, se mudou (o "pela Chave do Workspace"). */
@@ -131,25 +194,84 @@ export function createWikiSyncs(deps: {
   }
 
   /**
-   * Uma chamada de modelo: a Articuladora leva uma Fonte para o rascunho. Devolve se terminou bem;
-   * senão, a Sincronização já foi encerrada com o motivo (ou o servidor está parando).
-   *
-   * Quem paga é decidido antes de cada chamada (`accountOrKey`): a Conta de quem iniciou, Ligada;
-   * senão a Chave utilizável; senão a Sincronização falha "sem quem pague". Pela Conta, as
-   * Ferramentas internas vão pela sessão do endpoint MCP que o cérebro da Conta abre para este
-   * `claude -p` e fecha quando ele sai. Troca no meio: se a Conta bate no limite ou cai, o que a
-   * chamada escreveu no rascunho é desfeito e a chamada é refeita inteira por quem a tabela disser
-   * agora (a mesma tentativa).
+   * A nova tentativa de uma chamada que falhou (ADR 0003): o motivo e a tentativa ficam à vista
+   * enquanto ela espera (`attempt` 2); `attempt` 1 e sem motivo quando uma chamada vai bem.
    */
-  async function call(
-    sync: { id: string; startedBy: { id: string; name: string }; wiki: { name: string; description: string } },
+  async function attemptOf(syncId: string, n: number, reason: string | null) {
+    const [changed] = await db
+      .update(wikiSyncs)
+      .set({ attempt: n, reason })
+      .where(and(eq(wikiSyncs.id, syncId), eq(wikiSyncs.state, "running"), ne(wikiSyncs.attempt, n)))
+      .returning({ id: wikiSyncs.id });
+    if (changed) await publish(syncId);
+  }
+
+  /**
+   * Uma tentativa de uma chamada, por quem `payer` diz. A vigia aborta só esta tentativa
+   * (`stalled`); o cancelamento e a parada do servidor chegam pelo `controller` da Sincronização.
+   */
+  async function attempt(
+    sync: SyncRun,
     controller: AbortController,
-    draft: Draft,
-    source: DraftSource & { text: string },
-    position: { current: number; total: number },
-  ): Promise<boolean> {
+    asked: SyncCall,
+    payer: Payer,
+    articuladora: { id: string; model: string },
+  ): Promise<{ end: TerminalModelEvent | undefined; stalled: boolean }> {
+    const own = new AbortController();
+    const forward = () => own.abort(controller.signal.reason);
+    controller.signal.addEventListener("abort", forward, { once: true });
+    if (controller.signal.aborted) forward();
+    const spent: Spent = { startedAt: clock.now() };
+    let end: TerminalModelEvent | undefined;
+    try {
+      await paidBy(sync.id, payer.kind);
+      ({ end } = await streamCall({
+        model,
+        clock,
+        controller: own,
+        spent,
+        stallMs: STALL_MS,
+        request: {
+          model: articuladora.model,
+          system: syncSystem(sync.wiki),
+          messages: [{ role: "user", content: asked.prompt }],
+          payer,
+          tools: asked.tools,
+          maxToolTurns: deps.maxToolTurns ?? DEFAULT_SYNC_MAX_TURNS,
+        },
+      }));
+    } finally {
+      controller.signal.removeEventListener("abort", forward);
+      // O uso que a API informou conta no orçamento da Articuladora, chegando ou não ao fim.
+      if (payer.kind === "key") {
+        await keyCallEnded(ledger, { agentId: articuladora.id, wikiSyncId: sync.id }, spent, end);
+      }
+    }
+    return { end, stalled: own.signal.reason === "stalled" && !controller.signal.aborted };
+  }
+
+  /**
+   * Uma chamada de modelo sobre o rascunho (hoje: levar uma Fonte; #87/#88: a revisão e a remoção
+   * de Fonte, com outro `prompt` e outras `tools`). Devolve se terminou bem;
+   * senão, a Sincronização já foi encerrada com o motivo (ou foi cancelada, ou o servidor está
+   * parando).
+   *
+   * Quem paga é decidido antes de cada tentativa (`accountOrKey`): a Conta de quem iniciou, Ligada;
+   * senão a Chave utilizável; senão a Sincronização falha "sem quem pague", sem nova tentativa.
+   * Pela Conta, as Ferramentas internas vão pela sessão do endpoint MCP que o cérebro da Conta abre
+   * para este `claude -p` e fecha quando ele sai. Troca no meio: se a Conta bate no limite ou cai, a
+   * chamada é refeita inteira por quem a tabela disser agora, na mesma tentativa.
+   *
+   * Uma falha (a vigia inclusive) desfaz o que a tentativa escreveu no rascunho e tenta de novo uma
+   * vez, 10 s depois, como nas execuções; a segunda falha encerra a Sincronização com o motivo.
+   */
+  async function call(sync: SyncRun, controller: AbortController, draft: Draft, asked: SyncCall): Promise<boolean> {
     const articuladora = await articuladoraOf(db);
+    const before = draft.snapshot();
+    let tries = 1;
+    let previous: string | undefined;
     for (;;) {
+      if (controller.signal.aborted) return false;
       const payer = await accountOrKey({ db, clock, secrets, ledger }, sync.startedBy.id, articuladora.id);
       if (payer.kind === "none") {
         await fail(
@@ -162,52 +284,40 @@ export function createWikiSyncs(deps: {
       // foi ligada de novo), decide de novo.
       const release = payer.kind === "account" ? deps.accounts.lease(payer.configDir) : undefined;
       if (release === null) continue;
-      const before = draft.snapshot();
-      const spent: Spent = { startedAt: clock.now() };
-      let end: Awaited<ReturnType<typeof streamCall>>["end"];
+      let ended: Awaited<ReturnType<typeof attempt>>;
       try {
-        await paidBy(sync.id, payer.kind);
-        ({ end } = await streamCall({
-          model,
-          clock,
-          controller,
-          spent,
-          stallMs: STALL_MS,
-          request: {
-            model: articuladora.model,
-            system: syncSystem(sync.wiki),
-            messages: [
-              {
-                role: "user",
-                content: syncPrompt({ index: draft.pages.get(WIKI_INDEX_SLUG)?.body ?? null, source, ...position }),
-              },
-            ],
-            payer,
-            tools: draftTools(draft, source),
-            maxToolTurns: deps.maxToolTurns ?? DEFAULT_SYNC_MAX_TURNS,
-          },
-        }));
+        ended = await attempt(sync, controller, asked, payer, articuladora);
       } finally {
         release?.();
-        // O uso que a API informou conta no orçamento da Articuladora, chegando ou não ao fim.
-        if (payer.kind === "key") {
-          await keyCallEnded(ledger, { agentId: articuladora.id, wikiSyncId: sync.id }, spent, end);
-        }
       }
-      if (controller.signal.aborted) {
-        if (controller.signal.reason === "stalled") await fail(sync.id, SYNC_STALL_REASON);
-        return false;
-      }
-      // #86: a nova tentativa automática e o cancelamento entram aqui, com o mesmo `before`.
-      if (payer.kind === "account" && (await accountCallEnded(deps.accounts, payer, end)) === "decide_again") {
+      const { end, stalled } = ended;
+      // Cancelada (o estado já foi gravado) ou o servidor está parando (a subida a encerra).
+      if (controller.signal.aborted) return false;
+      if (
+        !stalled &&
+        payer.kind === "account" &&
+        (await accountCallEnded(deps.accounts, payer, end)) === "decide_again"
+      ) {
         draft.restore(before);
         continue;
       }
-      if (end?.type !== "done") {
-        await fail(sync.id, failureReason(end));
-        return false;
+      if (!stalled && end?.type === "done") {
+        if (tries > 1) await attemptOf(sync.id, 1, null);
+        return true;
       }
-      return true;
+      draft.restore(before);
+      const reason = stalled ? SYNC_STALL_REASON : failureReason(end);
+      if ((stalled || isRetryable(end)) && tries < MAX_ATTEMPTS) {
+        tries += 1;
+        previous = reason;
+        // A espera conta da falha: ela já corre quando a tela mostra a nova tentativa.
+        const waited = pause(clock, RETRY_DELAY_MS, controller.signal);
+        await attemptOf(sync.id, tries, reason);
+        if (!(await waited)) return false;
+        continue;
+      }
+      await fail(sync.id, reason === previous ? `${reason}, nas duas tentativas` : reason);
+      return false;
     }
   }
 
@@ -235,7 +345,11 @@ export function createWikiSyncs(deps: {
         .select({ id: wikiSources.id, fileName: wikiSources.fileName, text: wikiSources.text })
         .from(wikiSources)
         .where(eq(wikiSources.id, news.id));
-      if (!(await call({ id: syncId, startedBy: starter, wiki }, controller, draft, source!, position))) return;
+      const asked = {
+        prompt: syncPrompt({ index: draft.pages.get(WIKI_INDEX_SLUG)?.body ?? null, source: source!, ...position }),
+        tools: draftTools(draft, source!),
+      };
+      if (!(await call({ id: syncId, startedBy: starter, wiki }, controller, draft, asked))) return;
     }
     await step(syncId, { kind: "publishing" });
     const report = draft.report();
@@ -260,7 +374,7 @@ export function createWikiSyncs(deps: {
       return true;
     });
     if (!published) return;
-    await publish(syncId);
+    await finished(syncId);
     await publishWiki(wiki.id);
   }
 
@@ -301,6 +415,30 @@ export function createWikiSyncs(deps: {
       return (await syncDto(db, id))!;
     },
 
+    async cancel(wikiId) {
+      // O estado primeiro: a chamada interrompida (ou a que acabou no último instante) já não grava
+      // nada, porque o trabalho só escreve numa Sincronização `running`.
+      const [canceled] = await db
+        .update(wikiSyncs)
+        .set({ state: "canceled", step: null, reason: null, finishedAt: clock.now() })
+        .where(and(eq(wikiSyncs.wikiId, wikiId), inArray(wikiSyncs.state, ["queued", "running"])))
+        .returning({ id: wikiSyncs.id });
+      if (!canceled) return undefined;
+      running.get(canceled.id)?.controller.abort("cancelled");
+      await publish(canceled.id);
+      return syncDto(db, canceled.id);
+    },
+
+    async recover() {
+      const open = await db
+        .select({ id: wikiSyncs.id })
+        .from(wikiSyncs)
+        .where(inArray(wikiSyncs.state, ["queued", "running"]));
+      for (const { id } of open) {
+        if (!running.has(id)) await fail(id, RESTART_REASON);
+      }
+    },
+
     async stop() {
       const all = [...running.values()];
       for (const r of all) r.controller.abort("shutdown");
@@ -326,4 +464,37 @@ function logEntry(input: {
   if (input.report.removed.length)
     lines.push(`- Páginas removidas: ${input.report.removed.map((r) => r.slug).join(", ")}`);
   return lines.join("\n");
+}
+
+/** "2 páginas criadas", "1 página alterada": o que mudou, para o push. */
+function pagesText(n: number, what: string) {
+  return n === 1 ? `1 página ${what}` : `${n} páginas ${what}s`;
+}
+
+/**
+ * O push do fim (`done` ou `failed`) para o Admin que iniciou: a versão e o que mudou, ou o
+ * motivo. Leva à tela das Wikis; um por Wiki (o novo toma o lugar do anterior).
+ */
+function syncNotice(wikiName: string, sync: WikiSyncDto): Parameters<Push["notify"]>[1] {
+  const common = { path: WIKIS_PATH, tag: `wiki-sync-${sync.wikiId}` };
+  if (sync.state === "done") {
+    const { created = [], updated = [], removed = [] } = sync.report ?? {};
+    const changes = [
+      created.length ? pagesText(created.length, "criada") : null,
+      updated.length ? pagesText(updated.length, "alterada") : null,
+      removed.length ? pagesText(removed.length, "removida") : null,
+    ].filter(Boolean);
+    return {
+      ...common,
+      title: `Sincronização concluída: ${wikiName}`,
+      body: `Versão ${sync.version} publicada${changes.length ? `: ${changes.join(", ")}` : ""}.`,
+      urgency: "normal",
+    };
+  }
+  return {
+    ...common,
+    title: `A Sincronização de ${wikiName} falhou`,
+    body: sync.reason ?? "sem motivo",
+    urgency: "high",
+  };
 }

@@ -97,6 +97,21 @@ export function wikiRoutes(deps: { db: Db; clock: Clock; syncs: WikiSyncs; sourc
     return c.json(sync, 202);
   });
 
+  /**
+   * "Cancelar": só o Admin. A chamada em curso é interrompida como numa execução (pela Conta,
+   * `SIGINT` antes de `SIGTERM`), o rascunho é descartado e a Wiki fica como estava. `409` quando
+   * não há Sincronização em curso na Wiki.
+   */
+  routes.post("/wikis/:id/sync/cancel", adminOnly, async (c) => {
+    const wiki = await findWiki(db, c.req.param("id"));
+    if (!wiki) return c.json({ error: "not_found" }, 404);
+    const sync = await deps.syncs.cancel(wiki.id);
+    if (!sync) {
+      return c.json({ error: "nothing_to_cancel", message: "Não há Sincronização em curso nesta Wiki." }, 409);
+    }
+    return c.json(sync);
+  });
+
   routes.get("/wikis/:id/versions", adminOnly, async (c) => {
     const wiki = await findWiki(db, c.req.param("id"));
     if (!wiki) return c.json({ error: "not_found" }, 404);

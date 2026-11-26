@@ -207,6 +207,7 @@ export function createApp(deps: AppDeps) {
     ledger,
     accounts,
     maxToolTurns: deps.wiki?.syncMaxToolTurns,
+    notify: push.notify,
   });
   // A volta da Conta (ou a troca da Chave, ou do orçamento) solta quem espera por ela na fila.
   const reconsider = (memberId?: string) => void executions.reconsider(memberId).catch(() => {});
@@ -332,6 +333,8 @@ export function createApp(deps: AppDeps) {
      */
     async start() {
       await accounts.recover();
+      // A Sincronização que ficou em curso vira "o servidor reiniciou" (ADR 0015).
+      await syncs.recover();
       accounts.watch();
       executions.start();
       // As credenciais dos Conectores ligadas pelo login se renovam antes de vencer.
