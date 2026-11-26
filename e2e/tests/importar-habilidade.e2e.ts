@@ -65,7 +65,7 @@ describe("importar SKILL.md", () => {
     await screen.getByRole("button", "Habilidades").tap();
 
     const form = screen.getByRole("form", "Importar SKILL.md");
-    await form.getByLabel("Pasta da skill").setInputFiles(skillFolder(name));
+    await form.getByLabel("Pasta com o SKILL.md").setInputFiles(skillFolder(name));
     await form.getByRole("button", "Importar").tap();
 
     await expect(form.getByRole("status")).toContainText(`Habilidade ${name} importada.`);

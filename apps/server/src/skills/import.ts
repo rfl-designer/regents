@@ -43,7 +43,7 @@ async function fromPackage(entries: Entry[], words: { what: string; from: string
   const [skill, next] = skills;
   if (!skill) return { error: `${words.what} não tem um SKILL.md.` };
   if (next && depth(next.name) === depth(skill.name)) {
-    return { error: `${words.what} tem mais de um SKILL.md no mesmo nível: importe uma skill por vez.` };
+    return { error: `${words.what} tem mais de um SKILL.md no mesmo nível: importe uma Habilidade por vez.` };
   }
   const folder = skill.name.slice(0, skill.name.length - "SKILL.md".length);
   const ignored = files

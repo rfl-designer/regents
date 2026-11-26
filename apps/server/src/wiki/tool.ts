@@ -18,7 +18,7 @@ export async function wikiCatalog(db: Db, answer: Answer): Promise<string> {
   const reached = await wikisInReach(db, answer);
   if (reached.length === 0) return "";
   return [
-    `O que o time sabe, organizado em páginas a partir dos materiais que o Admin subiu. Aqui vai só o nome e o que cada Wiki cobre: leia o índice e as páginas com a Ferramenta ${READ_WIKI_TITLE}, quando a pergunta for do assunto de uma delas.`,
+    `O que o time sabe, organizado em páginas a partir das Fontes que o Admin subiu. Aqui vai só o nome e o que cada Wiki cobre: leia o índice e as páginas com a Ferramenta ${READ_WIKI_TITLE}, quando a pergunta for do assunto de uma delas.`,
     reached.map((w) => `- ${w.name}: ${w.description}`).join("\n"),
     [
       "Quando a resposta usar uma página da Wiki, cite a página com [[wiki:<nome da Wiki>/<slug>]], no ponto em que a usa.",

@@ -68,7 +68,7 @@ export function skillRoutes(deps: { db: Db; clock: Clock }) {
     // caminho, em texto, para o que não é o `SKILL.md`).
     const folder = (form?.getAll("files") ?? []).filter((f) => f instanceof File || (typeof f === "string" && f));
     if (!(file instanceof File) && folder.length === 0) {
-      return invalid("Mande o arquivo SKILL.md ou o .zip da skill no campo file, ou a pasta da skill no campo files.");
+      return invalid("Mande o SKILL.md ou o .zip com ele no campo file, ou a pasta com ele no campo files.");
     }
     const size = file instanceof File ? file.size : folder.reduce((n, f) => n + (f instanceof File ? f.size : 0), 0);
     if (size > SKILL_IMPORT_MAX_BYTES) {

@@ -149,7 +149,7 @@ function ImportSkill(props: { onImported(skill: SkillDto): void }) {
       setPicked(null);
       form.reset();
     } catch (err) {
-      setError(messageOf(err, "A skill não foi importada. Tente de novo."));
+      setError(messageOf(err, "A Habilidade não foi importada. Tente de novo."));
     } finally {
       setBusy(false);
     }
@@ -158,8 +158,8 @@ function ImportSkill(props: { onImported(skill: SkillDto): void }) {
   return (
     <form className="settings-row" onSubmit={submit} aria-label="Importar SKILL.md">
       <p className="hint">
-        Ou importe um SKILL.md (ou o .zip da skill, ou a pasta dela): o nome e a descrição saem do frontmatter. Scripts
-        e outros arquivos ficam de fora, porque os Agentes do Shearim não executam código.
+        Ou importe a Habilidade de um SKILL.md, de um .zip ou de uma pasta com ele: o nome e a descrição saem do
+        frontmatter. Scripts e outros arquivos ficam de fora, porque os Agentes do Shearim não executam código.
       </p>
       <div className="row">
         <input
@@ -173,7 +173,7 @@ function ImportSkill(props: { onImported(skill: SkillDto): void }) {
         />
         <input
           type="file"
-          aria-label="Pasta da skill"
+          aria-label="Pasta com o SKILL.md"
           {...{ webkitdirectory: "" }}
           onChange={(e) => {
             const files = [...(e.target.files ?? [])];
