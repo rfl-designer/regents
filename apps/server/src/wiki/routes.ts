@@ -1,4 +1,4 @@
-import type { CreateWikiInput } from "@shearim/contracts";
+import type { CreateWikiInput, WikiPageViewDto } from "@shearim/contracts";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
 import { type Db, isUuid } from "../db/client";
@@ -6,8 +6,8 @@ import { adminOnly, type Env } from "../members";
 import { channelForLink, linkWikiToChannel, unlinkWikiFromChannel, wikiChannelsFor } from "./reach";
 import { addSources, DEFAULT_SOURCE_MAX_BYTES, listSources, readUploads } from "./sources";
 import type { WikiSyncs } from "./sync";
-import { listVersions, pageDtos, versionNumbered } from "./versions";
-import { createWiki, findWiki, listWikis, wikiNamed } from "./wikis";
+import { listVersions, pageDtos, readPage, versionNumbered } from "./versions";
+import { createWiki, findWiki, listReadableWikis, listWikis, readableWiki, toWikiDto, wikiNamed } from "./wikis";
 
 const NAME_MAX = 80;
 
@@ -22,6 +22,25 @@ export function wikiRoutes(deps: { db: Db; clock: Clock; syncs: WikiSyncs; sourc
   const routes = new Hono<Env>();
 
   routes.get("/wiki-settings", adminOnly, async (c) => c.json(await listWikis(db)));
+
+  /** As Wikis que o Membro lê (a barra lateral): as do alcance dele, com versão publicada. */
+  routes.get("/wikis", async (c) => c.json(await listReadableWikis(db, c.get("member").id)));
+
+  /**
+   * Uma página da versão atual, para o Membro ler (#82). Fora do alcance, sem versão ou inexistente,
+   * a Wiki "não existe" (404), sem dizer qual caso é. Só leitura: a Wiki muda só pela
+   * Sincronização, e não há rota de edição de página, nem para o Admin.
+   */
+  routes.get("/wikis/:id/pages/:slug", async (c) => {
+    const wiki = await readableWiki(db, c.req.param("id"), c.get("member").id);
+    if (!wiki?.currentVersionId) return c.json({ error: "not_found", message: "Essa Wiki não existe." }, 404);
+    const read = await readPage(db, wiki.currentVersionId, c.req.param("slug"));
+    if (!read) {
+      return c.json({ error: "not_found", message: `Essa página não existe na Wiki ${wiki.name}.` }, 404);
+    }
+    const dto = await toWikiDto(db, wiki);
+    return c.json({ wiki: dto, version: dto.currentVersion!.number, ...read } satisfies WikiPageViewDto);
+  });
 
   routes.post("/wikis", adminOnly, async (c) => {
     const input = ((await c.req.json().catch(() => null)) ?? {}) as Partial<Record<keyof CreateWikiInput, unknown>>;

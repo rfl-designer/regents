@@ -2,6 +2,7 @@ import type {
   CreateWikiInput,
   WikiChannelDto,
   WikiDto,
+  WikiPageViewDto,
   WikiSourceDto,
   WikiSyncDto,
   WikiVersionDto,
@@ -28,4 +29,9 @@ export const wikiApi = {
   /** Liga ou desliga a Wiki de um Canal; devolve a lista nova. */
   setChannel: (wikiId: string, channelId: string, linked: boolean) =>
     call<WikiChannelDto[]>(`/api/wikis/${wikiId}/channels/${channelId}`, { method: linked ? "PUT" : "DELETE" }),
+  /** As Wikis que o Membro lê (a barra lateral): o servidor decide pelo alcance. */
+  list: () => call<WikiDto[]>("/api/wikis"),
+  /** Uma página da versão atual, para ler. */
+  page: (wikiId: string, slug: string) =>
+    call<WikiPageViewDto>(`/api/wikis/${wikiId}/pages/${encodeURIComponent(slug)}`),
 };
