@@ -306,3 +306,33 @@ export const messageWikiCitations = pgTable(
   },
   (t) => [primaryKey({ columns: [t.messageId, t.marker] })],
 );
+
+/**
+ * Uma volta a outra versão (#89): o Admin trocou a versão atual da Wiki, sem Sincronização. As
+ * páginas da versão não mudam (são imutáveis): a troca entra no `log` da versão que passou a valer
+ * na leitura, depois do que o `log` guardado já dizia (`withRestores` em `versions.ts`).
+ */
+export const wikiRestores = pgTable(
+  "wiki_restores",
+  {
+    id: uuid().primaryKey(),
+    /** Ordem das voltas: com o relógio parado, desempata as da mesma hora. */
+    seq: bigint({ mode: "number" }).generatedAlwaysAsIdentity(),
+    wikiId: uuid()
+      .notNull()
+      .references(() => wikis.id, { onDelete: "cascade" }),
+    /** A versão que deixou de valer. */
+    fromVersionId: uuid()
+      .notNull()
+      .references(() => wikiVersions.id, { onDelete: "cascade" }),
+    /** A versão que passou a valer: o `log` dela registra a volta. */
+    toVersionId: uuid()
+      .notNull()
+      .references(() => wikiVersions.id, { onDelete: "cascade" }),
+    byMemberId: uuid()
+      .notNull()
+      .references(() => members.id),
+    at: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [index().on(t.toVersionId, t.seq)],
+);

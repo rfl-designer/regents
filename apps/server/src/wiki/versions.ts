@@ -10,14 +10,65 @@ import {
 import { and, asc, desc, eq, inArray, max } from "drizzle-orm";
 import { type Db, schema, type Tx } from "../db/client";
 import type { DraftPage } from "./draft";
+import { lockIdleWiki } from "./sources";
 
-const { wikis, wikiVersions, wikiVersionSources, wikiPages, wikiPageSources, wikiSources, wikiSyncs, members } = schema;
+const {
+  wikis,
+  wikiVersions,
+  wikiVersionSources,
+  wikiPages,
+  wikiPageSources,
+  wikiSources,
+  wikiSyncs,
+  wikiRestores,
+  members,
+} = schema;
 
 /**
  * As versões da Wiki (ADR 0015): cada Sincronização concluída publica uma, com as páginas
  * (imutáveis: a nova copia o que não mudou) e o conjunto de Fontes que ela reflete. A versão atual
  * é a que `wikis.current_version_id` aponta; voltar a uma anterior (#89) só troca esse ponteiro.
  */
+
+/** A hora de uma entrada do `log`, em UTC: "2026-11-26 04:20 UTC". */
+export function logTime(at: Date): string {
+  return `${at.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+/**
+ * O `log` da versão como se lê (#89): o corpo guardado nela e, depois, cada volta a ela, na ordem.
+ * A página guardada não muda (as páginas são imutáveis por versão), e o que ela já dizia continua
+ * no começo: uma citação do `log` segue verificável. A Sincronização seguinte copia o `log` assim,
+ * e a versão nova guarda a volta no corpo dela.
+ */
+async function withRestores(db: Db | Tx, versionId: string, body: string): Promise<string> {
+  const restores = await db
+    .select({ at: wikiRestores.at, from: wikiVersions.number, by: members.displayName })
+    .from(wikiRestores)
+    .innerJoin(wikiVersions, eq(wikiVersions.id, wikiRestores.fromVersionId))
+    .innerJoin(members, eq(members.id, wikiRestores.byMemberId))
+    .where(eq(wikiRestores.toVersionId, versionId))
+    .orderBy(asc(wikiRestores.seq));
+  if (!restores.length) return body;
+  const to = await versionNumberOf(db, versionId);
+  const entries = restores.map((r) =>
+    [
+      `## Volta à versão ${to} · ${logTime(r.at)} · ${r.by}`,
+      `- A versão ${r.from} deixou de valer: a Wiki voltou à versão ${to}.`,
+    ].join("\n"),
+  );
+  return [body.trimEnd(), ...entries].join("\n\n");
+}
+
+/** A página `slug` da versão, como se lê (o `log` com as voltas), ou nada. */
+export async function pageOfVersion(db: Db | Tx, versionId: string, slug: string) {
+  const [row] = await db
+    .select({ id: wikiPages.id, slug: wikiPages.slug, title: wikiPages.title, body: wikiPages.body })
+    .from(wikiPages)
+    .where(and(eq(wikiPages.versionId, versionId), eq(wikiPages.slug, slug)));
+  if (!row || slug !== WIKI_LOG_SLUG) return row;
+  return { ...row, body: await withRestores(db, versionId, row.body) };
+}
 
 /** O id da versão atual da Wiki, ou nulo (nunca sincronizada). */
 export async function currentVersionId(db: Db | Tx, wikiId: string): Promise<string | null> {
@@ -59,7 +110,8 @@ export async function pagesOfVersion(db: Db | Tx, versionId: string | null): Pro
     : [];
   for (const r of rows) {
     const sources = links.filter((l) => l.pageId === r.id).map((l) => l.sourceId);
-    pages.set(r.slug, { title: r.title, body: r.body, sources });
+    const body = r.slug === WIKI_LOG_SLUG ? await withRestores(db, versionId, r.body) : r.body;
+    pages.set(r.slug, { title: r.title, body, sources });
   }
   return pages;
 }
@@ -101,7 +153,7 @@ export async function listVersions(db: Db, wikiId: string): Promise<WikiVersionD
 }
 
 /** O id da versão `number` da Wiki, ou nada. */
-export async function versionNumbered(db: Db, wikiId: string, number: number): Promise<string | undefined> {
+export async function versionNumbered(db: Db | Tx, wikiId: string, number: number): Promise<string | undefined> {
   if (!Number.isInteger(number) || number < 1) return undefined;
   const [row] = await db
     .select({ id: wikiVersions.id })
@@ -111,7 +163,7 @@ export async function versionNumbered(db: Db, wikiId: string, number: number): P
 }
 
 /** O número da versão. */
-export async function versionNumberOf(db: Db, versionId: string): Promise<number> {
+export async function versionNumberOf(db: Db | Tx, versionId: string): Promise<number> {
   const [row] = await db
     .select({ number: wikiVersions.number })
     .from(wikiVersions)
@@ -147,10 +199,7 @@ export async function readPage(
   versionId: string,
   slug: string,
 ): Promise<{ page: WikiPageDto; links: WikiLinkDto[] } | undefined> {
-  const [row] = await db
-    .select({ id: wikiPages.id, slug: wikiPages.slug, title: wikiPages.title, body: wikiPages.body })
-    .from(wikiPages)
-    .where(and(eq(wikiPages.versionId, versionId), eq(wikiPages.slug, slug)));
+  const row = await pageOfVersion(db, versionId, slug);
   if (!row) return undefined;
   const sources = await db
     .select({ id: wikiSources.id, fileName: wikiSources.fileName })
@@ -229,4 +278,36 @@ export async function publishVersion(
   }
   await tx.update(wikis).set({ currentVersionId: versionId }).where(eq(wikis.id, input.wikiId));
   return number;
+}
+
+/** Por que voltar a uma versão foi recusado (#89). */
+export type RestoreRefusal = "not_found" | "already_current" | "sync_running";
+
+/**
+ * Voltar a uma versão (#89, ADR 0015): só troca a versão atual, sem destilar de novo. As leituras,
+ * a navegação e as pendências seguem a versão que passa a valer, e o `log` dela registra a troca
+ * (`wiki_restores`, lido por `withRestores`). Pela trava da Wiki, e nunca com uma Sincronização em
+ * curso: ela trabalha sobre a versão atual.
+ */
+export async function restoreVersion(
+  db: Db,
+  input: { wikiId: string; number: number; by: string; now: Date },
+): Promise<"restored" | RestoreRefusal> {
+  return db.transaction(async (tx) => {
+    if (!(await lockIdleWiki(tx, input.wikiId))) return "sync_running";
+    const target = await versionNumbered(tx, input.wikiId, input.number);
+    if (!target) return "not_found";
+    const current = await currentVersionId(tx, input.wikiId);
+    if (!current || target === current) return "already_current";
+    await tx.insert(wikiRestores).values({
+      id: crypto.randomUUID(),
+      wikiId: input.wikiId,
+      fromVersionId: current,
+      toVersionId: target,
+      byMemberId: input.by,
+      at: input.now,
+    });
+    await tx.update(wikis).set({ currentVersionId: target }).where(eq(wikis.id, input.wikiId));
+    return "restored";
+  });
 }
