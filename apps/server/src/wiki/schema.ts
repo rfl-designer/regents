@@ -114,6 +114,11 @@ export const wikiSyncs = pgTable(
     reason: text(),
     /** Na concluída: o que mudou da versão anterior para a nova. */
     report: jsonb().$type<WikiSyncReportDto>(),
+    /**
+     * Quem paga a chamada em curso (ou a última): `account` (a Conta de quem iniciou) ou `key` (a
+     * Chave do Workspace), decidido a cada chamada (#80). Nulo antes da primeira.
+     */
+    payer: text().$type<"account" | "key">(),
     /** A tentativa da chamada em curso (a nova tentativa automática é do #86). */
     attempt: integer().notNull().default(1),
     createdAt: timestamp({ withTimezone: true }).notNull(),

@@ -120,6 +120,11 @@ export interface WikiSyncDto {
   reason: string | null;
   report: WikiSyncReportDto | null;
   version: number | null;
+  /**
+   * Quem paga a chamada em curso (ou a última): `account` (a Conta de quem iniciou) ou `key` (a
+   * Chave do Workspace, "pela Chave do Workspace"), decidido a cada chamada. Nulo antes da primeira.
+   */
+  payer: "account" | "key" | null;
   startedBy: { id: string; name: string };
   createdAt: string;
   finishedAt: string | null;
@@ -158,4 +163,9 @@ export type WikiServerEvent =
 export function wikiSyncStepText(step: WikiSyncStepDto): string {
   if (step.kind === "source") return `em curso: Fonte ${step.current} de ${step.total}`;
   return step.kind === "review" ? "revisando a Wiki" : "publicando";
+}
+
+/** Quem paga, para gente ler: "pela Chave do Workspace" quando a Chave paga; pela Conta, nada. */
+export function wikiSyncPayerText(sync: Pick<WikiSyncDto, "payer">): string | null {
+  return sync.payer === "key" ? "pela Chave do Workspace" : null;
 }
