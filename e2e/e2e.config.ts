@@ -21,16 +21,16 @@ export default {
           executable: "bun",
           args: ["serve.ts"],
           env: {
-            SHEARIM_IDENTITY: "dev",
+            REGENTS_IDENTITY: "dev",
             HOST: "127.0.0.1",
             PORT: "{port}",
-            SHEARIM_PGLITE_DIR: "memory://",
+            REGENTS_PGLITE_DIR: "memory://",
             // As pastas das Contas ficam com os resultados do e2e, não em .data/.
-            SHEARIM_ACCOUNTS_DIR: ".e2e/contas",
+            REGENTS_ACCOUNTS_DIR: ".e2e/contas",
             // O Pedido de aprovação expira em 45 s (0,0125 h), para o e2e ver a expiração.
-            SHEARIM_APPROVAL_TTL_H: "0.0125",
+            REGENTS_APPROVAL_TTL_H: "0.0125",
             // A parte de uma Fonte grande tem até 500 caracteres, para o e2e ver "parte 2 de 3" (#87).
-            SHEARIM_WIKI_PART_MAX_CHARS: "500",
+            REGENTS_WIKI_PART_MAX_CHARS: "500",
           },
           log: ".e2e/logs/app.log",
         },

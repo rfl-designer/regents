@@ -1,4 +1,4 @@
-# Imagem do app do Shearim (ADR 0008: o app fica num container próprio, sem root).
+# Imagem do app do Regents (ADR 0008: o app fica num container próprio, sem root).
 # O servidor roda o TypeScript direto com o Bun; o PWA vai já buildado em apps/web/dist.
 ARG BUN_IMAGE=oven/bun:1.3.11@sha256:0733e50325078969732ebe3b15ce4c4be5082f18c4ac1a0f0ca4839c2e4e42a7
 # Claude Code fixado na imagem (Spec, módulo 7; ADR 0006): o parse do `stream-json` depende da
@@ -56,18 +56,18 @@ RUN apt-get update \
  && install -d -o bun -g bun -m 700 /backups /data/contas
 WORKDIR /app
 # A versão que a seção Instalação mostra (o CI passa a tag da imagem).
-ARG SHEARIM_VERSION=local
-ENV SHEARIM_VERSION=${SHEARIM_VERSION}
-# `DISABLE_AUTOUPDATER=1`: o Claude Code nunca se atualiza sozinho (o Shearim também o passa a
+ARG REGENTS_VERSION=local
+ENV REGENTS_VERSION=${REGENTS_VERSION}
+# `DISABLE_AUTOUPDATER=1`: o Claude Code nunca se atualiza sozinho (o Regents também o passa a
 # cada processo, no `env` montado do zero).
 ENV NODE_ENV=production \
     DISABLE_AUTOUPDATER=1 \
-    SHEARIM_CLAUDE_BIN=/usr/local/bin/claude \
-    SHEARIM_IDENTITY=tailnet \
+    REGENTS_CLAUDE_BIN=/usr/local/bin/claude \
+    REGENTS_IDENTITY=tailnet \
     TS_SOCKET=/var/run/tailscale/tailscaled.sock \
     HOST=0.0.0.0 \
     PORT=3000 \
-    SHEARIM_BACKUPS_DIR=/backups
+    REGENTS_BACKUPS_DIR=/backups
 COPY --from=claude /usr/local/bin/claude /usr/local/bin/claude
 COPY --from=deps /app/node_modules node_modules
 COPY --from=deps /app/apps/server/node_modules apps/server/node_modules

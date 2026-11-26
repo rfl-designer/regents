@@ -1,14 +1,14 @@
 #!/bin/sh
-# Instalador de uma linha do Shearim (Spec, histórias 1 a 6 e 8; módulo 13). Em Mac ou Linux:
+# Instalador de uma linha do Regents (Spec, histórias 1 a 6 e 8; módulo 13). Em Mac ou Linux:
 #
-#   curl -fsSL https://github.com/rfl-designer/shearim/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/rfl-designer/regents/releases/latest/download/install.sh | sh
 #
 # As releases e a imagem no GHCR são públicas: não precisa de conta no GitHub. O que faz, nesta ordem:
 # 1. Confere o `curl`.
 # 2. Garante o Docker. No Linux: o Docker Engine e o Compose (pelo script oficial, depois de
 #    perguntar). No Mac: o Docker que existe (Docker Desktop, OrbStack ou Colima) ou, depois de
 #    perguntar, o Colima pelo Homebrew.
-# 3. Baixa o compose da release em ~/shearim (--dir muda).
+# 3. Baixa o compose da release em ~/regents (--dir muda).
 # 4. Roda o deploy/setup.sh: pede só a auth key do Tailscale e um e-mail, gera os segredos e confere
 #    MagicDNS e HTTPS.
 # 5. `docker compose pull` e `docker compose up -d`, e espera o app responder.
@@ -16,7 +16,7 @@
 # 7. Imprime o checklist "Mantê-lo rodando", com o que o terminal conseguiu verificar marcado.
 #
 # Pode rodar de novo: nunca troca um segredo nem o .env. Opções:
-#   --dir <pasta>      onde fica a Instalação (padrão: ~/shearim)
+#   --dir <pasta>      onde fica a Instalação (padrão: ~/regents)
 #   --version <tag>    a release (padrão: a deste instalador; sem ela, a última)
 #   --yes              instala ou inicia o Docker sem perguntar
 #   --update           atualiza uma Instalação (é o que o deploy/update.sh roda)
@@ -32,13 +32,13 @@ RELEASE_TAG=""
 
 main() {
   set -eu
-  REPO=${SHEARIM_REPO:-rfl-designer/shearim}
+  REPO=${REGENTS_REPO:-rfl-designer/regents}
   RELEASES=https://github.com/$REPO/releases
-  ASSET=shearim-compose.tar.gz
-  LABEL=com.shearim.acordado
-  TTY=${SHEARIM_TTY:-/dev/tty}
-  WAIT_SECONDS=${SHEARIM_WAIT_SECONDS:-180}
-  DIR=$HOME/shearim
+  ASSET=regents-compose.tar.gz
+  LABEL=com.regents.acordado
+  TTY=${REGENTS_TTY:-/dev/tty}
+  WAIT_SECONDS=${REGENTS_WAIT_SECONDS:-180}
+  DIR=$HOME/regents
   TAG=$RELEASE_TAG
   TAG_GIVEN=0
   YES=0
@@ -67,13 +67,13 @@ main() {
   if ! (exec <"$TTY") 2>/dev/null; then TTY=/dev/null; fi
   exec 3<"$TTY"
 
-  WORK=$(mktemp -d "${TMPDIR:-/tmp}/shearim-install.XXXXXX")
+  WORK=$(mktemp -d "${TMPDIR:-/tmp}/regents-install.XXXXXX")
   trap 'rm -rf "$WORK"' EXIT
 
   OS=$(uname -s)
   case "$OS" in
     Darwin | Linux) ;;
-    *) fail "o Shearim instala em Mac ou Linux, e este computador é $OS." ;;
+    *) fail "o Regents instala em Mac ou Linux, e este computador é $OS." ;;
   esac
 
   if [ "$MODE" = update ]; then
@@ -86,7 +86,7 @@ main() {
   ensure_docker
   download
   run_setup
-  if [ "$SETUP_OK" = 1 ]; then start_shearim; fi
+  if [ "$SETUP_OK" = 1 ]; then start_regents; fi
   if [ "$OS" = Darwin ]; then keep_awake; fi
   checklist
 
@@ -97,7 +97,7 @@ main() {
   fi
   if [ "$HEALTHY" = 0 ]; then
     say ""
-    say "O Shearim não respondeu em $WAIT_SECONDS s. Veja 'cd $DIR && docker compose logs app'."
+    say "O Regents não respondeu em $WAIT_SECONDS s. Veja 'cd $DIR && docker compose logs app'."
     return 1
   fi
   say ""
@@ -118,7 +118,7 @@ ensure_docker() {
 
 update() {
   [ -f "$DIR/compose.yaml" ] && [ -f "$DIR/.env" ] ||
-    fail "$DIR não parece uma Instalação do Shearim (falta compose.yaml ou .env). Para instalar, rode o instalador."
+    fail "$DIR não parece uma Instalação do Regents (falta compose.yaml ou .env). Para instalar, rode o instalador."
   # A tag gravada neste instalador é a da versão de agora: sem --version, a atualização vai para a última.
   if [ "$TAG_GIVEN" = 0 ]; then TAG=""; fi
   need_curl
@@ -134,24 +134,25 @@ update() {
     cp -R "$WORK/antes/compose.yaml" "$WORK/antes/deploy" .
     fail "o compose da $TAG não fecha com o seu .env (veja acima). Voltei o compose de antes; nada foi reiniciado."
   fi
-  pinned=$(sed -n 's/^SHEARIM_VERSION=//p' .env | tail -n 1)
+  pinned=$(sed -n 's/^REGENTS_VERSION=//p' .env | tail -n 1)
   if [ -n "$pinned" ]; then
-    say "AVISO: o .env fixa SHEARIM_VERSION=$pinned: sobe essa versão, não a da release. Apague a linha para seguir as releases."
+    say "AVISO: o .env fixa REGENTS_VERSION=$pinned: sobe essa versão, não a da release. Apague a linha para seguir as releases."
   fi
 
-  start_shearim
+  start_regents
   if [ "$HEALTHY" = 0 ]; then
-    fail "o Shearim não respondeu em $WAIT_SECONDS s depois de atualizar. Veja 'docker compose logs app'."
+    fail "o Regents não respondeu em $WAIT_SECONDS s depois de atualizar. Veja 'docker compose logs app'."
   fi
-  say "ok: Shearim atualizado de $from para $(compose_version)"
+  say "ok: Regents atualizado de $from para $(compose_version)"
 }
 
-# A versão que o compose (o da pasta, ou o arquivo dado) sobe por padrão: a da release.
-compose_version() { sed -n 's/.*SHEARIM_VERSION:-\([^}]*\)}.*/\1/p' "${1:-compose.yaml}" | head -n 1; }
+# A versão que o compose (o da pasta, ou o arquivo dado) sobe por padrão: a da release. O prefixo
+# não importa: o compose de uma Instalação que ainda é Shearim tem SHEARIM_VERSION.
+compose_version() { sed -n 's/.*_VERSION:-\([^}]*\)}.*/\1/p' "${1:-compose.yaml}" | head -n 1; }
 
 say() { printf '%s\n' "$*"; }
 fail() {
-  printf 'shearim install: %s\n' "$*" >&2
+  printf 'regents install: %s\n' "$*" >&2
   exit 1
 }
 
@@ -179,8 +180,8 @@ need_answers() {
   [ "$TTY" = /dev/null ] || return 0
   missing=""
   if [ -z "${TS_AUTHKEY:-}" ] && [ ! -s "$DIR/secrets/ts_authkey" ]; then missing="TS_AUTHKEY=tskey-auth-..."; fi
-  if [ -z "${SHEARIM_CONTACT_EMAIL:-}" ] && ! grep -q '^SHEARIM_VAPID_CONTACT=.' "$DIR/.env" 2>/dev/null; then
-    missing="${missing:+$missing }SHEARIM_CONTACT_EMAIL=voce@exemplo.com"
+  if [ -z "${REGENTS_CONTACT_EMAIL:-}" ] && ! grep -q '^REGENTS_VAPID_CONTACT=.' "$DIR/.env" 2>/dev/null; then
+    missing="${missing:+$missing }REGENTS_CONTACT_EMAIL=voce@exemplo.com"
   fi
   [ -z "$missing" ] ||
     fail "sem terminal para perguntar. Rode num terminal, ou passe $missing antes do sh."
@@ -214,10 +215,10 @@ has_app() {
 mac_docker() {
   # Onde o Homebrew, o Docker Desktop e o OrbStack põem os comandos, que o PATH de um `| sh` nem
   # sempre tem.
-  extra=${SHEARIM_EXTRA_PATH-/opt/homebrew/bin:/usr/local/bin:$HOME/.orbstack/bin:/Applications/Docker.app/Contents/Resources/bin}
+  extra=${REGENTS_EXTRA_PATH-/opt/homebrew/bin:/usr/local/bin:$HOME/.orbstack/bin:/Applications/Docker.app/Contents/Resources/bin}
   if [ -n "$extra" ]; then PATH=$PATH:$extra; fi
   export PATH
-  APPS=${SHEARIM_APPLICATIONS:-/Applications:$HOME/Applications}
+  APPS=${REGENTS_APPLICATIONS:-/Applications:$HOME/Applications}
 
   if ! docker_answers; then
     if has_app OrbStack; then
@@ -241,7 +242,7 @@ mac_start() {
   name=$1
   shift
   agree "O $name está neste Mac, mas parado. Iniciar agora?" ||
-    fail "o Shearim roda no Docker, e o $name não está rodando. Abra o $name e rode de novo (--yes inicia sem perguntar)."
+    fail "o Regents roda no Docker, e o $name não está rodando. Abra o $name e rode de novo (--yes inicia sem perguntar)."
   "$@" || fail "não consegui iniciar o $name."
   say "Esperando o $name responder..."
   wait_until docker_answers || fail "o $name não respondeu em $WAIT_SECONDS s. Abra o $name, espere e rode de novo."
@@ -254,7 +255,7 @@ colima_service() {
 
 install_colima() {
   agree "Este Mac não tem Docker. Instalar o Colima (o Docker de código aberto, sem janela) com o Homebrew e deixá-lo subir a cada login?" ||
-    fail "o Shearim roda no Docker, e este Mac não tem um. Instale o Docker Desktop, OrbStack ou Colima e rode de novo (ou responda sim para o instalador instalar o Colima; --yes não pergunta)."
+    fail "o Regents roda no Docker, e este Mac não tem um. Instale o Docker Desktop, OrbStack ou Colima e rode de novo (ou responda sim para o instalador instalar o Colima; --yes não pergunta)."
   command -v brew >/dev/null 2>&1 ||
     fail "para instalar o Colima falta o Homebrew: https://brew.sh (ou instale o Docker Desktop ou o OrbStack). Depois, rode de novo."
   brew install colima docker docker-compose || fail "o Homebrew não instalou o Colima (veja acima)."
@@ -277,7 +278,7 @@ docker_as_root() { as_root docker info >/dev/null 2>&1; }
 linux_docker() {
   if ! command -v docker >/dev/null 2>&1; then
     agree "Este computador não tem Docker. Instalar o Docker Engine e o Compose pelo script oficial (https://get.docker.com, com sudo)?" ||
-      fail "o Shearim roda no Docker. Instale o Docker Engine (https://docs.docker.com/engine/install/) e rode de novo, ou responda sim para o instalador instalar (--yes não pergunta)."
+      fail "o Regents roda no Docker. Instale o Docker Engine (https://docs.docker.com/engine/install/) e rode de novo, ou responda sim para o instalador instalar (--yes não pergunta)."
     curl -fsSL https://get.docker.com -o "$WORK/get-docker.sh" || fail "não consegui baixar https://get.docker.com."
     as_root sh "$WORK/get-docker.sh" || fail "o script oficial do Docker falhou (veja acima)."
     say "ok: Docker Engine instalado"
@@ -342,12 +343,12 @@ run_setup() {
 
 app_healthy() { [ "$(docker compose ps app --format '{{.Health}}' 2>/dev/null)" = healthy ]; }
 
-start_shearim() {
+start_regents() {
   HEALTHY=0
   docker compose pull || fail "o 'docker compose pull' falhou (veja acima)."
   docker compose up -d || fail "o 'docker compose up -d' falhou (veja acima)."
   UP=1
-  say "Esperando o Shearim responder..."
+  say "Esperando o Regents responder..."
   if wait_until app_healthy; then HEALTHY=1; fi
 }
 
@@ -359,7 +360,7 @@ keep_awake() {
   cat >"$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Instalado pelo instalador do Shearim: o Mac não dorme enquanto o Docker está de pé. -->
+<!-- Instalado pelo instalador do Regents: o Mac não dorme enquanto o Docker está de pé. -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
@@ -402,7 +403,7 @@ checklist() {
   item "${UP:-0}" "Os containers voltam sozinhos quando o Docker sobe (restart: unless-stopped)"
   item "$(yes_if found '^ok: MagicDNS ligado')" "MagicDNS ligado na tailnet" "https://login.tailscale.com/admin/dns"
   item "$(yes_if found '^ok: HTTPS ligado')" "HTTPS ligado na tailnet" "https://login.tailscale.com/admin/dns (\"Enable HTTPS\")"
-  item "${HEALTHY:-0}" "O Shearim respondeu" "cd $DIR && docker compose ps"
+  item "${HEALTHY:-0}" "O Regents respondeu" "cd $DIR && docker compose ps"
   item 0 "Uma cópia de ./backups e ./secrets fora deste computador" "o backup completo é $DIR/backups mais $DIR/secrets"
 }
 

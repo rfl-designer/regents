@@ -60,7 +60,7 @@ export class NewerDatabaseError extends Error {
     super(
       `este banco foi migrado por uma versão mais nova do Regents (uma migração de ${state.appliedAt.toISOString()}, ` +
         `depois da última que esta versão conhece, ${state.latestKnown}). Para não estragar os dados, esta versão não sobe nele. ` +
-        "Volte para a versão mais nova (SHEARIM_VERSION no .env) ou, para ficar nesta, restaure um backup feito antes da " +
+        "Volte para a versão mais nova (REGENTS_VERSION no .env) ou, para ficar nesta, restaure um backup feito antes da " +
         "atualização: `docker compose run --rm app restore <arquivo>` (o dump de antes da migração fica em ./backups).",
     );
   }

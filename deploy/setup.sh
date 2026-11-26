@@ -1,12 +1,12 @@
 #!/bin/sh
-# Setup da Instalação do Shearim (Spec, módulo 13; histórias 5 e 6).
+# Setup da Instalação do Regents (Spec, módulo 13; histórias 5 e 6).
 #
 # Pede só a auth key do Tailscale e um e-mail de contato. Gera a senha do Postgres e a
 # chave mestra em ./secrets, sobe o sidecar e confere MagicDNS, HTTPS e a tag do nó,
 # dizendo como consertar. Pode ser rodado de novo: nunca troca um segredo que já existe
 # (trocar a chave mestra torna a Chave do Workspace ilegível).
 #
-# Sem perguntas (para o instalador, #39): TS_AUTHKEY=tskey-auth-... SHEARIM_CONTACT_EMAIL=...
+# Sem perguntas (para o instalador, #39): TS_AUTHKEY=tskey-auth-... REGENTS_CONTACT_EMAIL=...
 #   deploy/setup.sh
 # Só as conferências da tailnet:  deploy/setup.sh --check
 set -eu
@@ -15,11 +15,10 @@ cd "$(dirname "$0")/.."
 SECRETS=./secrets
 ENV_FILE=./.env
 TS_SOCKET=/var/run/tailscale/tailscaled.sock
-TAG=tag:shearim
 
 say() { printf '%s\n' "$*"; }
 fail() {
-  printf 'shearim setup: %s\n' "$*" >&2
+  printf 'regents setup: %s\n' "$*" >&2
   exit 1
 }
 
@@ -66,6 +65,10 @@ env_value() {
   sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1
 }
 
+# A tag do nó: a do .env (uma Instalação que era Shearim guarda tag:shearim) ou tag:regents.
+TAG=$(env_value REGENTS_TAILNET_TAG)
+TAG=${TAG:-tag:regents}
+
 set_env() {
   touch "$ENV_FILE"
   grep -v "^$1=" "$ENV_FILE" >"$ENV_FILE.tmp" || true
@@ -80,8 +83,8 @@ setup_secrets() {
   if [ ! -s "$SECRETS/ts_authkey" ]; then
     key="${TS_AUTHKEY:-}"
     if [ -z "$key" ]; then
-      say "Crie uma auth key em https://login.tailscale.com/admin/settings/keys com a tag $TAG"
-      say "(se a tag não existir, declare-a em tagOwners na política da tailnet)."
+      say "Ponha $TAG nos tagOwners da política da tailnet (https://login.tailscale.com/admin/acls) e"
+      say "crie uma auth key em https://login.tailscale.com/admin/settings/keys com a tag $TAG."
       key=$(ask "Auth key do Tailscale (tskey-auth-...):" secreto)
     fi
     case "$key" in
@@ -98,12 +101,12 @@ setup_secrets() {
     fi
   done
 
-  if [ -z "$(env_value SHEARIM_VAPID_CONTACT)" ]; then
-    email="${SHEARIM_CONTACT_EMAIL:-}"
+  if [ -z "$(env_value REGENTS_VAPID_CONTACT)" ]; then
+    email="${REGENTS_CONTACT_EMAIL:-}"
     [ -n "$email" ] || email=$(ask "E-mail de contato (vai nas notificações push, para os serviços de push):")
     case "$email" in
       *@localhost | *@*.local) fail "o e-mail precisa de um domínio de verdade (a Apple recusa localhost)." ;;
-      ?*@?*.?*) set_env SHEARIM_VAPID_CONTACT "mailto:$email" ;;
+      ?*@?*.?*) set_env REGENTS_VAPID_CONTACT "mailto:$email" ;;
       *) fail "\"$email\" não parece um e-mail." ;;
     esac
     say "ok: contato $email em $ENV_FILE"
@@ -156,7 +159,8 @@ check_tailnet() {
   if [ "$self_tags" -gt 0 ]; then
     say "ok: o nó tem a tag $TAG"
   else
-    say "FALTA: o nó não tem a tag $TAG. Crie a auth key com essa tag (o que sai da Instalação não pode herdar a identidade de uma pessoa)."
+    say "FALTA: o nó não tem a tag $TAG. Ponha $TAG nos tagOwners da política da tailnet (https://login.tailscale.com/admin/acls)"
+    say "       e crie a auth key com essa tag (o que sai da Instalação não pode herdar a identidade de uma pessoa)."
     problems=$((problems + 1))
   fi
 

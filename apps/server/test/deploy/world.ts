@@ -15,10 +15,10 @@ import { REPO_ROOT, type Sandbox, sandbox } from "./sandbox";
 
 export const RELEASE_SCRIPT = join(REPO_ROOT, "deploy/release.sh");
 /** As releases públicas, de onde o instalador baixa. */
-export const RELEASES = "https://github.com/rfl-designer/shearim/releases";
+export const RELEASES = "https://github.com/rfl-designer/regents/releases";
 /** A chamada que baixa o compose da release `tag` (sem tag: a última). */
 export const download = (tag?: string) =>
-  `curl -fsSL ${RELEASES}/${tag ? `download/${tag}` : "latest/download"}/shearim-compose.tar.gz`;
+  `curl -fsSL ${RELEASES}/${tag ? `download/${tag}` : "latest/download"}/regents-compose.tar.gz`;
 
 export type Tailnet = { magicDNS?: boolean; https?: boolean; tagged?: boolean; running?: boolean };
 
@@ -29,11 +29,11 @@ export function tailnetStatus({ magicDNS = true, https = true, tagged = true, ru
       BackendState: running ? "Running" : "NeedsLogin",
       Self: {
         ID: "n1",
-        HostName: "shearim",
-        DNSName: "shearim.tail1234.ts.net.",
-        ...(tagged ? { Tags: ["tag:shearim"] } : {}),
+        HostName: "regents",
+        DNSName: "regents.tail1234.ts.net.",
+        ...(tagged ? { Tags: ["tag:regents"] } : {}),
       },
-      CertDomains: https ? ["shearim.tail1234.ts.net"] : null,
+      CertDomains: https ? ["regents.tail1234.ts.net"] : null,
       CurrentTailnet: { Name: "time.example", MagicDNSSuffix: "tail1234.ts.net", MagicDNSEnabled: magicDNS },
     },
     null,
@@ -72,7 +72,15 @@ case "$*" in
   "login ghcr.io"*) up; cat >"$STATE/docker-login-stdin" ;;
   "compose exec -T tailscale"*) cat "$STATE/tailnet.json" ;;
   "compose ps app --format {{.Health}}") if [ -f "$STATE/health" ]; then cat "$STATE/health"; else echo healthy; fi ;;
-  "compose config"*) [ -f "$STATE/config-fails" ] && { echo "required variable SHEARIM_VAPID_CONTACT is missing a value" >&2; exit 1; }; up ;;
+  "compose config"*)
+    # Como o Compose: cada \${VAR:?mensagem} do compose.yaml precisa da VAR no .env.
+    for v in $(sed -n 's/.*\${\\([A-Z_]*\\):?.*/\\1/p' compose.yaml); do
+      grep -q "^$v=." .env 2>/dev/null && continue
+      msg=$(sed -n "s/.*\\\${$v:?\\([^}]*\\)}.*/\\1/p" compose.yaml | head -n 1)
+      echo "error while interpolating: required variable $v is missing a value: $msg" >&2
+      exit 1
+    done
+    up ;;
   compose*) up ;;
   *) echo "docker falso: não sei responder a $*" >&2; exit 1 ;;
 esac`,
@@ -151,7 +159,7 @@ esac`,
     hide(name) {
       renameSync(join(s.root, "bin", name), join(s.state, `hidden-${name}`));
     },
-    installDir: join(s.home, "shearim"),
+    installDir: join(s.home, "regents"),
     async release(version) {
       const dir = join(s.state, "releases", `v${version}`);
       mkdirSync(dir, { recursive: true });
@@ -164,9 +172,9 @@ esac`,
 }
 
 /** As variáveis com que o setup não pergunta nada (o caminho do instalador sem terminal). */
-export const SETUP_ENV = { TS_AUTHKEY: "tskey-auth-falsa", SHEARIM_CONTACT_EMAIL: "rafa@example.com" };
+export const SETUP_ENV = { TS_AUTHKEY: "tskey-auth-falsa", REGENTS_CONTACT_EMAIL: "rafa@example.com" };
 
-/** O `${SHEARIM_VERSION:-<versão>}` do compose da release: a tag que sobe sem nada no .env. */
-export const composeTag = (version: string) => `\${SHEARIM_VERSION:-${version}}`;
+/** O `${REGENTS_VERSION:-<versão>}` do compose da release: a tag que sobe sem nada no .env. */
+export const composeTag = (version: string) => `\${REGENTS_VERSION:-${version}}`;
 
 export { REPO_ROOT };

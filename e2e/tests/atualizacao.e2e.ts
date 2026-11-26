@@ -41,11 +41,11 @@ const updateTest = test.extend<{
       proc = spawn("bun", [resolve(import.meta.dirname, "../serve.ts")], {
         env: {
           ...process.env,
-          SHEARIM_IDENTITY: "dev",
+          REGENTS_IDENTITY: "dev",
           HOST: "127.0.0.1",
           PORT: String(port),
-          SHEARIM_PGLITE_DIR: join(data, "pglite"),
-          SHEARIM_ACCOUNTS_DIR: join(data, "contas"),
+          REGENTS_PGLITE_DIR: join(data, "pglite"),
+          REGENTS_ACCOUNTS_DIR: join(data, "contas"),
         },
         stdio: ["ignore", out, out],
       });
