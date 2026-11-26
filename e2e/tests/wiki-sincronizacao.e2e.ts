@@ -14,6 +14,27 @@ function arquivos(files: Record<string, string>) {
   });
 }
 
+type Ctx = Parameters<Parameters<typeof test>[2]>[0];
+
+/** A Chave do Workspace, uma Wiki nova e as Fontes dela, pendentes. Devolve o nome da Wiki. */
+async function wikiComFontes(app: Ctx["app"], screen: Ctx["screen"], fontes: Record<string, string>) {
+  const chave = await fetch(`${app.baseUrl}/api/workspace-key`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ apiKey: "sk-ant-e2e" }),
+  });
+  if (!chave.ok) throw new Error(`PUT /api/workspace-key: ${chave.status}`);
+  const nome = `Curso ${Object.keys(fontes)[0]} ${Date.now()}`;
+  await app.open("/wikis");
+  await screen.getByRole("textbox", "Nome da Wiki").fill(nome);
+  await screen.getByRole("textbox", "Descrição da Wiki").fill("O curso transcrito, aula por aula.");
+  await screen.getByRole("button", "Criar").tap();
+  const wiki = screen.getByRole("listitem", `Wiki ${nome}`);
+  await wiki.getByLabel("Subir Fontes (.txt ou .md)").setInputFiles(arquivos(fontes));
+  await expect(wiki).toContainText(Object.keys(fontes).length === 1 ? "1 Fonte pendente" : "Fontes pendentes");
+  return nome;
+}
+
 describe("Sincronização da Wiki", () => {
   test('o Admin sobe duas Fontes, aperta "Sincronizar" e vê a versão 1 com o relatório', {
     timeout: 90_000,
@@ -56,6 +77,49 @@ describe("Sincronização da Wiki", () => {
     await expect(wiki).toContainText("nada pendente");
     await expect(wiki.getByRole("list", `Versões de ${nome}`)).toContainText("Versão 1");
     await expect(wiki.getByRole("button", "Nada a sincronizar")).toBeDisabled();
+  });
+
+  test('o Admin cancela uma Sincronização em curso pelo botão "Cancelar", e a Wiki fica como estava', {
+    timeout: 90_000,
+  }, async ({ app, screen }) => {
+    const nome = await wikiComFontes(app, screen, { "trava.md": "# Trava\n\n[trave] Esta Fonte não termina.\n" });
+    const wiki = screen.getByRole("listitem", `Wiki ${nome}`);
+    await wiki.getByRole("button", "Sincronizar").tap();
+    await expect(wiki.getByRole("status").filter({ hasText: "Sincronização" })).toContainText(
+      "em curso: Fonte 1 de 1",
+      { timeout: 30_000 },
+    );
+
+    await wiki.getByRole("button", "Cancelar").tap();
+
+    await expect(wiki.getByRole("status").filter({ hasText: "Sincronização" })).toContainText(
+      "Sincronização cancelada",
+    );
+    await expect(wiki.getByRole("button", "Cancelar")).toHaveCount(0);
+    await expect(wiki).toContainText("nunca sincronizada");
+    await expect(wiki).toContainText("1 Fonte pendente");
+    await expect(wiki.getByRole("button", "Sincronizar")).toBeEnabled();
+  });
+
+  test("a Sincronização que falha nas duas tentativas mostra o motivo, e a Wiki fica como estava", {
+    timeout: 90_000,
+  }, async ({ app, screen }) => {
+    const nome = await wikiComFontes(app, screen, { "cai.md": "# Cai\n\n[falhe sempre] Esta Fonte sempre cai.\n" });
+    const wiki = screen.getByRole("listitem", `Wiki ${nome}`);
+    await wiki.getByRole("button", "Sincronizar").tap();
+
+    // A 1ª falha fica à vista enquanto a nova tentativa sai (10 s depois).
+    await expect(wiki.getByRole("status").filter({ hasText: "Sincronização" })).toContainText(
+      "nova tentativa depois de: a Anthropic está sobrecarregada",
+      { timeout: 30_000 },
+    );
+    await expect(wiki.getByRole("status").filter({ hasText: "Sincronização" })).toContainText(
+      "A Sincronização falhou: a Anthropic está sobrecarregada, nas duas tentativas",
+      { timeout: 30_000 },
+    );
+    await expect(wiki).toContainText("nunca sincronizada");
+    await expect(wiki).toContainText("1 Fonte pendente");
+    await expect(wiki.getByRole("button", "Sincronizar")).toBeEnabled();
   });
 
   test('a tela da Articuladora mostra "Sincronizar a Wiki" como Habilidade do Shearim, só para leitura', {

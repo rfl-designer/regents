@@ -7,6 +7,7 @@ import {
   type WikiSyncDto,
   wikiSyncPayerText,
 } from "@shearim/contracts";
+import { RETRY_DELAY_MS } from "../src/executions";
 import { STALL_MS } from "../src/model/call";
 import type { FakeClaudeCall, FakeRun } from "./fake-claude";
 import { scriptedBrain } from "./fakes/scripted-brain";
@@ -268,7 +269,7 @@ describe("o token da sessão MCP da Sincronização", () => {
     async () => {
       const t = await testApp();
       const wiki = await wikiComFontes(t, { chave: false, fontes: [AULA_1, AULA_2] });
-      t.claude.script({ syncRuns: [escreve("ganchos", "aula-01.md"), { kind: "hang" }] });
+      t.claude.script({ syncRuns: [escreve("ganchos", "aula-01.md"), { kind: "hang" }, { kind: "hang" }] });
 
       await sincronizar(t, wiki);
       const [primeira, segunda] = await eventually(
@@ -284,13 +285,21 @@ describe("o token da sessão MCP da Sincronização", () => {
       expect(await listar(primeira!)).toBe(401);
       expect(await listar(segunda!)).toBe(200);
 
-      // A 2ª fica muda até a vigia encerrar a Sincronização: o token dela também deixa de valer.
+      // A 2ª fica muda até a vigia encerrá-la: o token dela também deixa de valer.
       t.clock.advance(STALL_MS);
-      expect(await terminada(t, wiki)).toMatchObject({ state: "failed" });
       const caiu = await eventually("o token da 2ª cair", async () =>
         (await listar(segunda!)) === 401 ? true : undefined,
       );
       expect(caiu).toBe(true);
+      // A nova tentativa (10 s depois) também fica muda: a vigia encerra a Sincronização.
+      await eventually(
+        "a nova tentativa à vista",
+        async () => (await naAdministracao(t, wiki)).lastSync?.attempt === 2,
+      );
+      t.clock.advance(RETRY_DELAY_MS);
+      await eventually("a nova tentativa subir", async () => t.claude.syncs().length === 3, 20_000);
+      t.clock.advance(STALL_MS);
+      expect(await terminada(t, wiki)).toMatchObject({ state: "failed" });
     },
     LONGO,
   );

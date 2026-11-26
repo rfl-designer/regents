@@ -176,6 +176,12 @@ export interface WikiSyncDto {
    * Chave do Workspace, "pela Chave do Workspace"), decidido a cada chamada. Nulo antes da primeira.
    */
   payer: "account" | "key" | null;
+  /**
+   * A tentativa da chamada em curso: 2 quando a chamada falhou uma vez e espera ou faz a nova
+   * tentativa automática (com o motivo da falha em `reason`). Uma segunda falha encerra a
+   * Sincronização em `failed`.
+   */
+  attempt: number;
   startedBy: { id: string; name: string };
   createdAt: string;
   finishedAt: string | null;

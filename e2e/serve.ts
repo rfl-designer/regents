@@ -36,7 +36,9 @@
  *
  * A Sincronização da Wiki (reconhecida pela marca no `system`) escreve, para cada Fonte, uma página
  * com o slug do nome do arquivo (sem a extensão), o título do primeiro `# título` da Fonte (ou o nome
- * do arquivo) e o primeiro parágrafo de texto, e acrescenta a linha dela ao índice do rascunho.
+ * do arquivo) e o primeiro parágrafo de texto, e acrescenta a linha dela ao índice do rascunho. Uma
+ * Fonte com `[trave]` fica sem resposta (para o "Cancelar"); com `[falhe sempre]`, recebe a
+ * sobrecarga (529) em toda tentativa.
  *
  * Com `[wiki: <Wiki>/<página>]`, o Agente lê a página por "ler a Wiki" e responde com a primeira
  * linha do corpo dela e a citação `[[wiki:<Wiki>/<página>]]` (#85).
@@ -159,6 +161,11 @@ function sincronizar(req: RecordedRequest): FakeReply {
   const fonte = prompt.match(/## Fonte nova: (.+?) \(Fonte \d+ de \d+\)\n([\s\S]*?)\n\nLeve esta Fonte/);
   if (!fonte) return { text: "Pronto.", delayMs: 0 };
   const [, arquivo, texto] = fonte as unknown as [string, string, string];
+  // `[trave]`: a chamada não responde (até o cancelamento ou a vigia). `[falhe sempre]`: a sobrecarga.
+  if (texto.includes("[trave]")) return { hang: true };
+  if (texto.includes("[falhe sempre]")) {
+    return { status: 529, errorType: "overloaded_error", errorMessage: "Overloaded" };
+  }
   const slug = arquivo
     .replace(/\.[^.]+$/, "")
     .toLowerCase()
