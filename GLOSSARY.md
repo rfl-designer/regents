@@ -27,7 +27,7 @@ O papel de Membro que configura o Workspace: a Chave do Workspace, os Agentes, o
 _Avoid_: dono, administrador do sistema
 
 **Conta**:
-A ligação de um Membro à assinatura do Claude dele, feita pela própria pessoa. Paga a IA gasta por causa das mensagens desse Membro, e de mais ninguém. Dois Membros podem ter Contas na mesma assinatura; o limite da assinatura vale para os dois. A ligação vale por algumas semanas; antes do fim, o Membro é avisado e a liga de novo.
+A ligação de um Membro à assinatura do Claude dele, feita pela própria pessoa. Paga a IA gasta por causa das mensagens desse Membro e das Sincronizações que ele inicia, e de mais ninguém. Dois Membros podem ter Contas na mesma assinatura; o limite da assinatura vale para os dois. A ligação vale por algumas semanas; antes do fim, o Membro é avisado e a liga de novo.
 _Avoid_: login, plano, assinatura do Workspace
 
 **Chave do Workspace**:
@@ -43,8 +43,22 @@ Um participante de IA do Workspace, com nome, descrição, instruções, modelo 
 _Avoid_: bot, assistente, IA
 
 **Articuladora**:
-O Agente que vem com o Workspace, se chama Sophya por padrão e está em todo Canal, público ou privado. Não pode ser apagada nem removida de um Canal. Num Canal com outros Agentes, ela dá o Desfecho de cada mensagem de pessoa; num Canal só com ela, responde só por Menção. Conhece todos os Agentes, com as Ferramentas de cada um, e os Canais que quem escreveu pode ver. Só o Admin troca o nome, o modelo e o orçamento dela; as instruções dela são do Shearim.
+O Agente que vem com o Workspace, se chama Sophya por padrão e está em todo Canal, público ou privado. Não pode ser apagada nem removida de um Canal. Num Canal com outros Agentes, ela dá o Desfecho de cada mensagem de pessoa; num Canal só com ela, responde só por Menção. Conhece todos os Agentes, com as Ferramentas de cada um e o nome e a descrição das Habilidades e das Wikis de cada um, e os Canais que quem escreveu pode ver. Só o Admin troca o nome, o modelo e o orçamento dela; as instruções dela são do Shearim.
 _Avoid_: Líder, braço direito, router, coordenador
+
+### O que os Agentes sabem
+
+**Wiki**:
+Um conjunto nomeado de páginas em markdown, ligadas entre si e com um índice, que a Articuladora mantém a partir das Fontes. A Memória nasce das conversas; a Wiki nasce das Fontes que o Admin sobe. Tem um alcance próprio: pública (todo Membro) ou restrita a uma lista de Membros. O Admin liga cada Wiki a Canais, a Agentes ou aos dois: todo Agente de um Canal ligado a consulta ali, e um Agente ligado a ela a consulta em qualquer conversa, mas só numa conversa em que todos os participantes estão dentro do alcance. Ler a Wiki é uma Ferramenta de leitura que o Agente tem sempre que uma Wiki o alcança. Cada página diz de quais Fontes veio. Os Membros dentro do alcance navegam pela Wiki sem editar; só o Admin a mantém.
+_Avoid_: Conhecimento, base de conhecimento, RAG, segundo cérebro, documentação
+
+**Fonte**:
+Um texto ou markdown bruto que o Admin sobe numa Wiki, como um curso transcrito. Não muda depois de subir: é a Wiki que muda a partir dela. Quando o Admin remove uma Fonte, a próxima Sincronização retira da Wiki o que vinha só dela.
+_Avoid_: arquivo, upload, documento, material
+
+**Sincronização**:
+O trabalho da Articuladora que leva as Fontes de uma Wiki para as páginas dela: cria e liga páginas, atualiza o índice e aponta contradições e páginas sem link. Só o Admin a inicia, e o clique dele autoriza a Sincronização inteira, sem Pedido de aprovação. A Wiki só muda quando ela termina; se falhar ou for cancelada, a Wiki fica como estava. Cada Sincronização concluída gera uma versão da Wiki, e o Admin pode voltar à anterior. As regras da Sincronização são do Shearim.
+_Avoid_: ingestão, indexação, processamento, atualização
 
 ### Onde se conversa
 
@@ -77,6 +91,10 @@ _Avoid_: roteamento, decisão, triagem
 **Ferramenta**:
 Uma ação que um Agente pode usar durante uma resposta: ler o Workspace, ler a web, ou ler e agir num sistema de fora por um Conector. O Admin escolhe as Ferramentas de cada Agente, inclusive as da Articuladora. No Workspace, uma Ferramenta alcança só o que o autor da mensagem e todos os participantes da conversa podem ver. Toda escrita passa por um Pedido de aprovação; leitura não. Um Agente só escreve em conversas que a resposta alcança, de que ele participa e em que o autor pode escrever. O uso de uma Ferramenta aparece no Andamento, e o que ela gasta conta no orçamento do Agente. Uma resposta usa Ferramentas até um teto; ao chegar nele, o Agente responde com o que tem. O Desfecho nunca usa Ferramentas.
 _Avoid_: tool, skill, capacidade, função
+
+**Habilidade**:
+Um procedimento escrito por gente, com nome e descrição, que um Agente carrega só quando a tarefa pede. A Memória do Agente é aprendida nas conversas; a Habilidade é escrita. O Admin instala a Habilidade no Workspace e escolhe em quais Agentes ela fica ativa. Deixa as instruções do Agente curtas: elas dizem quem ele é, e as Habilidades dizem como fazer cada tarefa. Diz *como fazer*, enquanto a Wiki diz *o que se sabe*.
+_Avoid_: skill, prompt, macro, receita
 
 **Conector**:
 A ligação do Workspace a um sistema de fora, adicionada pelo Admin, que traz as Ferramentas desse sistema. A credencial é de cada Membro, que liga a sua, ou do Workspace, uma só para todos. Com a credencial do Workspace, quem fala com o Agente alcança o que ela alcança, e a descrição do Agente diz isso. Um Conector alcança o que a credencial alcança, mesmo numa conversa com quem não teria esse acesso, e o Andamento mostra de quem é a credencial usada. Para um autor que não ligou a credencial dele, as Ferramentas do Conector ficam indisponíveis naquela resposta, e só ele vê como ligá-la. O GitHub é um Conector que vem com o Shearim: o Admin o instala na conta do time no GitHub, escolhe os repositórios e pode restringir cada Agente a alguns deles.
