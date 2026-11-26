@@ -11,6 +11,7 @@ import {
   type WikiVersionDto,
   wikiSyncStepText,
 } from "@shearim/contracts";
+import { configFrom } from "../src/config";
 import { wikiFromEnv } from "../src/wiki/sources";
 import { lastUserText, type RecordedRequest, toolResults } from "./fakes/messages-api";
 import { scriptedBrain } from "./fakes/scripted-brain";
@@ -326,9 +327,9 @@ describe('"Sincronizar a Wiki" é uma Habilidade do Shearim', () => {
 
 describe("o teto de turnos da Sincronização", () => {
   test("é ajustável na Instalação (SHEARIM_WIKI_SYNC_MAX_TURNS)", () => {
-    expect(wikiFromEnv({})).toEqual({});
-    expect(wikiFromEnv({ SHEARIM_WIKI_SYNC_MAX_TURNS: "60" })).toEqual({ syncMaxToolTurns: 60 });
-    expect(() => wikiFromEnv({ SHEARIM_WIKI_SYNC_MAX_TURNS: "0" })).toThrow(
+    expect(wikiFromEnv(configFrom({}))).toEqual({});
+    expect(wikiFromEnv(configFrom({ SHEARIM_WIKI_SYNC_MAX_TURNS: "60" }))).toEqual({ syncMaxToolTurns: 60 });
+    expect(() => wikiFromEnv(configFrom({ SHEARIM_WIKI_SYNC_MAX_TURNS: "0" }))).toThrow(
       "SHEARIM_WIKI_SYNC_MAX_TURNS=0 não é um número inteiro maior que zero.",
     );
   });

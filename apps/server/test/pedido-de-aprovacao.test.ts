@@ -14,6 +14,7 @@ import { describe, expect, test } from "bun:test";
 import type { AgentDto, ApprovalRequestDto, ChannelDto, ExecutionDto, MessageDto, UnreadDto } from "@shearim/contracts";
 import { and, eq } from "drizzle-orm";
 import { approvalTtlFromEnv } from "../src/approvals";
+import { configFrom } from "../src/config";
 import { schema } from "../src/db/client";
 import { EXCERPT_MAX } from "../src/push";
 import type { ToolDefinition, WriteTool } from "../src/tools/port";
@@ -589,13 +590,13 @@ describe("o Pedido que ninguém decide", () => {
   test(
     "o prazo é o da Instalação (SHEARIM_APPROVAL_TTL_H), e o Pedido vencido com o servidor parado expira ao subir",
     async () => {
-      expect(approvalTtlFromEnv({})).toBeUndefined();
-      expect(approvalTtlFromEnv({ SHEARIM_APPROVAL_TTL_H: "2" })).toBe(2 * HORA);
-      expect(approvalTtlFromEnv({ SHEARIM_APPROVAL_TTL_H: "0.5" })).toBe(HORA / 2);
-      expect(() => approvalTtlFromEnv({ SHEARIM_APPROVAL_TTL_H: "0" })).toThrow(
+      expect(approvalTtlFromEnv(configFrom({}))).toBeUndefined();
+      expect(approvalTtlFromEnv(configFrom({ SHEARIM_APPROVAL_TTL_H: "2" }))).toBe(2 * HORA);
+      expect(approvalTtlFromEnv(configFrom({ SHEARIM_APPROVAL_TTL_H: "0.5" }))).toBe(HORA / 2);
+      expect(() => approvalTtlFromEnv(configFrom({ SHEARIM_APPROVAL_TTL_H: "0" }))).toThrow(
         "SHEARIM_APPROVAL_TTL_H=0 não é um número maior que zero.",
       );
-      expect(() => approvalTtlFromEnv({ SHEARIM_APPROVAL_TTL_H: "um dia" })).toThrow();
+      expect(() => approvalTtlFromEnv(configFrom({ SHEARIM_APPROVAL_TTL_H: "um dia" }))).toThrow();
 
       const t = await testApp({ approvals: { ttlMs: 2 * HORA } });
       const { geral } = await workspace(t);

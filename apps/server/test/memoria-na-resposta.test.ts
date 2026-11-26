@@ -6,6 +6,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { AgentDto, ChannelDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
+import { configFrom } from "../src/config";
 import { memoryFromEnv } from "../src/memory/extraction";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 
@@ -175,10 +176,10 @@ describe("o resumo da Memória no contexto", () => {
 
 describe("o orçamento do resumo", () => {
   test("é ajustável na Instalação (SHEARIM_MEMORY_SUMMARY_CHARS)", () => {
-    expect(memoryFromEnv({})).toEqual({});
-    expect(memoryFromEnv({ SHEARIM_MEMORY_SUMMARY_CHARS: "1500" })).toEqual({ summaryChars: 1500 });
+    expect(memoryFromEnv(configFrom({}))).toEqual({});
+    expect(memoryFromEnv(configFrom({ SHEARIM_MEMORY_SUMMARY_CHARS: "1500" }))).toEqual({ summaryChars: 1500 });
     for (const errado of ["0", "-3", "1.5", "muito"]) {
-      expect(() => memoryFromEnv({ SHEARIM_MEMORY_SUMMARY_CHARS: errado })).toThrow(
+      expect(() => memoryFromEnv(configFrom({ SHEARIM_MEMORY_SUMMARY_CHARS: errado }))).toThrow(
         `SHEARIM_MEMORY_SUMMARY_CHARS=${errado} não é um número inteiro maior que zero.`,
       );
     }

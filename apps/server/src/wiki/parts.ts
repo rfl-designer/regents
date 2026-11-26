@@ -1,4 +1,4 @@
-/** O tamanho de parte padrão, em caracteres (`SHEARIM_WIKI_PART_MAX_CHARS`): cerca de 10 mil tokens. */
+/** O tamanho de parte padrão, em caracteres (`REGENTS_WIKI_PART_MAX_CHARS`): cerca de 10 mil tokens. */
 export const DEFAULT_PART_MAX_CHARS = 40_000;
 
 /** O começo do bloco seguinte: depois de uma linha em branco, ou numa linha de título markdown. */

@@ -10,6 +10,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { AgentDto, ChannelDto, ExecutionDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
+import { configFrom } from "../src/config";
 import { DEFAULT_MEMORY_MODEL, MEMORY_SCHEMA, memoryFromEnv } from "../src/memory/extraction";
 import { type ScriptedRun, scriptedBrain } from "./fakes/scripted-brain";
 import { type EventSocket, eventually, type Person, type TestApp, testApp } from "./harness";
@@ -128,9 +129,11 @@ describe("a extração depois da resposta", () => {
   });
 
   test("o modelo da extração é ajustável na Instalação (SHEARIM_MEMORY_MODEL)", async () => {
-    expect(memoryFromEnv({})).toEqual({});
-    expect(memoryFromEnv({ SHEARIM_MEMORY_MODEL: "claude-sonnet-5-5" })).toEqual({ model: "claude-sonnet-5-5" });
-    expect(() => memoryFromEnv({ SHEARIM_MEMORY_MODEL: "gpt" })).toThrow(
+    expect(memoryFromEnv(configFrom({}))).toEqual({});
+    expect(memoryFromEnv(configFrom({ SHEARIM_MEMORY_MODEL: "claude-sonnet-5-5" }))).toEqual({
+      model: "claude-sonnet-5-5",
+    });
+    expect(() => memoryFromEnv(configFrom({ SHEARIM_MEMORY_MODEL: "gpt" }))).toThrow(
       "SHEARIM_MEMORY_MODEL=gpt não é um modelo aceito",
     );
 
