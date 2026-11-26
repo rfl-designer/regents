@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { type Db, schema } from "../db/client";
 import { type AutomaticTool, ToolFailure } from "../tools/port";
 
@@ -8,13 +8,25 @@ const { skills, agentSkills } = schema;
 export const LOAD_SKILL_TITLE = "carregar Habilidade";
 
 /** As Habilidades ativas no Agente agora, por nome (o catálogo no contexto). */
-export function activeSkillsOf(db: Db, agentId: string) {
-  return db
-    .select({ id: skills.id, name: skills.name, description: skills.description })
+export async function activeSkillsOf(db: Db, agentId: string) {
+  return (await activeSkillsByAgent(db, [agentId])).get(agentId) ?? [];
+}
+
+/**
+ * As Habilidades ativas agora em cada Agente de `agentIds` (sem eles, em todos), por nome: o nome e
+ * a descrição, nunca o corpo. É o que a lista de Agentes e o roteamento da Articuladora mostram.
+ */
+export async function activeSkillsByAgent(db: Db, agentIds?: readonly string[]) {
+  const byAgent = new Map<string, { name: string; description: string }[]>();
+  if (agentIds?.length === 0) return byAgent;
+  const rows = await db
+    .select({ agentId: agentSkills.agentId, name: skills.name, description: skills.description })
     .from(agentSkills)
     .innerJoin(skills, eq(skills.id, agentSkills.skillId))
-    .where(eq(agentSkills.agentId, agentId))
+    .where(agentIds ? inArray(agentSkills.agentId, [...agentIds]) : undefined)
     .orderBy(asc(sql`lower(${skills.name})`));
+  for (const { agentId, ...skill } of rows) byAgent.set(agentId, [...(byAgent.get(agentId) ?? []), skill]);
+  return byAgent;
 }
 
 /** A Habilidade ativa no Agente com este nome (sem diferenciar maiúsculas), lida agora. */

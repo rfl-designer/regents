@@ -404,6 +404,11 @@ export interface AgentDto {
   /** As Ferramentas concedidas a ele, na ordem do catálogo, para todo Membro (Spec #44). */
   tools: AgentToolSummaryDto[];
   /**
+   * As Habilidades ativas nele, por nome, para todo Membro (spec #74): o nome e a descrição (quando
+   * usar). O corpo não vem: só o Admin o lê, em `GET /api/skills/:id`.
+   */
+  skills: AgentSkillSummaryDto[];
+  /**
    * As linhas geradas da descrição pública, sobre o que ele alcança fora do Workspace (uma por
    * Conector com credencial do Workspace, e uma pelo GitHub, com os repositórios da lista dele):
    * "acessa CRM com a credencial do Workspace".
@@ -994,6 +999,12 @@ export const SKILL_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
 export interface ImportSkillResultDto {
   skill: SkillDto;
   ignored: string[];
+}
+
+/** Uma Habilidade ativa num Agente, como a lista de Agentes a mostra a todo Membro (`AgentDto.skills`). */
+export interface AgentSkillSummaryDto {
+  name: string;
+  description: string;
 }
 
 /**

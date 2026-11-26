@@ -2,6 +2,7 @@ import {
   AGENT_MODELS,
   type AgentDto,
   type AgentModel,
+  type AgentSkillSummaryDto,
   type AgentToolSummaryDto,
   type CreateAgentInput,
   type UpdateAgentInput,
@@ -20,6 +21,7 @@ import type { Env } from "./members";
 import { forgetAgent } from "./memory/items";
 import { claimHandle, handleBase, releaseHandle } from "./mention-handles";
 import { audienceOf } from "./participation";
+import { activeSkillsByAgent } from "./skills/tool";
 import type { ToolPort } from "./tools/port";
 
 export type Agent = typeof schema.agents.$inferSelect;
@@ -34,7 +36,7 @@ const PHOTO = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 const PHOTO_MAX = 400_000;
 const BUDGET_INVALID = "O orçamento mensal é um valor em dólares, zero ou mais (vazio: sem teto).";
 
-/** Agentes: o Admin cria; todo Membro vê o nome, a foto, a descrição, o modelo e as Ferramentas. */
+/** Agentes: o Admin cria; todo Membro vê o nome, a foto, a descrição, o modelo, as Ferramentas e as Habilidades. */
 export function agentRoutes(deps: {
   db: Db;
   clock: Clock;
@@ -63,7 +65,12 @@ export function agentRoutes(deps: {
       .orderBy(desc(agents.builtin), asc(agents.createdAt), asc(agents.name));
     const grants = await deps.tools.grantsOf();
     const repos = await reposOf();
-    const of = (id: string) => ({ tools: grants.get(id) ?? [], githubRepositories: repos.get(id) ?? null });
+    const skills = await activeSkillsByAgent(db);
+    const of = (id: string) => ({
+      tools: grants.get(id) ?? [],
+      skills: skills.get(id) ?? [],
+      githubRepositories: repos.get(id) ?? null,
+    });
     if (!admin) return c.json(all.map((a) => toAgentDto(a, { admin, ...of(a.id) })));
     const spend = await keySpend(db, monthOf(clock.now()));
     return c.json(all.map((a) => toAgentDto(a, { admin, ...of(a.id), keySpendUsd: spend.get(a.id) ?? 0 })));
@@ -110,7 +117,10 @@ export function agentRoutes(deps: {
       return { ...agent, handle };
     });
     if (!created) return c.json({ error: "name_taken", message: `Já existe um Agente chamado ${name}.` }, 409);
-    return c.json(toAgentDto(created, { admin: true, tools: [], githubRepositories: null, keySpendUsd: 0 }), 201);
+    return c.json(
+      toAgentDto(created, { admin: true, tools: [], skills: [], githubRepositories: null, keySpendUsd: 0 }),
+      201,
+    );
   });
 
   /**
@@ -212,6 +222,7 @@ export function agentRoutes(deps: {
       toAgentDto(updated, {
         admin: true,
         tools: await toolsOf(updated.id),
+        skills: (await activeSkillsByAgent(db, [updated.id])).get(updated.id) ?? [],
         githubRepositories: (await reposOf([updated.id])).get(updated.id) ?? null,
         keySpendUsd: budget.keySpendUsd,
       }),
@@ -337,6 +348,8 @@ export function toAgentDto(
   opts: {
     admin: boolean;
     tools: AgentToolSummaryDto[];
+    /** As Habilidades ativas nele: o nome e a descrição. */
+    skills: AgentSkillSummaryDto[];
     /** Os repositórios do GitHub a que o Agente está restrito (nulo ou ausente: todos os da instalação). */
     githubRepositories?: string[] | null;
     keySpendUsd?: number;
@@ -352,6 +365,7 @@ export function toAgentDto(
     model: a.model as AgentModel,
     builtin: a.builtin,
     tools: opts.tools,
+    skills: opts.skills,
     reach: reachLines(opts.tools),
     memoryEnabled: a.memoryEnabled,
   };

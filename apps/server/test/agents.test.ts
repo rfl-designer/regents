@@ -98,6 +98,8 @@ describe("Agentes", () => {
       ...faro,
       // Nasce sem Ferramentas: o Admin as concede na tela do Agente (Spec #44).
       tools: [],
+      // Nasce sem Habilidades: o Admin as ativa na tela do Agente (spec #74).
+      skills: [],
       // Sem Conector, nenhuma linha de alcance na descrição pública.
       reach: [],
       // A Memória vem ligada (#67).
