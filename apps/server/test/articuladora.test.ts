@@ -127,7 +127,10 @@ describe("o Admin adapta a Articuladora sem quebrar o Desfecho", () => {
     const doBruno = await t.as(bruno).patch(`/api/agents/${sophya.id}`, { name: "Bruna" });
 
     expect(apagar.status).toBe(403);
-    expect(await apagar.json()).toEqual({ error: "builtin_locked", message: "A Articuladora é do Regents e não se apaga." });
+    expect(await apagar.json()).toEqual({
+      error: "builtin_locked",
+      message: "A Articuladora é do Regents e não se apaga.",
+    });
     expect(doBruno.status).toBe(403);
     expect(await articuladora(t)).toEqual(sophya);
   });
