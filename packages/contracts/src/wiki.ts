@@ -143,7 +143,14 @@ export type WikiSyncState = "queued" | "running" | "done" | "failed" | "canceled
  * `review` ("revisando a Wiki") ou `publishing` ("publicando").
  */
 export type WikiSyncStepDto =
-  | { kind: "source"; current: number; total: number; fileName: string }
+  | {
+      kind: "source";
+      current: number;
+      total: number;
+      fileName: string;
+      /** A parte em curso de uma Fonte grande, dividida em partes (#87); ausente numa Fonte que vai inteira. */
+      part?: { current: number; total: number };
+    }
   | { kind: "review" }
   | { kind: "publishing" };
 
@@ -153,11 +160,37 @@ export interface WikiPageRefDto {
   title: string;
 }
 
-/** O relatório de uma Sincronização concluída: o que mudou da versão anterior para a nova. */
+/** Uma contradição que a revisão da Sincronização apontou (#87): as páginas e o que se contradiz. */
+export interface WikiContradictionDto {
+  pages: WikiPageRefDto[];
+  text: string;
+}
+
+/**
+ * A conferência em código do fim da Sincronização (#87), sobre as páginas da versão nova, sem o
+ * índice e o `log`. Ela não impede a publicação: só entra no relatório.
+ * - `brokenLinks`: cada link `[[slug]]` para uma página que não existe (`from`, a página que liga).
+ * - `withoutSources`: as páginas sem nenhuma Fonte.
+ * - `outsideIndex`: as páginas que o índice não liga.
+ * - `orphans`: as páginas que nenhuma outra página liga (o índice e o `log` não contam).
+ */
+export interface WikiCheckDto {
+  brokenLinks: { from: WikiPageRefDto; slug: string }[];
+  withoutSources: WikiPageRefDto[];
+  outsideIndex: WikiPageRefDto[];
+  orphans: WikiPageRefDto[];
+}
+
+/**
+ * O relatório de uma Sincronização concluída: o que mudou da versão atual para a nova, as
+ * contradições que a revisão apontou e a conferência em código.
+ */
 export interface WikiSyncReportDto {
   created: WikiPageRefDto[];
   updated: WikiPageRefDto[];
   removed: WikiPageRefDto[];
+  contradictions: WikiContradictionDto[];
+  check: WikiCheckDto;
 }
 
 /**
@@ -345,7 +378,10 @@ export type WikiServerEvent =
 
 /** O passo para gente ler: "em curso: Fonte 1 de 2", "revisando a Wiki", "publicando". */
 export function wikiSyncStepText(step: WikiSyncStepDto): string {
-  if (step.kind === "source") return `em curso: Fonte ${step.current} de ${step.total}`;
+  if (step.kind === "source") {
+    const part = step.part ? `, parte ${step.part.current} de ${step.part.total}` : "";
+    return `em curso: Fonte ${step.current} de ${step.total}${part}`;
+  }
   return step.kind === "review" ? "revisando a Wiki" : "publicando";
 }
 

@@ -157,8 +157,12 @@ function citarWiki(req: RecordedRequest): FakeReply | undefined {
 function sincronizar(req: RecordedRequest): FakeReply {
   if (toolResults(req.body).length) return { text: "Pronto.", delayMs: 0 };
   const prompt = lastUserText(req.body);
+  if (prompt.includes("## Revisão da Wiki")) return revisar(prompt);
   const indice = prompt.split("## Índice do rascunho\n")[1]?.split("\n\n## Fonte nova")[0] ?? "";
-  const fonte = prompt.match(/## Fonte nova: (.+?) \(Fonte \d+ de \d+\)\n([\s\S]*?)\n\nLeve esta Fonte/);
+  // Uma Fonte grande vai em partes (#87): "(Fonte 1 de 1, parte 2 de 3)" e a linha da parte.
+  const fonte = prompt.match(
+    /## Fonte nova: (.+?) \(Fonte \d+ de \d+(?:, parte \d+ de \d+)?\)\n(?:Esta é a parte .+\n)?([\s\S]*?)\n\nLeve esta Fonte/,
+  );
   if (!fonte) return { text: "Pronto.", delayMs: 0 };
   const [, arquivo, texto] = fonte as unknown as [string, string, string];
   // `[trave]`: a chamada não responde (até o cancelamento ou a vigia). `[falhe sempre]`: a sobrecarga.
@@ -187,6 +191,26 @@ function sincronizar(req: RecordedRequest): FakeReply {
       },
     ],
     delayMs,
+  };
+}
+
+/**
+ * A revisão da Wiki (#87): uma página com "contradiz" no slug (de uma Fonte `contradiz….md`) ganha
+ * uma contradição apontada, devagar (a espera é entre eventos do stream), para a tela mostrar
+ * "revisando a Wiki"; sem ela, termina.
+ */
+function revisar(prompt: string): FakeReply {
+  const paginas = prompt.split("## Páginas do rascunho\n")[1]?.split("\n\n")[0] ?? "";
+  const slug = paginas.match(/^- ([a-z0-9-]*contradiz[a-z0-9-]*):/m)?.[1];
+  if (!slug) return { text: "Pronto.", delayMs: 0 };
+  return {
+    toolUse: [
+      {
+        name: "apontar_contradicao",
+        input: { paginas: [slug], descricao: "Diz que o gancho dura 3 segundos e, depois, 5." },
+      },
+    ],
+    delayMs: 300,
   };
 }
 

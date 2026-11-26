@@ -29,6 +29,8 @@ export default {
             SHEARIM_ACCOUNTS_DIR: ".e2e/contas",
             // O Pedido de aprovação expira em 45 s (0,0125 h), para o e2e ver a expiração.
             SHEARIM_APPROVAL_TTL_H: "0.0125",
+            // A parte de uma Fonte grande tem até 500 caracteres, para o e2e ver "parte 2 de 3" (#87).
+            SHEARIM_WIKI_PART_MAX_CHARS: "500",
           },
           log: ".e2e/logs/app.log",
         },

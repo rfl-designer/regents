@@ -1,4 +1,4 @@
-import { WIKI_INDEX_SLUG, WIKIS_PATH, type WikiSyncDto, type WikiSyncStepDto } from "@shearim/contracts";
+import { WIKI_INDEX_SLUG, WIKI_LOG_SLUG, WIKIS_PATH, type WikiSyncDto, type WikiSyncStepDto } from "@shearim/contracts";
 import { and, asc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { articuladoraOf } from "../articuladora";
 import type { Clock } from "../clock";
@@ -12,8 +12,9 @@ import { accountCallEnded, accountOrKey, keyCallEnded, type PayingAccounts } fro
 import type { Push } from "../push";
 import type { SecretBox } from "../secrets";
 import type { ExecutionTools } from "../tools/port";
-import { Draft, type DraftSource, draftTools } from "./draft";
-import { removalPrompt, syncPrompt, syncSystem } from "./rules";
+import { Draft, type DraftSource, draftTools, reviewTools } from "./draft";
+import { DEFAULT_PART_MAX_CHARS, sourceParts } from "./parts";
+import { removalPrompt, reviewPrompt, syncPrompt, syncSystem } from "./rules";
 import { lockWiki } from "./sources";
 import { syncDto } from "./sync-state";
 import { currentVersionId, pagesOfVersion, publishVersion, sourcesOfVersion } from "./versions";
@@ -129,6 +130,8 @@ export function createWikiSyncs(deps: {
   accounts: PayingAccounts;
   /** O teto de turnos de Ferramenta de cada chamada (padrão: `DEFAULT_SYNC_MAX_TURNS`). */
   maxToolTurns?: number;
+  /** O tamanho de parte de uma Fonte grande, em caracteres (padrão: `DEFAULT_PART_MAX_CHARS`). */
+  partMaxChars?: number;
   /** O push fora de conversa (`push.notify`): o fim, para o Admin que iniciou. */
   notify?: Push["notify"];
 }): WikiSyncs {
@@ -326,7 +329,8 @@ export function createWikiSyncs(deps: {
 
   /**
    * O trabalho, num rascunho: uma chamada por Fonte removida (as que nenhuma página cita não
-   * precisam), uma por Fonte nova, e a publicação no fim.
+   * precisam), uma por parte de cada Fonte nova, a revisão, e a publicação no fim, com a conferência
+   * no relatório.
    */
   async function work(syncId: string, controller: AbortController) {
     const [row] = await db
@@ -360,19 +364,43 @@ export function createWikiSyncs(deps: {
       };
       if (!(await call(run, controller, draft, asked))) return;
     }
+    // Cada Fonte nova, uma chamada por parte (#87): uma Fonte acima do tamanho de parte vai em
+    // partes, e cada parte vê o índice que a anterior deixou no rascunho.
     for (const [i, news] of plan.news.entries()) {
       const position = { current: plan.removals.length + i + 1, total };
-      await step(syncId, { kind: "source", ...position, fileName: news.fileName });
       const [source] = await db
         .select({ id: wikiSources.id, fileName: wikiSources.fileName, text: wikiSources.text })
         .from(wikiSources)
         .where(eq(wikiSources.id, news.id));
-      const asked = {
-        prompt: syncPrompt({ index: draft.pages.get(WIKI_INDEX_SLUG)?.body ?? null, source: source!, ...position }),
-        tools: draftTools(draft, source!),
-      };
-      if (!(await call(run, controller, draft, asked))) return;
+      const parts = sourceParts(source!.text, deps.partMaxChars ?? DEFAULT_PART_MAX_CHARS);
+      for (const [j, text] of parts.entries()) {
+        const part = parts.length > 1 ? { current: j + 1, total: parts.length } : undefined;
+        await step(syncId, { kind: "source", ...position, fileName: news.fileName, ...(part && { part }) });
+        const index = draft.pages.get(WIKI_INDEX_SLUG)?.body ?? null;
+        const asked = {
+          prompt: syncPrompt({ index, source: source!, text, ...position, part }),
+          tools: draftTools(draft, source!),
+        };
+        if (!(await call(run, controller, draft, asked))) return;
+      }
     }
+    // A revisão (o lint, #87): uma chamada sobre o rascunho inteiro, que corrige links e o índice e
+    // aponta as contradições. O que sobrar quebrado, a conferência em código (`draft.report()`) põe
+    // no relatório, sem impedir a publicação.
+    await step(syncId, { kind: "review" });
+    const pages = [...draft.pages]
+      .filter(([slug]) => slug !== WIKI_INDEX_SLUG && slug !== WIKI_LOG_SLUG)
+      .map(([slug, p]) => ({ slug, title: p.title }))
+      .sort((a, b) => a.slug.localeCompare(b.slug));
+    const review = {
+      prompt: reviewPrompt({
+        index: draft.pages.get(WIKI_INDEX_SLUG)?.body ?? null,
+        pages,
+        brokenLinks: draft.check().brokenLinks,
+      }),
+      tools: reviewTools(draft),
+    };
+    if (!(await call(run, controller, draft, review))) return;
     await step(syncId, { kind: "publishing" });
     const report = draft.report();
     const now = clock.now();

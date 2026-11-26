@@ -112,7 +112,8 @@ describe("uma chamada que falha no meio", () => {
 
       await sincronizar(t, wiki);
       expect(await terminada(t, wiki, { andando: true })).toMatchObject({ state: "done", reason: null, version: 1 });
-      expect(t.anthropic.syncs).toHaveLength(4);
+      // As duas Fontes (a 2ª em duas tentativas) e a revisão.
+      expect(t.anthropic.syncs).toHaveLength(5);
       // O que a 1ª tentativa escreveu foi descartado: a nova tentativa não escreveu nada.
       expect((await paginasDe(t, wiki, 1)).map((p) => p.slug)).toEqual(["index", "log"]);
     },

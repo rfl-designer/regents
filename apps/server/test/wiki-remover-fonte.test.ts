@@ -163,8 +163,9 @@ describe("a Sincronização tira da Wiki o que vinha só da Fonte removida", () 
         removed: [{ slug: "ganchos" }],
       });
 
-      // Uma chamada para a Fonte removida: o índice, o nome dela e as páginas que ela tocava.
-      const [chamada, fechamento] = t.anthropic.syncs.slice(-2);
+      // Uma chamada para a Fonte removida: o índice, o nome dela e as páginas que ela tocava (antes
+      // da revisão, a última).
+      const [chamada, fechamento] = t.anthropic.syncs.slice(-3, -1);
       const pedido = lastUserText(chamada!.body);
       expect(pedido).toContain("- [[ganchos]]: o começo.");
       expect(pedido).toContain("Fonte removida: aula-01.md (Fonte 1 de 1)");
@@ -230,7 +231,7 @@ describe("a Sincronização tira da Wiki o que vinha só da Fonte removida", () 
         state: "done",
         report: { created: [{ slug: "legendas" }], removed: [{ slug: "ganchos" }] },
       });
-      const [remocao, recusa, nova] = t.anthropic.syncs.slice(-4);
+      const [remocao, recusa, nova] = t.anthropic.syncs.slice(-5);
       expect(lastUserText(remocao!.body)).toContain("Fonte removida: aula-01.md (Fonte 1 de 2)");
       expect(toolResults(recusa!.body)[0]).toMatchObject({ is_error: true });
       expect(toolResults(recusa!.body)[0]!.content).toContain("a Fonte aula-01.md não está nesta Wiki");
@@ -338,8 +339,10 @@ describe("quem remove e quando", () => {
       });
 
       await chamada.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
-      const ultima = await cerebro.nextSync();
-      await ultima.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
+      const segunda = await cerebro.nextSync();
+      await segunda.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
+      const revisao = await cerebro.nextSync();
+      await revisao.emit({ type: "done", usage: { inputTokens: 1, outputTokens: 1 }, costUsd: 0 });
       expect(await terminada(t, wiki, 1)).toMatchObject({ state: "done" });
       expect((await remover(t, wiki, aula2!)).status).toBe(200);
     },

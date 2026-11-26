@@ -70,9 +70,10 @@ describe("Sincronização da Wiki", () => {
       "Sincronização concluída: versão 1",
       { timeout: 30_000 },
     );
-    await expect(wiki.getByRole("list", "Relatório da Sincronização")).toContainText(
-      "Páginas criadas: carrossel.txt, Ganchos",
-    );
+    const relatorio = wiki.getByRole("list", "Relatório da Sincronização");
+    await expect(relatorio).toContainText("Páginas criadas: carrossel.txt, Ganchos");
+    // A conferência (#87): só o índice liga as duas páginas.
+    await expect(relatorio).toContainText("Páginas sem link de entrada: carrossel.txt, Ganchos");
     await expect(wiki).toContainText("versão 1, sincronizada em");
     await expect(wiki).toContainText("nada pendente");
     await expect(wiki.getByRole("list", `Versões de ${nome}`)).toContainText("Versão 1");
@@ -147,6 +148,46 @@ describe("Sincronização da Wiki", () => {
     await expect(wiki.getByRole("list", "Relatório da Sincronização")).toContainText("Páginas removidas: Ganchos");
     await expect(fontes.getByRole("listitem").filter({ hasText: "ganchos.md" })).toHaveCount(0);
     await expect(wiki).toContainText("nada pendente");
+  });
+
+  test('uma Fonte grande vai em partes, e o estado mostra "Fonte 1 de 1, parte 2 de 3"', {
+    timeout: 90_000,
+  }, async ({ app, screen }) => {
+    // O e2e corta em 500 caracteres (`SHEARIM_WIKI_PART_MAX_CHARS`): um parágrafo de 300 por parte.
+    const paragrafo = (texto: string) => `${texto} ${"O curso explica cada passo com calma. ".repeat(8)}`.trim();
+    const curso = [
+      `# Curso\n\n${paragrafo("O gancho vem primeiro.")}`,
+      paragrafo("[trave] A promessa vem depois."),
+      paragrafo("O fechamento chama para a ação."),
+    ].join("\n\n");
+    const nome = await wikiComFontes(app, screen, { "curso.md": curso });
+    const wiki = screen.getByRole("listitem", `Wiki ${nome}`);
+    const estado = wiki.getByRole("status").filter({ hasText: "Sincronização" });
+    await wiki.getByRole("button", "Sincronizar").tap();
+
+    await expect(estado).toContainText("em curso: Fonte 1 de 1, parte 2 de 3", { timeout: 30_000 });
+    await wiki.getByRole("button", "Cancelar").tap();
+    await expect(estado).toContainText("Sincronização cancelada");
+  });
+
+  test('depois das Fontes, o estado mostra "revisando a Wiki", e o relatório traz a contradição que a revisão apontou', {
+    timeout: 90_000,
+  }, async ({ app, screen }) => {
+    const nome = await wikiComFontes(app, screen, {
+      "ganchos.md": "# Ganchos\n\nO gancho vem nos 3 primeiros segundos.\n",
+      "contradiz.md": "# Duração do gancho\n\nO gancho pode durar até 5 segundos.\n",
+    });
+    const wiki = screen.getByRole("listitem", `Wiki ${nome}`);
+    const estado = wiki.getByRole("status").filter({ hasText: "Sincronização" });
+    await wiki.getByRole("button", "Sincronizar").tap();
+
+    await expect(estado).toContainText("revisando a Wiki", { timeout: 30_000 });
+    await expect(estado).toContainText("Sincronização concluída: versão 1", { timeout: 30_000 });
+    const relatorio = wiki.getByRole("list", "Relatório da Sincronização");
+    await expect(relatorio).toContainText(
+      "Contradição em Duração do gancho: Diz que o gancho dura 3 segundos e, depois, 5.",
+    );
+    await expect(relatorio).toContainText("Páginas sem link de entrada: Duração do gancho, Ganchos");
   });
 
   test('a tela da Articuladora mostra "Sincronizar a Wiki" como Habilidade do Shearim, só para leitura', {

@@ -90,12 +90,22 @@ describe("a Conta do Admin paga a Sincronização", () => {
     async () => {
       const t = await testApp();
       const wiki = await wikiComFontes(t, { chave: false });
-      t.claude.script({ syncRuns: [escreve("ganchos", "aula-01.md")] });
+      const contradicao = { paginas: ["ganchos"], descricao: "Diz 3 e 5 segundos." };
+      const revisa: FakeRun = {
+        kind: "steps",
+        steps: [{ tool: { name: "apontar_contradicao", input: contradicao } }, { text: "Pronto." }],
+      };
+      t.claude.script({ syncRuns: [escreve("ganchos", "aula-01.md"), revisa] });
 
       expect((await sincronizar(t, wiki)).status).toBe(202);
-      expect(await terminada(t, wiki)).toMatchObject({ state: "done", version: 1, payer: "account" });
+      const sync = await terminada(t, wiki);
+      expect(sync).toMatchObject({ state: "done", version: 1, payer: "account" });
+      expect(sync.report!.contradictions).toEqual([
+        { pages: [{ slug: "ganchos", title: "ganchos" }], text: "Diz 3 e 5 segundos." },
+      ]);
 
-      const [chamada, ...outras] = t.claude.syncs();
+      // A Fonte e a revisão (#87), as duas pela Conta.
+      const [chamada, revisao, ...outras] = t.claude.syncs();
       expect(outras).toEqual([]);
       // A pasta da Conta de quem clicou, e só o endpoint do Shearim como servidor MCP.
       expect(chamada!.env.CLAUDE_CONFIG_DIR).toBeTruthy();
@@ -104,6 +114,11 @@ describe("a Conta do Admin paga a Sincronização", () => {
       const mcp = t.claude.mcp().filter((e) => e.pid === chamada!.pid);
       expect(mcp[0]).toMatchObject({ listed: ["ler_pagina", "escrever_pagina", "remover_pagina"] });
       expect(mcp[1]).toMatchObject({ called: "escrever_pagina", result: { isError: false } });
+      const daRevisao = t.claude.mcp().filter((e) => e.pid === revisao!.pid);
+      expect(daRevisao[0]).toMatchObject({
+        listed: ["ler_pagina", "escrever_pagina", "remover_pagina", "apontar_contradicao"],
+      });
+      expect(daRevisao[1]).toMatchObject({ called: "apontar_contradicao", result: { isError: false } });
       // Nada saiu pela Chave (não há Chave) nem pela fila das respostas.
       expect(t.anthropic.syncs).toHaveLength(0);
       expect(t.claude.callsOf("-p").filter((c) => c.stdin)).toHaveLength(0);
@@ -160,7 +175,8 @@ describe("a Chave do Workspace é a reserva", () => {
       expect(await terminada(t, wiki)).toMatchObject({ state: "done", version: 1, payer: "key" });
 
       expect(t.claude.syncs()).toHaveLength(1);
-      expect(t.anthropic.syncs.map((r) => r.apiKey)).toEqual([CHAVE, CHAVE]);
+      // A Fonte (duas chamadas) e a revisão: a Conta segue no limite, e a Chave paga.
+      expect(t.anthropic.syncs.map((r) => r.apiKey)).toEqual([CHAVE, CHAVE, CHAVE]);
       // O que a Conta escreveu antes do limite foi descartado: a versão tem só o que a Chave escreveu.
       expect((await paginasDe(t, wiki, 1)).map((p) => p.slug)).toEqual(["ganchos", "index", "log"]);
       // A Conta ficou "No limite até 15:45", como numa resposta.
@@ -232,7 +248,8 @@ describe("quem paga é decidido a cada chamada", () => {
       // A 2ª Fonte já sai pela Conta, que voltou.
       expect(await terminada(t, wiki)).toMatchObject({ state: "done", payer: "account" });
       expect(cerebro.syncs).toHaveLength(1);
-      expect(t.claude.syncs()).toHaveLength(2);
+      // O limite, a 2ª Fonte e a revisão.
+      expect(t.claude.syncs()).toHaveLength(3);
       expect((await paginasDe(t, wiki, 1)).map((p) => p.slug)).toEqual(["carrossel", "index", "log"]);
     },
     LONGO,
