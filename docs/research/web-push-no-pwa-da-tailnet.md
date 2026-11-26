@@ -100,7 +100,7 @@ Pesquisa para a issue #4 (parte do mapa #1). Data: 2026-11-23.
 O caminho de um push tem dois trechos, e nenhum passa pela tailnet:
 
 ```
-Servidor Shearim ──HTTPS (internet)──► push service ──canal próprio do SO/navegador──► aparelho
+Servidor Regents ──HTTPS (internet)──► push service ──canal próprio do SO/navegador──► aparelho
 (container)                            web.push.apple.com / fcm.googleapis.com /
                                        updates.push.services.mozilla.com
 ```

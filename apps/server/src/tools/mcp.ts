@@ -90,7 +90,7 @@ export function createMcpEndpoint(): McpEndpoint {
           result: {
             protocolVersion: asked && PROTOCOL_VERSIONS.includes(asked) ? asked : PROTOCOL_VERSIONS[0],
             capabilities: { tools: { listChanged: false } },
-            serverInfo: { name: MCP_SERVER_NAME, title: "Shearim", version: "1" },
+            serverInfo: { name: MCP_SERVER_NAME, title: "Regents", version: "1" },
           },
         };
       }

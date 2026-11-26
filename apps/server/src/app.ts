@@ -239,7 +239,7 @@ export function createApp(deps: AppDeps) {
     const path = c.req.path;
     if (path.startsWith("/api/") || path.startsWith("/dev/")) return next();
     const who = await whoAmI(c);
-    if (who === UNAVAILABLE) return c.text("O Shearim não conseguiu falar com o tailscaled. Veja o log do app.", 503);
+    if (who === UNAVAILABLE) return c.text("O Regents não conseguiu falar com o tailscaled. Veja o log do app.", 503);
     if (who.kind === "none") return c.html(noIdentityPage(who.reason), 403);
     await next();
   });

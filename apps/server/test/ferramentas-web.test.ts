@@ -275,7 +275,7 @@ describe("pela Conta, a linha de comando", () => {
       expect(flag(tudo, "--tools")).toBe("WebSearch");
       expect(flag(tudo, "--allowedTools")).toBe("mcp__regents,WebSearch");
       expect(flag(tudo, "--system-prompt")).toContain("abrir URL não está disponível");
-      expect(t.claude.mcp()).toContainEqual({ pid: tudo.pid, listed: ["listar_agentes"] });
+      expect(t.claude.mcp()).toContainEqual(expect.objectContaining({ pid: tudo.pid, listed: ["listar_agentes"] }));
     },
     LONGO,
   );

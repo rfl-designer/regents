@@ -151,7 +151,7 @@ export function agentRoutes(deps: {
 
     if (current.builtin && (input.description !== undefined || input.instructions !== undefined)) {
       return c.json(
-        { error: "builtin_locked", message: "A descrição e as instruções da Articuladora são do Shearim." },
+        { error: "builtin_locked", message: "A descrição e as instruções da Articuladora são do Regents." },
         403,
       );
     }
@@ -253,7 +253,7 @@ export function agentRoutes(deps: {
     const [agent] = isUuid(id) ? await db.select().from(agents).where(eq(agents.id, id)) : [];
     if (!agent) return c.json({ error: "not_found" }, 404);
     if (agent.builtin) {
-      return c.json({ error: "builtin_locked", message: "A Articuladora é do Shearim e não se apaga." }, 403);
+      return c.json({ error: "builtin_locked", message: "A Articuladora é do Regents e não se apaga." }, 403);
     }
     const left = agent.deletedAt
       ? await forgetAgent(db, agent.id).then(() => [])

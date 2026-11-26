@@ -124,7 +124,7 @@ async function withRemote<T>(
   const transport = new StreamableHTTPClientTransport(new URL(url), {
     requestInit: { headers: { Authorization: `Bearer ${token}` } },
   });
-  const client = new Client({ name: "shearim", version: "1" });
+  const client = new Client({ name: "regents", title: "Regents", version: "1" });
   try {
     await client.connect(transport, { signal });
     return await work(client);

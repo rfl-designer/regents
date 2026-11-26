@@ -222,6 +222,6 @@ describe("aparelhos e push parado", () => {
 
     const faixa = screen.getByRole("region", "Notificações deste aparelho");
     await expect(faixa).toContainText("As notificações estão bloqueadas neste aparelho.");
-    await expect(faixa).toContainText("libere as notificações do Shearim");
+    await expect(faixa).toContainText("libere as notificações do Regents");
   });
 });

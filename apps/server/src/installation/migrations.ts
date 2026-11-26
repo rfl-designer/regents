@@ -58,7 +58,7 @@ export class NewerDatabaseError extends Error {
   override name = "NewerDatabaseError";
   constructor(state: Extract<MigrationState, { kind: "newer" }>) {
     super(
-      `este banco foi migrado por uma versão mais nova do Shearim (uma migração de ${state.appliedAt.toISOString()}, ` +
+      `este banco foi migrado por uma versão mais nova do Regents (uma migração de ${state.appliedAt.toISOString()}, ` +
         `depois da última que esta versão conhece, ${state.latestKnown}). Para não estragar os dados, esta versão não sobe nele. ` +
         "Volte para a versão mais nova (SHEARIM_VERSION no .env) ou, para ficar nesta, restaure um backup feito antes da " +
         "atualização: `docker compose run --rm app restore <arquivo>` (o dump de antes da migração fica em ./backups).",

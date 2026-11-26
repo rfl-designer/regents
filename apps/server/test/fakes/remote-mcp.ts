@@ -54,6 +54,8 @@ export interface FakeOAuth {
   holdRenewal(): { arrived: Promise<void>; release(): void };
   /** Os `redirect_uri` dos clientes que se registraram. */
   registeredRedirects(): string[];
+  /** Os registros de cliente (RFC 7591) que chegaram, na ordem: o `client_id` dado e o `client_name` que veio. */
+  registrations(): { clientId: string; clientName: string | null }[];
   /** Os parâmetros de cada `/authorize` que chegou. */
   authorizations: URLSearchParams[];
 }
@@ -66,6 +68,8 @@ export interface FakeRemoteMcp {
   calls: FakeRemoteCall[];
   /** Quantas vezes o `tools/list` foi pedido. */
   listed(): number;
+  /** O cliente (`clientInfo`: nome e título) que veio em cada `initialize`. */
+  clients(): { name: string; title?: string }[];
   /** Os tokens que chegaram em qualquer requisição (para ver que o token cifrado é o que sai). */
   tokens(): (string | null)[];
   /** Daqui em diante, toda requisição é `401` (a credencial foi revogada lá fora). */
@@ -96,6 +100,7 @@ export function startRemoteMcp(opts: {
   let tools = opts.tools;
   let refusing = false;
   let listedCount = 0;
+  const clientInfos: { name: string; title?: string }[] = [];
   const calls: FakeRemoteCall[] = [];
   const seen: (string | null)[] = [];
 
@@ -107,6 +112,13 @@ export function startRemoteMcp(opts: {
     const params = (msg.params ?? {}) as Json;
     switch (msg.method) {
       case "initialize":
+        {
+          const info = (params.clientInfo ?? {}) as Json;
+          clientInfos.push({
+            name: String(info.name),
+            ...(typeof info.title === "string" ? { title: info.title } : {}),
+          });
+        }
         return {
           jsonrpc: "2.0",
           id,
@@ -164,6 +176,7 @@ export function startRemoteMcp(opts: {
   let renewed = 0;
   let serial = 0;
   const clients = new Map<string, string[]>();
+  const registered: { clientId: string; clientName: string | null }[] = [];
   const codes = new Map<string, { user: string; clientId: string; redirectUri: string; challenge: string }>();
   /** Token de renovação → de quem, e o token de acesso que ele emitiu por último. */
   const refreshes = new Map<string, { user: string; clientId: string; access: string }>();
@@ -211,9 +224,10 @@ export function startRemoteMcp(opts: {
     }
     if (!oauthOn) return null;
     if (path === "/register" && req.method === "POST") {
-      const body = (await req.json()) as { redirect_uris?: string[] };
+      const body = (await req.json()) as { redirect_uris?: string[]; client_name?: string };
       const clientId = `cliente-${clients.size + 1}`;
       clients.set(clientId, body.redirect_uris ?? []);
+      registered.push({ clientId, clientName: body.client_name ?? null });
       return json({ ...body, client_id: clientId, token_endpoint_auth_method: "none" }, 201);
     }
     if (path === "/authorize" && req.method === "GET") {
@@ -321,10 +335,12 @@ export function startRemoteMcp(opts: {
         return { arrived, release };
       },
       registeredRedirects: () => [...clients.values()].flat(),
+      registrations: () => [...registered],
       authorizations,
     },
     calls,
     listed: () => listedCount,
+    clients: () => [...clientInfos],
     tokens: () => [...seen],
     refuse: (on = true) => {
       refusing = on;

@@ -100,7 +100,7 @@ export async function beginLogin(
     client = await registerClient(info.authorizationServerUrl, {
       metadata,
       clientMetadata: {
-        client_name: "Shearim",
+        client_name: "Regents",
         redirect_uris: [redirectUri],
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
@@ -109,7 +109,7 @@ export async function beginLogin(
       scope,
     });
   } catch (err) {
-    if (err instanceof OAuthError) throw new NoLogin(`o servidor não aceitou o registro do Shearim: ${err.message}`);
+    if (err instanceof OAuthError) throw new NoLogin(`o servidor não aceitou o registro do Regents: ${err.message}`);
     throw err;
   }
   const { authorizationUrl, codeVerifier } = await startAuthorization(info.authorizationServerUrl, {

@@ -149,7 +149,7 @@ describe("o fake-claude como cliente MCP", () => {
       const resposta = await respostaA(t, geral.id, await enviar(t, geral.id, "@Faro quem cuida de contratos?"));
 
       const [listou, chamou] = t.claude.mcp();
-      expect(listou).toMatchObject({ listed: ["listar_agentes"] });
+      expect(listou).toMatchObject({ listed: ["listar_agentes"], server: { name: "regents", title: "Regents" } });
       expect(chamou).toMatchObject({ called: "listar_agentes", result: { isError: false } });
       expect(resposta.body).toStartWith("Vou ver quem atende.\n\n");
       expect(resposta.body).toContain("Faro (@faro): Comercial: preços e propostas.");

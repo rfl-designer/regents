@@ -134,7 +134,7 @@ describe("o Admin escreve Habilidades", () => {
     await t.as(juliana).get("/api/me");
     const recusa = {
       error: "name_taken",
-      message: "Sincronizar a Wiki é a Habilidade do Shearim: dê outro nome à sua.",
+      message: "Sincronizar a Wiki é a Habilidade do Regents: dê outro nome à sua.",
     };
 
     const criada = await t.as(juliana).post("/api/skills", { ...CARROSSEL, name: "sincronizar a WIKI" });

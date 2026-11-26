@@ -162,7 +162,8 @@ describe("Montagem de contexto", () => {
     const quemEQuem = system.slice(system.indexOf("## Quem é quem"));
     expect(quemEQuem).toContain(["Pessoas:", "- Bruno: Cuido do financeiro.", "- Juliana", "Agentes:"].join("\n"));
     // A Articuladora vem primeiro, com a descrição do Regents; depois os Agentes do Canal.
-    expect(quemEQuem).toContain("Agentes:\n- Sophya: A Articuladora do Regents");
+    expect(quemEQuem).toContain("Agentes:
+- Sophya: A Articuladora do Regents");
     expect(system).not.toContain("Shearim");
     expect(quemEQuem).toContain(
       ["- Faro (você): Comercial: propostas e preços.", "- Lince: Pesquisa de mercado."].join("\n"),

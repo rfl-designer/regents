@@ -17,10 +17,10 @@ export type NoIdentityReason = "tagged" | "funnel" | "unknown";
 export const NO_IDENTITY_TEXT: Record<NoIdentityReason, { why: string; whatToDo: string }> = {
   tagged: {
     why: "Este aparelho entrou na tailnet com uma tag, e nós com tag não têm uma pessoa por trás.",
-    whatToDo: "Abra o Shearim num aparelho que esteja na tailnet com a sua própria conta do Tailscale.",
+    whatToDo: "Abra o Regents num aparelho que esteja na tailnet com a sua própria conta do Tailscale.",
   },
   funnel: {
-    why: "O acesso veio pela internet aberta (Funnel), e o Shearim só atende quem está na tailnet.",
+    why: "O acesso veio pela internet aberta (Funnel), e o Regents só atende quem está na tailnet.",
     whatToDo: "Ligue o Tailscale neste aparelho, entre com a sua conta e abra o endereço da tailnet.",
   },
   unknown: {

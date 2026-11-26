@@ -52,6 +52,8 @@ export interface ApiCall {
   path: string;
   token: IssuedToken | null;
   status: number;
+  /** O `user-agent` da chamada. */
+  userAgent: string | null;
 }
 
 const APP_PERMISSIONS_FALLBACK: Permissions = { metadata: "read" };
@@ -68,6 +70,7 @@ export async function startFakeGitHub() {
   let app: { id: number; slug: string; name: string; owner: string; manifest: Record<string, unknown> } | null = null;
   const installations = new Map<number, { account: string; repositories: string[] }>();
   let nextInstall: { account?: string; repositories?: string[] } = {};
+  let nextAppName: string | undefined;
   const tokens = new Map<string, IssuedToken>();
   const calls: ApiCall[] = [];
   let seq = 0;
@@ -120,7 +123,7 @@ export async function startFakeGitHub() {
     const raw = req.headers.get("authorization")?.replace(/^(token|Bearer) /, "") ?? "";
     const token = tokens.get(raw) ?? null;
     const record = (res: Response) => {
-      calls.push({ method: req.method, path, token, status: res.status });
+      calls.push({ method: req.method, path, token, status: res.status, userAgent: req.headers.get("user-agent") });
       return res;
     };
     const installation = token ? installations.get(token.installationId) : undefined;
@@ -308,13 +311,13 @@ export async function startFakeGitHub() {
         const found = manifests.get(conversion[1]!);
         if (!found) return notFound();
         manifests.delete(conversion[1]!);
-        const slug = String(found.manifest.name)
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-");
+        const name = nextAppName ?? String(found.manifest.name);
+        nextAppName = undefined;
+        const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
         app = {
           id: 4200 + ++seq,
           slug,
-          name: String(found.manifest.name),
+          name,
           owner: found.owner,
           manifest: found.manifest,
         };
@@ -379,6 +382,13 @@ export async function startFakeGitHub() {
     /** O que o Admin escolhe na próxima página de instalação (padrão: todos os repositórios). */
     willInstall(choice: { account?: string; repositories?: string[] }) {
       nextInstall = choice;
+    },
+    /**
+     * O nome com que o GitHub guarda o próximo App, no lugar do nome do manifest (um App criado
+     * antes, com outro nome, ou renomeado pelo Admin no GitHub).
+     */
+    nameNextApp(name: string) {
+      nextAppName = name;
     },
     /** O manifest com que o App foi criado. */
     get app() {
