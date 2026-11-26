@@ -66,6 +66,7 @@ const SAFE_TOOLS = [
   "awk",
   "cmp",
   "printf",
+  "date",
 ];
 
 export type Sandbox = {

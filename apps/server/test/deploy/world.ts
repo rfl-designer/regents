@@ -7,7 +7,8 @@
  * O estado mora em arquivos de `s.state`, que o teste muda antes de rodar o script:
  * `os` (Darwin/Linux), `docker-up` (o Docker responde), `docker-os` (o que `docker info` diz),
  * `tailnet.json` (o `tailscale status --json` do sidecar), `health` (do app), `latest` (a última
- * release), `releases/<tag>/` (os assets).
+ * release), `releases/<tag>/` (os assets), `volumes/<nome>/` (os volumes do Docker; o `docker run`
+ * roda o `sh -c` aqui, com os pontos de montagem trocados pelas pastas dos volumes).
  */
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -72,6 +73,23 @@ case "$*" in
   "login ghcr.io"*) up; cat >"$STATE/docker-login-stdin" ;;
   "compose exec -T tailscale"*) cat "$STATE/tailnet.json" ;;
   "compose ps app --format {{.Health}}") if [ -f "$STATE/health" ]; then cat "$STATE/health"; else echo healthy; fi ;;
+  *"exec -T postgres pg_dump"*) up; echo "dump falso" ;;
+  # Os volumes: uma pasta cada em $STATE/volumes/<nome>.
+  "volume inspect "*) up; [ -d "$STATE/volumes/$3" ] || { echo "Error: No such volume: $3" >&2; exit 1; } ;;
+  "volume create "*) up; for name; do :; done; mkdir -p "$STATE/volumes/$name"; echo "$name" ;;
+  # \`docker run --rm -v <volume>:<ponto>[:ro]... <imagem> sh -c <script>\`: o script roda aqui, com
+  # cada ponto de montagem trocado pela pasta do volume.
+  "run "*)
+    up; shift; subs="" script=""
+    while [ $# -gt 0 ]; do case "$1" in
+      --rm) ;;
+      -v) vol=\${2%%:*}; at=\${2#*:}; at=\${at%%:*}; mkdir -p "$STATE/volumes/$vol"; subs="$subs -e s#$at#$STATE/volumes/$vol#g"; shift ;;
+      sh) script=$3; break ;;
+      *) ;;
+    esac; shift; done
+    [ -n "$script" ] || { echo "docker falso: run sem sh -c" >&2; exit 1; }
+    # shellcheck disable=SC2086
+    sh -c "$(printf '%s' "$script" | sed $subs)" ;;
   "compose config"*)
     # Como o Compose: cada \${VAR:?mensagem} do compose.yaml precisa da VAR no .env.
     for v in $(sed -n 's/.*\${\\([A-Z_]*\\):?.*/\\1/p' compose.yaml); do

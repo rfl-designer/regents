@@ -19,7 +19,8 @@
 #   --dir <pasta>      onde fica a Instalação (padrão: ~/regents)
 #   --version <tag>    a release (padrão: a deste instalador; sem ela, a última)
 #   --yes              instala ou inicia o Docker sem perguntar
-#   --update           atualiza uma Instalação (é o que o deploy/update.sh roda)
+#   --update           atualiza uma Instalação (é o que o deploy/update.sh roda); numa Instalação
+#                      que ainda é Shearim, faz antes a migração do nome (veja o README)
 #
 # Tudo fica dentro de main, chamada na última linha: um download pela metade não roda nada, e a
 # atualização pode trocar este arquivo enquanto ele roda.
@@ -128,22 +129,160 @@ update() {
 
   mkdir -p "$WORK/antes"
   cp -R compose.yaml deploy "$WORK/antes/"
+  if still_shearim; then
+    rename_installation
+    return
+  fi
   download
   if ! docker compose config -q; then
     rm -rf compose.yaml deploy
     cp -R "$WORK/antes/compose.yaml" "$WORK/antes/deploy" .
     fail "o compose da $TAG não fecha com o seu .env (veja acima). Voltei o compose de antes; nada foi reiniciado."
   fi
-  pinned=$(sed -n 's/^REGENTS_VERSION=//p' .env | tail -n 1)
-  if [ -n "$pinned" ]; then
-    say "AVISO: o .env fixa REGENTS_VERSION=$pinned: sobe essa versão, não a da release. Apague a linha para seguir as releases."
-  fi
+  warn_pinned
 
   start_regents
   if [ "$HEALTHY" = 0 ]; then
     fail "o Regents não respondeu em $WAIT_SECONDS s depois de atualizar. Veja 'docker compose logs app'."
   fi
   say "ok: Regents atualizado de $from para $(compose_version)"
+}
+
+warn_pinned() {
+  pinned=$(sed -n 's/^REGENTS_VERSION=//p' .env | tail -n 1)
+  if [ -n "$pinned" ]; then
+    say "AVISO: o .env fixa REGENTS_VERSION=$pinned: sobe essa versão, não a da release. Apague a linha para seguir as releases."
+  fi
+}
+
+# Os volumes do projeto do Compose que a migração do nome copia.
+VOLUMES="ts-state ts-socket pgdata contas"
+
+# Uma Instalação que ainda é Shearim: o .env só com SHEARIM_*, ou o banco só no volume do projeto
+# shearim. Sem nenhum dos dois, a atualização é a de sempre.
+still_shearim() {
+  if grep -q '^SHEARIM_' .env && ! grep -q '^REGENTS_' .env; then return 0; fi
+  docker volume inspect shearim_pgdata >/dev/null 2>&1 && ! docker volume inspect regents_pgdata >/dev/null 2>&1
+}
+
+# O compose de antes da atualização (o do projeto shearim), com o .env e os caminhos da pasta.
+shearim_compose() { docker compose --project-directory "$DIR" -f "$WORK/antes/compose.yaml" "$@"; }
+
+# A migração do nome (spec #96), uma vez: a Instalação Shearim passa a ser Regents com os mesmos
+# dados e a mesma URL. Cada passo pode rodar de novo: os volumes já copiados ficam marcados em
+# .migracao-regents/, e o .env novo sai sempre do .env.shearim, o .env de antes.
+rename_installation() {
+  old_host=$(sed -n 's/^TS_HOSTNAME=//p' .env | tail -n 1)
+  old_host=${old_host:-shearim}
+  say ""
+  say "Esta Instalação ainda é Shearim. A atualização faz a migração do nome, uma vez:"
+  say "  muda: o .env passa de SHEARIM_* para REGENTS_* (o de antes fica em .env.shearim)"
+  say "  muda: os volumes shearim_* são copiados para regents_* (shearim_pgdata para regents_pgdata,"
+  say "        e também ts-state, ts-socket e contas); os shearim_* ficam como estão"
+  say "  muda: o projeto do Compose passa de shearim para o projeto regents, depois de um backup"
+  say "  fica: o hostname $old_host e a URL, a tag tag:shearim e o papel e o banco shearim do Postgres"
+  say "  fica: a pasta $DIR"
+  agree "Fazer a migração do nome agora?" ||
+    fail "Nada mudou. A migração do nome precisa do seu sim: rode num terminal, ou com --yes para não perguntar."
+  download
+  backup_shearim
+  shearim_compose down || rename_failed "o 'docker compose down' do projeto shearim falhou (veja acima)."
+  copy_volumes
+  rename_env
+  docker compose config -q || rename_failed "o compose da $TAG não fecha com o .env novo (veja acima)."
+  warn_pinned
+  if [ "$OS" = Darwin ]; then rename_keep_awake; fi
+  start_regents
+  if [ "$HEALTHY" = 0 ]; then
+    rename_failed "o Regents não respondeu em $WAIT_SECONDS s. Veja 'docker compose logs app'."
+  fi
+  rm -rf .migracao-regents
+  say "ok: o Shearim $from agora é o Regents $(compose_version)"
+  say ""
+  say "Os volumes do Shearim ficaram como estavam, para voltar se algo der errado:$OLD_VOLUMES"
+  say "Quando o Regents estiver bem, apague-os para liberar o disco:"
+  say "  docker volume rm$OLD_VOLUMES"
+  say ""
+  say "O hostname ($old_host) e a tag (tag:shearim) ficaram os de antes, e a URL é a mesma. Para trocar,"
+  say "mude TS_HOSTNAME (e REGENTS_TAILNET_TAG, que também vai para os tagOwners da tailnet) no"
+  say "$DIR/.env e rode 'docker compose up -d'. A URL muda, e param: o app na Tela de Início (instale"
+  say "de novo), as notificações push (cada aparelho liga de novo) e o GitHub App da Instalação (a URL"
+  say "de callback é a antiga). Veja \"Migração do nome\" no README."
+}
+
+# Uma migração que parou: por enquanto, só o motivo. Os volumes shearim_* e o .env.shearim ficam,
+# e a próxima tentativa continua de onde esta parou.
+rename_failed() { fail "a migração do nome parou: $1"; }
+
+# No Mac, o LaunchAgent que não deixa o Mac dormir troca de nome: sai o do Shearim, entra o do Regents.
+rename_keep_awake() {
+  launchctl bootout "gui/$(id -u)/com.shearim.acordado" >/dev/null 2>&1 || true
+  rm -f "$HOME/Library/LaunchAgents/com.shearim.acordado.plist"
+  keep_awake
+  say "ok: no Mac, com.regents.acordado no lugar de com.shearim.acordado"
+}
+
+# O backup de antes da migração, com o Shearim ainda de pé: o pg_dump do Postgres da Instalação, no
+# formato dos backups da noite, em ./backups (um pre-migracao, que a retenção não apaga).
+backup_shearim() {
+  file=backups/shearim-pre-migracao-$(date -u +%Y%m%dT%H%M%SZ).dump
+  mkdir -p backups
+  if ! shearim_compose exec -T postgres pg_dump -U shearim -d shearim --format=custom --no-owner --no-privileges \
+    >"$file.partial"; then
+    rm -f "$file.partial"
+    rename_failed "o backup de antes da migração falhou (veja acima). Nada foi parado."
+  fi
+  mv "$file.partial" "$file"
+  say "ok: backup de antes da migração em $DIR/$file"
+}
+
+# Cada volume shearim_<nome> vai para regents_<nome>, com o mesmo dono e as mesmas permissões
+# (cp -a como root, na imagem do Postgres que a Instalação já tem). O de origem não muda.
+copy_volumes() {
+  image=$(sed -n 's/^ *image: \(postgres:[^ ]*\)$/\1/p' compose.yaml | head -n 1)
+  mkdir -p .migracao-regents
+  OLD_VOLUMES=""
+  for v in $VOLUMES; do
+    docker volume inspect "shearim_$v" >/dev/null 2>&1 || continue
+    OLD_VOLUMES="$OLD_VOLUMES shearim_$v"
+    if [ -f ".migracao-regents/$v" ] && docker volume inspect "regents_$v" >/dev/null 2>&1; then continue; fi
+    docker volume inspect "regents_$v" >/dev/null 2>&1 ||
+      docker volume create --label com.docker.compose.project=regents --label "com.docker.compose.volume=$v" \
+        "regents_$v" >/dev/null || rename_failed "não consegui criar o volume regents_$v."
+    docker run --rm -v "shearim_$v:/antigo:ro" -v "regents_$v:/novo" "$image" \
+      sh -c 'rm -rf /novo/* /novo/.[!.]* /novo/..?* && cp -a /antigo/. /novo/' ||
+      rename_failed "não consegui copiar o volume shearim_$v para regents_$v."
+    touch ".migracao-regents/$v"
+    say "ok: volume shearim_$v copiado para regents_$v"
+  done
+}
+
+# O .env novo, a partir do de antes (guardado em .env.shearim): cada SHEARIM_<sufixo> vira
+# REGENTS_<sufixo> com o mesmo valor (se as duas existem, fica a REGENTS_), e entram o hostname, a
+# tag e o papel e o banco do Postgres do Shearim, que o compose novo lê do .env.
+rename_env() {
+  [ -f .env.shearim ] || cp -p .env .env.shearim
+  awk '
+    NR == FNR { if (/^REGENTS_[A-Za-z0-9_]*=/) { key = $0; sub(/=.*/, "", key); have[key] = 1 }; next }
+    /^SHEARIM_[A-Za-z0-9_]*=/ {
+      key = "REGENTS_" substr($0, 9); sub(/=.*/, "", key)
+      if (key in have) next
+      $0 = "REGENTS_" substr($0, 9)
+    }
+    { print }
+  ' .env.shearim .env.shearim >"$WORK/env"
+  kept=""
+  for line in TS_HOSTNAME=shearim REGENTS_TAILNET_TAG=tag:shearim REGENTS_POSTGRES_USER=shearim REGENTS_POSTGRES_DB=shearim; do
+    grep -q "^${line%%=*}=" "$WORK/env" || kept="$kept$line
+"
+  done
+  if [ -n "$kept" ]; then
+    printf '\n# Do Shearim: o hostname e a tag (a URL não muda) e o papel e o banco do Postgres. Veja o README.\n%s' \
+      "$kept" >>"$WORK/env"
+  fi
+  # Por cima, para o .env manter o dono e as permissões.
+  cat "$WORK/env" >.env
+  say "ok: .env com REGENTS_* (o de antes está em $DIR/.env.shearim)"
 }
 
 # A versão que o compose (o da pasta, ou o arquivo dado) sobe por padrão: a da release. O prefixo
