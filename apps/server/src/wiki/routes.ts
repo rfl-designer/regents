@@ -19,7 +19,7 @@ import {
 } from "./reach";
 import { addSources, DEFAULT_SOURCE_MAX_BYTES, listSources, readUploads, removeSource } from "./sources";
 import type { WikiSyncs } from "./sync";
-import { listVersions, pageDtos, readPage, versionNumbered, versionNumberOf } from "./versions";
+import { listVersions, pageDtos, readPage, restoreVersion, versionNumbered, versionNumberOf } from "./versions";
 import {
   createWiki,
   findWiki,
@@ -198,6 +198,29 @@ export function wikiRoutes(deps: {
   routes.get("/wikis/:id/versions", adminOnly, async (c) => {
     const wiki = await findWiki(db, c.req.param("id"));
     if (!wiki) return c.json({ error: "not_found" }, 404);
+    return c.json(await listVersions(db, wiki.id));
+  });
+
+  /**
+   * "Voltar a esta versão" (#89): a versão passa a ser a atual, sem destilar de novo, e devolve a
+   * lista nova. Quem vê a Wiki recebe `wiki.updated` (a navegação, as leituras dos Agentes e as
+   * pendências seguem a versão que passa a valer). Recusada com o motivo (409) com uma
+   * Sincronização em curso ou quando a versão já é a atual.
+   */
+  routes.post("/wikis/:id/versions/:number/restore", adminOnly, async (c) => {
+    const wiki = await findWiki(db, c.req.param("id"));
+    if (!wiki) return c.json({ error: "not_found" }, 404);
+    const number = Number(c.req.param("number"));
+    const done = await restoreVersion(db, { wikiId: wiki.id, number, by: c.get("member").id, now: clock.now() });
+    if (done === "not_found") return c.json({ error: "not_found", message: "Essa versão não existe nesta Wiki." }, 404);
+    if (done === "already_current") {
+      return c.json({ error: "already_current", message: `A versão ${number} já é a atual.` }, 409);
+    }
+    if (done === "sync_running") {
+      const message = "Há uma Sincronização em curso nesta Wiki. Volte à versão quando ela terminar.";
+      return c.json({ error: "sync_running", message }, 409);
+    }
+    events.publish(await wikiAudience(db, wiki), { type: "wiki.updated", wiki: await toWikiDto(db, wiki) });
     return c.json(await listVersions(db, wiki.id));
   });
 

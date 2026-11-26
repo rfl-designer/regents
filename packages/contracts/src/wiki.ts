@@ -222,7 +222,12 @@ export interface WikiSyncDto {
   finishedAt: string | null;
 }
 
-/** Uma versão da Wiki: `GET /api/wikis/:id/versions` (só Admin), da mais nova para a mais velha. */
+/**
+ * Uma versão da Wiki: `GET /api/wikis/:id/versions` (só Admin), da mais nova para a mais velha. A
+ * mesma lista é a resposta de `POST /api/wikis/:id/versions/:n/restore` ("voltar a esta versão",
+ * #89), que só troca a versão atual: `404` sem a versão, `409 already_current` quando ela já é a
+ * atual e `409 sync_running` com uma Sincronização em curso.
+ */
 export interface WikiVersionDto {
   number: number;
   publishedAt: string;

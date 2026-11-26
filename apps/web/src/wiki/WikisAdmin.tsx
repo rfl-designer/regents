@@ -192,7 +192,7 @@ function WikiSync({ wiki }: { wiki: WikiDto }) {
         )}
       </div>
       {sync?.state === "done" && sync.report && <SyncReport report={sync.report} />}
-      {wiki.currentVersion && <WikiVersions wiki={wiki} />}
+      {wiki.currentVersion && <WikiVersions wiki={wiki} syncing={running} />}
     </section>
   );
 }
@@ -202,15 +202,21 @@ function pageList(pages: WikiPageRefDto[]) {
 }
 
 /**
- * O relatório da última Sincronização: as páginas criadas, alteradas e removidas, as contradições
+ * O relatório de uma Sincronização: as páginas criadas, alteradas e removidas, as contradições
  * que a revisão apontou e o que a conferência achou quebrado (#87). A Wiki já foi publicada assim:
  * o Admin corrige a Fonte e sincroniza de novo.
  */
-function SyncReport({ report }: { report: NonNullable<WikiSyncDto["report"]> }) {
+function SyncReport({
+  report,
+  label = "Relatório da Sincronização",
+}: {
+  report: NonNullable<WikiSyncDto["report"]>;
+  label?: string;
+}) {
   const nothing = report.created.length + report.updated.length + report.removed.length === 0;
   const { contradictions, check } = report;
   return (
-    <ul className="hint" aria-label="Relatório da Sincronização">
+    <ul className="hint" aria-label={label}>
       {nothing && <li>Nenhuma página mudou.</li>}
       {report.created.length > 0 && <li>Páginas criadas: {pageList(report.created)}</li>}
       {report.updated.length > 0 && <li>Páginas alteradas: {pageList(report.updated)}</li>}
@@ -231,25 +237,58 @@ function SyncReport({ report }: { report: NonNullable<WikiSyncDto["report"]> }) 
   );
 }
 
-/** As versões da Wiki, da mais nova para a mais velha, com a atual marcada. */
-function WikiVersions({ wiki }: { wiki: WikiDto }) {
+/**
+ * As versões da Wiki, da mais nova para a mais velha, com a atual marcada e o relatório de cada
+ * uma. "Voltar a esta versão" (#89) troca a versão atual, sem destilar de novo; fica desligado com
+ * uma Sincronização em curso (o servidor também recusa, com o motivo).
+ */
+function WikiVersions({ wiki, syncing }: { wiki: WikiDto; syncing: boolean }) {
   const [versions, setVersions] = useState<WikiVersionDto[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const current = wiki.currentVersion?.number;
   useEffect(() => {
-    // Relê quando a versão atual muda (uma Sincronização concluída).
+    // Relê quando a versão atual muda (uma Sincronização concluída ou uma volta).
     void current;
     wikiApi.versions(wiki.id).then(setVersions, () => setVersions(null));
   }, [wiki.id, current]);
+
+  async function restore(number: number) {
+    setBusy(true);
+    setError(null);
+    try {
+      setVersions(await wikiApi.restore(wiki.id, number));
+    } catch (err) {
+      setError(messageOf(err, `A Wiki não voltou à versão ${number}. Tente de novo.`));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!versions?.length) return null;
   return (
-    <ul className="hint" aria-label={`Versões de ${wiki.name}`}>
-      {versions.map((v) => (
-        <li key={v.number}>
-          Versão {v.number} · {dateTimeShort(v.publishedAt)} · {v.startedBy.name}
-          {v.current && <span className="tag">atual</span>}
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="hint" aria-label={`Versões de ${wiki.name}`}>
+        {versions.map((v) => (
+          <li key={v.number} aria-label={`Versão ${v.number}`}>
+            Versão {v.number} · {dateTimeShort(v.publishedAt)} · {v.startedBy.name}
+            {v.current ? (
+              <span className="tag">atual</span>
+            ) : (
+              <button type="button" disabled={busy || syncing} onClick={() => restore(v.number)}>
+                Voltar a esta versão
+              </button>
+            )}
+            <SyncReport report={v.report} label={`Relatório da versão ${v.number}`} />
+          </li>
+        ))}
+      </ul>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+    </>
   );
 }
 
