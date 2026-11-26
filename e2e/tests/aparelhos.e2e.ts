@@ -1,5 +1,5 @@
 import { test as base, describe } from "@e2e-dev/web";
-import type { DmDto, MeDto, PushSubscriptionInput } from "@regents/contracts";
+import type { DeviceDto, DmDto, MeDto, PushSubscriptionInput } from "@regents/contracts";
 import { expect } from "e2e";
 import { addMember, as, type DevPerson, jsonBody, newPerson } from "../support/people";
 import { type FakePushService, startFakePushService } from "../support/push-service";
@@ -80,9 +80,42 @@ function permissaoNegadaDepois(deviceId: string) {
   } catch {
     return;
   }
-  localStorage.setItem("shearim.device", deviceId);
-  localStorage.setItem("shearim.notifications.onboarding", "on");
+  localStorage.setItem("regents.device", deviceId);
+  localStorage.setItem("regents.notifications.onboarding", "on");
   Object.defineProperty(Notification, "permission", { get: () => "denied" });
+}
+
+/**
+ * O navegador de antes do nome Regents (#102): as chaves dadas já estão no armazenamento quando
+ * o app abre. Só na primeira página com armazenamento, como um navegador que só atualizou o app.
+ */
+function chavesDeAntes(arg: unknown) {
+  const chaves = arg as Record<string, string>;
+  try {
+    localStorage.length;
+  } catch {
+    return;
+  }
+  if (localStorage.getItem("e2e.chaves") !== null) return;
+  localStorage.setItem("e2e.chaves", "1");
+  for (const [chave, valor] of Object.entries(chaves)) localStorage.setItem(chave, valor);
+}
+
+/** O push deste navegador já ligado: permissão dada e a inscrição 0 guardada (para `pushDoNavegador`). */
+function pushJaLigado() {
+  try {
+    localStorage.length;
+  } catch {
+    return;
+  }
+  if (localStorage.getItem("e2e.push") === null) {
+    localStorage.setItem("e2e.push", JSON.stringify({ permission: "granted", used: 1, current: 0 }));
+  }
+}
+
+/** O que o navegador guarda, chave a chave (`null` quando a chave não existe). */
+function guardado(arg: unknown) {
+  return Object.fromEntries((arg as string[]).map((chave) => [chave, localStorage.getItem(chave)]));
 }
 
 /** Uma pessoa nova, Membro, com o navegador como ela. */
@@ -223,5 +256,91 @@ describe("aparelhos e push parado", () => {
     const faixa = screen.getByRole("region", "Notificações deste aparelho");
     await expect(faixa).toContainText("As notificações estão bloqueadas neste aparelho.");
     await expect(faixa).toContainText("libere as notificações do Regents");
+  });
+
+  test("um navegador com as chaves shearim.* continua o mesmo aparelho, com o push ligado", async ({
+    app,
+    screen,
+    browser,
+    push,
+  }) => {
+    const person = newPerson("Gabriela");
+    await addMember(app.baseUrl, person);
+    const aparelho = crypto.randomUUID();
+    const inscricao = push.alive();
+    await as(app.baseUrl, person)(`/api/push/subscriptions/${aparelho}`, jsonBody("PUT", inscricao));
+    await browser.addInitScript(chavesDeAntes, {
+      "shearim.device": aparelho,
+      "shearim.notifications.onboarding": "on",
+    });
+    await browser.addInitScript(pushJaLigado);
+    await browser.addInitScript(pushDoNavegador, [inscricao] as never);
+
+    const entrega = browser.waitForResponse("**/api/push/subscriptions/**");
+    await app.open(`/dev/como/${person.id}?nome=Gabriela`);
+    await screen.getByText("Você está como Gabriela").waitFor();
+    await entrega;
+
+    const chaves = [
+      "regents.device",
+      "regents.notifications.onboarding",
+      "shearim.device",
+      "shearim.notifications.onboarding",
+    ];
+    expect(await browser.evaluate(guardado, chaves)).toEqual({
+      "regents.device": aparelho,
+      "regents.notifications.onboarding": "on",
+      "shearim.device": null,
+      "shearim.notifications.onboarding": null,
+    });
+    const aparelhos: DeviceDto[] = await as(app.baseUrl, person)("/api/devices");
+    expect(aparelhos.map((d) => d.id)).toEqual([aparelho]);
+    await expect(screen.getByRole("region", "Ligar notificações")).toBeHidden();
+    await expect(screen.getByRole("region", "Notificações deste aparelho")).toBeHidden();
+  });
+
+  test("um navegador que pulou o passo da Tela de Início com shearim.* não vê o passo de novo", async ({
+    app,
+    screen,
+    browser,
+  }) => {
+    await browser.addInitScript(safariDoIphone);
+    await browser.addInitScript(chavesDeAntes, { "shearim.install.skipped": "1" });
+
+    await app.open("/");
+    await screen.getByText("Você está como", { exact: false }).waitFor();
+
+    const chaves = ["regents.install.skipped", "shearim.install.skipped"];
+    expect(await browser.evaluate(guardado, chaves)).toEqual({
+      "regents.install.skipped": "1",
+      "shearim.install.skipped": null,
+    });
+    await expect(screen.getByRole("region", "Adicionar à Tela de Início")).toBeHidden();
+  });
+
+  test("a chave shearim.* não sobrescreve a regents.* que já existe", async ({ app, screen, browser }) => {
+    const atual = crypto.randomUUID();
+    await browser.addInitScript(chavesDeAntes, {
+      "regents.device": atual,
+      "shearim.device": crypto.randomUUID(),
+      "regents.notifications.onboarding": "skipped",
+      "shearim.notifications.onboarding": "on",
+    });
+
+    await app.open("/");
+    await screen.getByText("Você está como", { exact: false }).waitFor();
+
+    const chaves = [
+      "regents.device",
+      "regents.notifications.onboarding",
+      "shearim.device",
+      "shearim.notifications.onboarding",
+    ];
+    expect(await browser.evaluate(guardado, chaves)).toEqual({
+      "regents.device": atual,
+      "regents.notifications.onboarding": "skipped",
+      "shearim.device": null,
+      "shearim.notifications.onboarding": null,
+    });
   });
 });
