@@ -42,6 +42,8 @@ FROM ${BUN_IMAGE}
 # e do dump de antes de migrar, e o `pg_restore` do `restore <arquivo>` (#38). Vem do repositório
 # oficial do PostgreSQL (o Debian da imagem só tem versões mais velhas, e um pg_dump mais velho que
 # o servidor se recusa a rodar).
+# /backups e /data/contas nascem do usuário `bun`: um volume nomeado vazio herda o dono da pasta
+# da imagem; sem ela, o Docker o cria como root e o app (sem root) não grava nada ali.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \
  && install -d /usr/share/postgresql-common/pgdg \
@@ -51,7 +53,7 @@ RUN apt-get update \
  && apt-get update \
  && apt-get install -y --no-install-recommends postgresql-client-18 \
  && apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* \
- && install -d -o bun -g bun -m 700 /backups
+ && install -d -o bun -g bun -m 700 /backups /data/contas
 WORKDIR /app
 # A versão que a seção Instalação mostra (o CI passa a tag da imagem).
 ARG SHEARIM_VERSION=local

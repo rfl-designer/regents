@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync } from "node:fs";
 import type { AccountDto } from "@shearim/contracts";
 import { FAKE_ACCESS_TOKEN, FAKE_LOGIN_CODE } from "./fake-claude";
-import { type EventSocket, type Person, type TestApp, testApp } from "./harness";
+import { type EventSocket, onCleanup, type Person, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
 const bruno = { id: "2002", login: "bruno@exemplo.com", name: "Bruno" };
@@ -173,6 +173,21 @@ describe("Ligar minha Conta do Claude", () => {
       state: "failed",
       message: "Não conseguimos abrir o login da Anthropic. Tente de novo em alguns minutos.",
     });
+  });
+
+  test("se a pasta das Contas não deixa gravar, a tela diz o que fazer em vez de um erro solto", async () => {
+    const t = await testApp();
+    await workspace(t);
+    // O volume `contas` novo do compose nasce com dono root, e o app roda como uid 1000.
+    chmodSync(t.accountsRoot, 0o500);
+    onCleanup(() => chmodSync(t.accountsRoot, 0o700));
+
+    const res = await t.as(bruno).post("/api/account/linking");
+
+    expect(res.status).toBe(202);
+    const linking = ((await res.json()) as AccountDto).linking;
+    expect(linking?.state).toBe("failed");
+    expect(linking?.state === "failed" && linking.message).toContain("Avise quem cuida da Instalação");
   });
 });
 

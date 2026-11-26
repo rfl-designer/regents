@@ -93,6 +93,7 @@ export const LINKING_FAILURES = {
   couldNotStart: "Não conseguimos abrir o login da Anthropic. Tente de novo em alguns minutos.",
   missing: "O Claude Code não está instalado neste servidor. Avise quem cuida da Instalação.",
   unavailable: "Não conseguimos conferir a sua Conta agora. Tente de novo em alguns minutos.",
+  cannotWrite: "O Shearim não consegue gravar a sua Conta neste servidor. Avise quem cuida da Instalação.",
 } as const;
 
 function explainValidation(v: Extract<Validation, { ok: false }>): string {
@@ -312,7 +313,19 @@ export function createAccounts(deps: {
     const flow: Flow = { dto: { state: "starting" }, dir: join(config.root, memberId, crypto.randomUUID()) };
     flows.set(memberId, flow);
     if (old) await release(old);
-    await mkdir(flow.dir, { recursive: true, mode: 0o700 });
+    try {
+      await mkdir(flow.dir, { recursive: true, mode: 0o700 });
+    } catch (err) {
+      // O caso conhecido: o volume `contas` criado como root por uma imagem sem /data/contas.
+      const uid = process.getuid?.() ?? 1000;
+      console.error(
+        `shearim: a pasta das Contas ${config.root} não deixa o usuário do Shearim (uid ${uid}) gravar ` +
+          `(${(err as NodeJS.ErrnoException).code}). Dê a pasta a ele: no host, ` +
+          `docker compose run --rm --no-deps --user root --cap-add CHOWN --entrypoint chown app ${uid}:${uid} ${config.root}`,
+      );
+      await fail(memberId, flow, LINKING_FAILURES.cannotWrite);
+      return { ok: true, account: await dto(memberId) };
+    }
     if (closed) return { ok: false, message: "O Shearim está parando. Tente de novo em instantes." };
 
     try {
