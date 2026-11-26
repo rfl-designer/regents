@@ -52,4 +52,4 @@ chmod 755 "$stage/deploy/"*.sh
 COPYFILE_DISABLE=1 tar -czf "$out/regents-compose.tar.gz" -C "$stage" compose.yaml deploy
 cp "$out/regents-compose.tar.gz" "$out/shearim-compose.tar.gz"
 cp "$stage/deploy/install.sh" "$out/install.sh"
-printf 'ok: %s/regents-compose.tar.gz e %s/install.sh (versão %s)\n' "$out" "$out" "$version"
+printf 'ok: %s/regents-compose.tar.gz, a cópia shearim-compose.tar.gz e install.sh (versão %s)\n' "$out" "$version"
