@@ -42,6 +42,19 @@ export interface CreateWikiInput {
   description: string;
 }
 
+/**
+ * Um Canal na tela de ligações da Wiki: `GET /api/wikis/:id/channels` e a resposta de
+ * `PUT`/`DELETE /api/wikis/:id/channels/:channelId` (só Admin). Lista os Canais que o Admin vê
+ * (os públicos e os privados de que ele participa), por nome, com a marca de ligado. Todo Agente
+ * que responde num Canal ligado consulta a Wiki ali, dentro do alcance dela.
+ */
+export interface WikiChannelDto {
+  id: string;
+  name: string;
+  kind: "public" | "private";
+  linked: boolean;
+}
+
 export type WikiSourceFormat = "txt" | "md";
 export type WikiSourceState = "active" | "removed";
 
