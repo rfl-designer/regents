@@ -1,4 +1,4 @@
-import { formatBytes, type WikiSourceDto, type WikiSourceFormat } from "@shearim/contracts";
+import { formatBytes, WIKI_SYNC_OPEN_STATES, type WikiSourceDto, type WikiSourceFormat } from "@shearim/contracts";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { type Db, schema, type Tx } from "../db/client";
 import { pendingOf, reflectedSources } from "./wikis";
@@ -22,7 +22,7 @@ export async function lockIdleWiki(tx: Tx, wikiId: string): Promise<boolean> {
   const [open] = await tx
     .select({ id: wikiSyncs.id })
     .from(wikiSyncs)
-    .where(and(eq(wikiSyncs.wikiId, wikiId), inArray(wikiSyncs.state, ["queued", "running"])));
+    .where(and(eq(wikiSyncs.wikiId, wikiId), inArray(wikiSyncs.state, [...WIKI_SYNC_OPEN_STATES])));
   return !open;
 }
 

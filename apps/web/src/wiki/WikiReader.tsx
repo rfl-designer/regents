@@ -5,6 +5,7 @@ import {
   type WikiPageViewDto,
   wikiBodyParts,
   wikiPagePath,
+  wikiSyncOpen,
 } from "@shearim/contracts";
 import { type MouseEvent, type ReactNode, useCallback, useEffect, useState } from "react";
 import { ApiFailure, messageOf } from "../api";
@@ -30,7 +31,7 @@ export function useReadableWikis(enabled: boolean) {
   return wikis;
 }
 
-const syncing = (w: WikiDto) => w.lastSync?.state === "queued" || w.lastSync?.state === "running";
+const syncing = (w: WikiDto) => wikiSyncOpen(w.lastSync);
 
 type Loaded = { kind: "loading" } | { kind: "ready"; view: WikiPageViewDto } | { kind: "missing"; message: string };
 

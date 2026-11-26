@@ -1,4 +1,11 @@
-import { WIKI_INDEX_SLUG, WIKI_LOG_SLUG, WIKIS_PATH, type WikiSyncDto, type WikiSyncStepDto } from "@shearim/contracts";
+import {
+  WIKI_INDEX_SLUG,
+  WIKI_LOG_SLUG,
+  WIKI_SYNC_OPEN_STATES,
+  WIKIS_PATH,
+  type WikiSyncDto,
+  type WikiSyncStepDto,
+} from "@shearim/contracts";
 import { and, asc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { articuladoraOf } from "../articuladora";
 import type { Clock } from "../clock";
@@ -178,7 +185,7 @@ export function createWikiSyncs(deps: {
     const [failed] = await db
       .update(wikiSyncs)
       .set({ state: "failed", step: null, reason, finishedAt: clock.now() })
-      .where(and(eq(wikiSyncs.id, syncId), inArray(wikiSyncs.state, ["queued", "running"])))
+      .where(and(eq(wikiSyncs.id, syncId), inArray(wikiSyncs.state, [...WIKI_SYNC_OPEN_STATES])))
       .returning({ id: wikiSyncs.id });
     if (failed) await finished(syncId);
   }
@@ -450,7 +457,7 @@ export function createWikiSyncs(deps: {
           .select({ name: members.displayName })
           .from(wikiSyncs)
           .innerJoin(members, eq(members.id, wikiSyncs.startedByMemberId))
-          .where(and(eq(wikiSyncs.wikiId, wikiId), inArray(wikiSyncs.state, ["queued", "running"])));
+          .where(and(eq(wikiSyncs.wikiId, wikiId), inArray(wikiSyncs.state, [...WIKI_SYNC_OPEN_STATES])));
         const who = open ? `, iniciada por ${open.name}` : "";
         return {
           error: "sync_running",
@@ -475,7 +482,7 @@ export function createWikiSyncs(deps: {
       const [canceled] = await db
         .update(wikiSyncs)
         .set({ state: "canceled", step: null, reason: null, finishedAt: clock.now() })
-        .where(and(eq(wikiSyncs.wikiId, wikiId), inArray(wikiSyncs.state, ["queued", "running"])))
+        .where(and(eq(wikiSyncs.wikiId, wikiId), inArray(wikiSyncs.state, [...WIKI_SYNC_OPEN_STATES])))
         .returning({ id: wikiSyncs.id });
       if (!canceled) return undefined;
       running.get(canceled.id)?.controller.abort("cancelled");
@@ -487,7 +494,7 @@ export function createWikiSyncs(deps: {
       const open = await db
         .select({ id: wikiSyncs.id })
         .from(wikiSyncs)
-        .where(inArray(wikiSyncs.state, ["queued", "running"]));
+        .where(inArray(wikiSyncs.state, [...WIKI_SYNC_OPEN_STATES]));
       for (const { id } of open) {
         if (!running.has(id)) await fail(id, RESTART_REASON);
       }

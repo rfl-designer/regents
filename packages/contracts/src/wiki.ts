@@ -138,6 +138,14 @@ export function formatBytes(bytes: number): string {
  */
 export type WikiSyncState = "queued" | "running" | "done" | "failed" | "canceled";
 
+/** Os estados de uma Sincronização em curso: só uma por Wiki fica num deles de cada vez. */
+export const WIKI_SYNC_OPEN_STATES = ["queued", "running"] as const satisfies readonly WikiSyncState[];
+
+/** Se a Sincronização está em curso (pedida ou rodando). */
+export function wikiSyncOpen(sync: { state: WikiSyncState } | null | undefined): boolean {
+  return sync != null && (WIKI_SYNC_OPEN_STATES as readonly WikiSyncState[]).includes(sync.state);
+}
+
 /**
  * O passo da Sincronização em curso: `source` ("em curso: Fonte 1 de 2", com o nome do arquivo),
  * `review` ("revisando a Wiki") ou `publishing` ("publicando").

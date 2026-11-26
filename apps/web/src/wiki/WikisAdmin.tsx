@@ -7,6 +7,7 @@ import {
   type WikiSourceDto,
   type WikiSyncDto,
   type WikiVersionDto,
+  wikiSyncOpen,
   wikiSyncPayerText,
   wikiSyncStepText,
 } from "@shearim/contracts";
@@ -147,8 +148,8 @@ function DeleteWiki({ wiki, onDeleted }: { wiki: WikiDto; onDeleted(): void }) {
     <section className="warning" aria-label={`Apagar a Wiki ${wiki.name}`}>
       <p>
         Apagar a Wiki {wiki.name}? Ela sai na hora de todos os Canais e Agentes, com as Fontes e as versões.
-        {open(wiki.lastSync) && " A Sincronização em curso é cancelada."} As citações antigas ficam sem link. Não dá
-        para desfazer.
+        {wikiSyncOpen(wiki.lastSync) && " A Sincronização em curso é cancelada."} As citações antigas ficam sem link.
+        Não dá para desfazer.
       </p>
       <div className="row">
         <button type="button" className="danger" disabled={busy} onClick={remove}>
@@ -166,8 +167,6 @@ function DeleteWiki({ wiki, onDeleted }: { wiki: WikiDto; onDeleted(): void }) {
     </section>
   );
 }
-
-const open = (s: WikiSyncDto | null) => s?.state === "queued" || s?.state === "running";
 
 /**
  * O estado da Sincronização para gente ler: o passo em curso, o fim ou o motivo da falha, com
@@ -198,7 +197,7 @@ function WikiSync({ wiki }: { wiki: WikiDto }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sync = wiki.lastSync;
-  const running = open(sync);
+  const running = wikiSyncOpen(sync);
 
   async function start() {
     setBusy(true);
@@ -416,7 +415,7 @@ function WikiSources({ wiki, onChanged }: { wiki: WikiDto; onChanged(): void }) 
             {s.state === "active" && (
               <button
                 type="button"
-                disabled={busy || open(wiki.lastSync)}
+                disabled={busy || wikiSyncOpen(wiki.lastSync)}
                 aria-label={`Remover ${s.fileName}`}
                 onClick={() => remove(s)}
               >

@@ -130,6 +130,7 @@ export const wikiSyncs = pgTable(
   },
   (t) => [
     index().on(t.wikiId, t.seq),
+    // Os estados em curso (`WIKI_SYNC_OPEN_STATES`), escritos aqui porque a migração os guarda.
     uniqueIndex("wiki_syncs_one_open_per_wiki").on(t.wikiId).where(sql`${t.state} in ('queued', 'running')`),
   ],
 );
