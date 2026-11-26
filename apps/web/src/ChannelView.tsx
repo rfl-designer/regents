@@ -35,6 +35,7 @@ import { useDropDeletedAgents, useServerEvents } from "./live";
 import { MemoryArchived, MemoryItem, sortMemory } from "./Memory";
 import { downLabel, upLabel, useReading } from "./reading";
 import { useAction } from "./use-action";
+import { MessageText } from "./wiki/citation";
 
 /** "15:45" hoje; "qui., 15:45" em outro dia (Spec, história 78). */
 function untilLabel(iso: string, now = new Date()) {
@@ -789,7 +790,13 @@ function MessageRow({
           {outcome?.decision === "none" && <NoneMark outcome={outcome} />}
           {mentionsMe && <span className="mention-tag">menciona você</span>}
         </div>
-        <p className="body">{mentionsMe ? highlightMe(m.body, me.handle) : m.body}</p>
+        <p className="body">
+          <MessageText
+            body={m.body}
+            citations={m.wikiCitations}
+            decorate={(text) => (mentionsMe ? highlightMe(text, me.handle) : text)}
+          />
+        </p>
         {deciding && (
           <p className="micro" role="status" aria-label={`${deciding.agent.displayName} decidindo quem responde`}>
             <span className="spin" aria-hidden="true" />

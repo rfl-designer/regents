@@ -40,6 +40,9 @@
  * Fonte com `[trave]` fica sem resposta (para o "Cancelar"); com `[falhe sempre]`, recebe a
  * sobrecarga (529) em toda tentativa.
  *
+ * Com `[wiki: <Wiki>/<página>]`, o Agente lê a página por "ler a Wiki" e responde com a primeira
+ * linha do corpo dela e a citação `[[wiki:<Wiki>/<página>]]` (#85).
+ *
  * O GitHub é o falso dos testes do servidor (`test/fakes/github-api.ts`), com `time/site` e
  * `time/infra` na conta do time: criar o App e instalá-lo passam por ele (o "navegador do Admin"
  * pode ser um `fetch` que segue os redirecionamentos à mão).
@@ -88,6 +91,8 @@ const anthropic = await startFakeMessagesApi({
   defaultSync: sincronizar,
   defaultReply: (req) => {
     if (req.body.output_config) return desfecho(req);
+    const daWiki = citarWiki(req);
+    if (daWiki) return daWiki;
     const [resultado] = toolResults(req.body);
     if (resultado) {
       // Só o resultado da Ferramenta do CRM (bem ou mal): o de "listar Agentes" pode citar "buscar cliente".
@@ -123,6 +128,28 @@ const anthropic = await startFakeMessagesApi({
     return { text: "Oi! Tudo certo por aqui: o prazo é sexta-feira.", delayMs };
   },
 });
+/**
+ * `[wiki: <Wiki>/<página>]` na mensagem de origem, com "ler a Wiki" oferecida: no primeiro turno o
+ * Agente lê a página; com o resultado, responde com a primeira linha do corpo e a citação.
+ */
+function citarWiki(req: RecordedRequest): FakeReply | undefined {
+  const tools = (req.body.tools as { name: string }[] | undefined) ?? [];
+  if (!tools.some((t) => t.name === "ler_a_wiki")) return undefined;
+  const contexto = req.body.messages.find((m) => m.role === "user");
+  const texto =
+    typeof contexto?.content === "string"
+      ? contexto.content
+      : (contexto?.content ?? []).map((b) => b.text ?? "").join("");
+  const pedido = (texto.split("\n\n").at(-2) ?? "").match(/\[wiki: ([^/\]]+)\/([^\]]+)\]/);
+  if (!pedido) return undefined;
+  const [, wiki, pagina] = pedido as unknown as [string, string, string];
+  const [resultado] = toolResults(req.body);
+  if (!resultado) return { toolUse: [{ name: "ler_a_wiki", input: { wiki, pagina } }], delayMs };
+  // O resultado: "<resultado_de_ferramenta …>\nWiki X, versão 1: a página …\n\n<corpo>\n</resultado_de_ferramenta>".
+  const corpo = resultado.content.split("\n\n")[1]?.split("\n")[0] ?? "";
+  return { text: `Segundo a Wiki: ${corpo} [[wiki:${wiki}/${pagina}]]`, delayMs };
+}
+
 /**
  * Uma chamada da Sincronização: no primeiro turno, escreve a página da Fonte e o índice com ela; no
  * seguinte (com os resultados das Ferramentas), termina.

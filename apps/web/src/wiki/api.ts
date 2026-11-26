@@ -52,4 +52,7 @@ export const wikiApi = {
   /** Uma página da versão atual, para ler. */
   page: (wikiId: string, slug: string) =>
     call<WikiPageViewDto>(`/api/wikis/${wikiId}/pages/${encodeURIComponent(slug)}`),
+  /** A página numa versão (a que a citação abre, #85). */
+  pageAt: (wikiId: string, version: number, slug: string) =>
+    call<WikiPageViewDto>(`/api/wikis/${wikiId}/versions/${version}/pages/${encodeURIComponent(slug)}`),
 };

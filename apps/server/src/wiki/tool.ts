@@ -2,6 +2,7 @@ import { WIKI_INDEX_SLUG } from "@shearim/contracts";
 import { and, eq } from "drizzle-orm";
 import { type Db, schema } from "../db/client";
 import { type AutomaticTool, ToolFailure } from "../tools/port";
+import { recordWikiRead } from "./citations";
 import { type Answer, type WikiInReach, wikiInReachNamed, wikisInReach } from "./reach";
 
 const { wikiPages } = schema;
@@ -65,7 +66,7 @@ async function resolve(db: Db, answer: Answer, input: ReadInput) {
  * de aprovação, presente quando ao menos uma Wiki com versão publicada alcança a resposta,
  * conferida na hora (o Admin pode desligar a Wiki no meio da resposta). A entrada é a Wiki (nome)
  * e, opcionalmente, a página (slug): sem página, o índice. Lê sempre a versão atual, e o resultado
- * diz a versão lida.
+ * diz a versão lida, que fica guardada para conferir as citações da resposta.
  */
 export const READ_WIKI: AutomaticTool = {
   id: "ler_a_wiki",
@@ -100,6 +101,8 @@ export const READ_WIKI: AutomaticTool = {
     const { wiki, slug, page } = await resolve(db, run, input);
     if (!wiki) throw new ToolFailure("não há uma Wiki com esse nome nesta conversa");
     if (!page) throw new ToolFailure(`essa página não existe na Wiki ${wiki.name}`);
+    // A leitura confere as citações da resposta (#85): só a que deu certo, na versão lida.
+    await recordWikiRead(db, run, wiki, slug);
     const what = slug === WIKI_INDEX_SLUG ? "o índice" : `a página ${page.title} ([[${slug}]])`;
     return `Wiki ${wiki.name}, versão ${wiki.versionNumber}: ${what}.\n\n${page.body}`;
   },

@@ -38,20 +38,26 @@ type Loaded = { kind: "loading" } | { kind: "ready"; view: WikiPageViewDto } | {
  * A leitura de uma página da Wiki, para o Membro (#82): o índice ao abrir, os links `[[slug]]` para
  * as outras páginas (o quebrado fica marcado), as Fontes da página, a data da última
  * Sincronização e, durante uma, "sincronizando…" em tempo real. Ninguém edita.
+ *
+ * Com `version` (a citação de uma resposta, #85), a página daquela versão: os links ficam nela, e,
+ * se há uma versão mais nova, o aviso com o link para a página na versão atual (ou para o índice,
+ * quando ela não existe mais). Uma Sincronização nova não troca o que está aberto.
  */
 export function WikiReader({
   wikiId,
   slug,
+  version,
   onNavigate,
 }: {
   wikiId: string;
   slug: string;
-  onNavigate(slug: string): void;
+  version?: number;
+  onNavigate(slug: string, version?: number): void;
 }) {
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
 
   const load = useCallback(() => {
-    wikiApi.page(wikiId, slug).then(
+    (version === undefined ? wikiApi.page(wikiId, slug) : wikiApi.pageAt(wikiId, version, slug)).then(
       (view) => setLoaded({ kind: "ready", view }),
       (err) =>
         setLoaded({
@@ -62,7 +68,7 @@ export function WikiReader({
               : "Não foi possível carregar a página. Recarregue para tentar de novo.",
         }),
     );
-  }, [wikiId, slug]);
+  }, [wikiId, slug, version]);
   useEffect(load, [load]);
 
   const shown = loaded.kind === "ready" ? loaded.view : null;
@@ -75,9 +81,10 @@ export function WikiReader({
         l.kind === "ready" ? { ...l, view: { ...l.view, wiki: { ...l.view.wiki, lastSync: sync } } } : l,
       );
     }
-    // Uma versão nova: a página se relê (pode ter mudado, ou deixado de existir).
+    // Uma versão nova: a página se relê (pode ter mudado, ou deixado de existir). A de uma versão
+    // escolhida fica, e o aviso de versão mais nova aparece.
     if (event.type === "wiki.updated" && event.wiki.id === wikiId) {
-      if (event.wiki.currentVersion?.number !== shown?.version) load();
+      if (version === undefined && event.wiki.currentVersion?.number !== shown?.version) load();
       else setLoaded((l) => (l.kind === "ready" ? { ...l, view: { ...l.view, wiki: event.wiki } } : l));
     }
   });
@@ -90,7 +97,7 @@ export function WikiReader({
           {loaded.message}
         </p>
         {slug !== WIKI_INDEX_SLUG && (
-          <WikiLink wikiId={wikiId} slug={WIKI_INDEX_SLUG} onNavigate={onNavigate}>
+          <WikiLink wikiId={wikiId} slug={WIKI_INDEX_SLUG} version={version} onNavigate={onNavigate}>
             Ir para o índice
           </WikiLink>
         )}
@@ -98,7 +105,8 @@ export function WikiReader({
     );
   }
 
-  const { wiki, page, links } = loaded.view;
+  const { wiki, page, links, inCurrentVersion } = loaded.view;
+  const newer = version !== undefined && wiki.currentVersion && wiki.currentVersion.number !== loaded.view.version;
   return (
     <main className="settings wiki" aria-label={`Wiki ${wiki.name}`}>
       <header className="wiki-head">
@@ -109,14 +117,23 @@ export function WikiReader({
             : wiki.currentVersion && `sincronizada em ${dateTimeShort(wiki.currentVersion.publishedAt)}`}
         </p>
         {page.slug !== WIKI_INDEX_SLUG && (
-          <WikiLink wikiId={wikiId} slug={WIKI_INDEX_SLUG} onNavigate={onNavigate}>
+          <WikiLink wikiId={wikiId} slug={WIKI_INDEX_SLUG} version={version} onNavigate={onNavigate}>
             Índice
           </WikiLink>
         )}
       </header>
+      {newer && (
+        <aside className="wiki-old" aria-label="Versão antiga">
+          Você está lendo a versão {loaded.view.version}. Há uma versão mais nova desta Wiki (versão{" "}
+          {wiki.currentVersion!.number}).{" "}
+          <WikiLink wikiId={wikiId} slug={inCurrentVersion ? page.slug : WIKI_INDEX_SLUG} onNavigate={onNavigate}>
+            {inCurrentVersion ? "Ler na versão atual" : "Esta página não existe na versão atual: ir para o índice"}
+          </WikiLink>
+        </aside>
+      )}
       <article className="wiki-page" aria-label={page.title}>
         <h2>{page.title}</h2>
-        <WikiBody wikiId={wikiId} body={page.body} links={links} onNavigate={onNavigate} />
+        <WikiBody wikiId={wikiId} version={version} body={page.body} links={links} onNavigate={onNavigate} />
       </article>
       <section className="wiki-sources" aria-label="Fontes da página">
         <h3>Fontes</h3>
@@ -134,13 +151,19 @@ export function WikiReader({
   );
 }
 
-function WikiLink(props: { wikiId: string; slug: string; onNavigate(slug: string): void; children: ReactNode }) {
+function WikiLink(props: {
+  wikiId: string;
+  slug: string;
+  version?: number;
+  onNavigate(slug: string, version?: number): void;
+  children: ReactNode;
+}) {
   const go = (e: MouseEvent) => {
     e.preventDefault();
-    props.onNavigate(props.slug);
+    props.onNavigate(props.slug, props.version);
   };
   return (
-    <a className="wiki-link" href={wikiPagePath(props.wikiId, props.slug)} onClick={go}>
+    <a className="wiki-link" href={wikiPagePath(props.wikiId, props.slug, props.version)} onClick={go}>
       {props.children}
     </a>
   );
@@ -162,7 +185,7 @@ function inline(line: string, ctx: BodyProps) {
     }
     return (
       // biome-ignore lint/suspicious/noArrayIndexKey: os pedaços da linha não mudam de ordem.
-      <WikiLink key={i} wikiId={ctx.wikiId} slug={part.slug} onNavigate={ctx.onNavigate}>
+      <WikiLink key={i} wikiId={ctx.wikiId} slug={part.slug} version={ctx.version} onNavigate={ctx.onNavigate}>
         {text}
       </WikiLink>
     );
@@ -171,9 +194,10 @@ function inline(line: string, ctx: BodyProps) {
 
 interface BodyProps {
   wikiId: string;
+  version?: number;
   body: string;
   links: WikiLinkDto[];
-  onNavigate(slug: string): void;
+  onNavigate(slug: string, version?: number): void;
 }
 
 /**
