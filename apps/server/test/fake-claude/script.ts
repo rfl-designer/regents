@@ -190,7 +190,8 @@ export interface FakeClaudeCall {
 
 /** Um passo do `fake-claude` como cliente MCP (`fake.mcp()`). */
 export type FakeMcpEntry =
-  | { pid: number; listed: string[] }
+  /** Conectou e listou; `server` é o `serverInfo` que o endpoint deu no `initialize`. */
+  | { pid: number; listed: string[]; server?: { name: string; title?: string } }
   | { pid: number; called: string; input: unknown; result: { content: string; isError: boolean } }
   /** O endpoint recusou (o status HTTP, quando veio) ou não respondeu. */
   | { pid: number; refused: string };

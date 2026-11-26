@@ -110,6 +110,9 @@ describe("adicionar um Conector", () => {
         ["criar-oportunidade", "write"],
       ]);
       expect(crm.tokens()).toContain(TOKEN);
+      // O servidor vê o Regents como o cliente MCP.
+      expect(crm.clients().length).toBeGreaterThan(0);
+      for (const cliente of crm.clients()) expect(cliente).toEqual({ name: "regents", title: "Regents" });
 
       const lista = await (await t.as(juliana).get("/api/connectors")).text();
       expect(lista).not.toContain(TOKEN);
