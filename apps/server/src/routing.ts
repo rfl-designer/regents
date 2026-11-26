@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, isNotNull, notInArray, or } from "drizzle-orm";
 import type { Agent } from "./agents";
 import { recentMessages } from "./context";
 import { type Db, schema } from "./db/client";
-import { activeSkillsByAgent } from "./skills/tool";
+import { activeSkillsByAgent } from "./skills/skills";
 import type { ToolPort } from "./tools/port";
 import { type Answer, wikisInReach } from "./wiki/reach";
 

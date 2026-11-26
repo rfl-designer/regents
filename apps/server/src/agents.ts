@@ -22,7 +22,7 @@ import type { Env } from "./members";
 import { forgetAgent } from "./memory/items";
 import { claimHandle, handleBase, releaseHandle } from "./mention-handles";
 import { audienceOf } from "./participation";
-import { activeSkillsByAgent } from "./skills/tool";
+import { activeSkillsByAgent } from "./skills/skills";
 import type { ToolPort } from "./tools/port";
 import { leaveAgentWikis } from "./wiki/reach";
 import { agentWikisReadableBy } from "./wiki/wikis";
