@@ -1,4 +1,4 @@
-import { mkdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { accessSync, constants, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 
@@ -16,15 +16,32 @@ export interface Dumper {
   restore(file: string): Promise<void>;
 }
 
-/** Escreve em `<file>.partial` e só renomeia quando terminou; se falhar, não sobra nada. */
+/**
+ * Escreve em `<file>.partial` e só renomeia quando terminou; se falhar, não sobra nada. Antes,
+ * confere que a pasta aceita a escrita: na Instalação, `./backups` do host tem que ser do usuário
+ * do container (uid 1000), e o motivo diz isso em vez de um `EACCES` solto.
+ */
 export async function writeAtomically(file: string, write: (tmp: string) => Promise<void>) {
-  mkdirSync(dirname(file), { recursive: true });
+  const dir = dirname(file);
+  mkdirSync(dir, { recursive: true });
+  try {
+    accessSync(dir, constants.W_OK | constants.X_OK);
+  } catch (err) {
+    const uid = process.getuid?.() ?? 1000;
+    throw new Error(
+      `a pasta ${dir} não deixa o usuário do Shearim (uid ${uid}) gravar (${(err as NodeJS.ErrnoException).code}). ` +
+        `Na pasta da Instalação, no host: sudo chown ${uid}:${uid} backups && chmod 700 backups`,
+    );
+  }
   const tmp = `${file}.partial`;
   try {
     await write(tmp);
     renameSync(tmp, file);
   } catch (err) {
-    rmSync(tmp, { force: true });
+    // A limpeza não esconde o motivo: o erro que sobe é o da escrita.
+    try {
+      rmSync(tmp, { force: true });
+    } catch {}
     throw err;
   }
   return { bytes: statSync(file).size };
