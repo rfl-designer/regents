@@ -982,6 +982,20 @@ export interface CreateSkillInput {
 /** `PATCH /api/skills/:id` (só Admin): campo ausente fica. */
 export type UpdateSkillInput = Partial<CreateSkillInput>;
 
+/** Tamanho máximo do arquivo de `POST /api/skills/import` (um `SKILL.md` ou um `.zip` de skill), em bytes. */
+export const SKILL_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * A resposta de `POST /api/skills/import` (só Admin, multipart, campo `file`): a Habilidade criada
+ * do `SKILL.md` e, de um `.zip`, os arquivos que ficaram de fora (scripts, referências, assets),
+ * porque os Agentes do Shearim não executam código. Erros: `400 invalid_skill` (com o motivo),
+ * `409 name_taken`, `413 file_too_large`.
+ */
+export interface ImportSkillResultDto {
+  skill: SkillDto;
+  ignored: string[];
+}
+
 /**
  * Uma Habilidade na tela do Agente (só Admin), com a marca de ativa nele: `GET
  * /api/agents/:id/skills` e a resposta de `PUT`/`DELETE /api/agents/:id/skills/:skillId`.

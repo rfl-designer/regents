@@ -1,4 +1,10 @@
-import { SKILL_BODY_MAX, SKILL_DESCRIPTION_MAX, SKILL_NAME_MAX, type SkillDto } from "@shearim/contracts";
+import {
+  type ImportSkillResultDto,
+  SKILL_BODY_MAX,
+  SKILL_DESCRIPTION_MAX,
+  SKILL_NAME_MAX,
+  type SkillDto,
+} from "@shearim/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { api, messageOf } from "./api";
 import { dateTimeShort } from "./format";
@@ -33,6 +39,7 @@ export function SkillsSettings() {
           setSkills((list) => sorted([...(list ?? []), created]));
         }}
       />
+      <ImportSkill onImported={(created) => setSkills((list) => sorted([...(list ?? []), created]))} />
       {error && (
         <p className="error" role="alert">
           {error}
@@ -110,6 +117,77 @@ function SkillItem(props: { skill: SkillDto; onChanged(skill: SkillDto): void; o
         )}
       </div>
     </li>
+  );
+}
+
+/**
+ * Importar um `SKILL.md` (ou o `.zip` da skill): o nome e a descrição saem do frontmatter. Do
+ * `.zip`, a tela lista o que ficou de fora, porque os Agentes do Shearim não executam código.
+ */
+function ImportSkill(props: { onImported(skill: SkillDto): void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<ImportSkillResultDto | null>(null);
+
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!file || busy) return;
+    const form = e.currentTarget;
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const imported = await api.importSkill(file);
+      props.onImported(imported.skill);
+      setResult(imported);
+      setFile(null);
+      form.reset();
+    } catch (err) {
+      setError(messageOf(err, "A skill não foi importada. Tente de novo."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="settings-row" onSubmit={submit} aria-label="Importar SKILL.md">
+      <p className="hint">
+        Ou importe um SKILL.md (ou o .zip da skill): o nome e a descrição saem do frontmatter. Scripts e outros arquivos
+        ficam de fora, porque os Agentes do Shearim não executam código.
+      </p>
+      <div className="row">
+        <input
+          type="file"
+          aria-label="Arquivo SKILL.md ou .zip"
+          accept=".md,.zip,text/markdown,application/zip"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        />
+        <button type="submit" disabled={busy || !file}>
+          Importar
+        </button>
+        {error && (
+          <span className="error" role="alert">
+            {error}
+          </span>
+        )}
+      </div>
+      {result && (
+        <div role="status">
+          <p className="hint">Habilidade {result.skill.name} importada.</p>
+          {result.ignored.length > 0 && (
+            <>
+              <p className="hint">Ficaram de fora (os Agentes do Shearim não executam código):</p>
+              <ul className="micro" aria-label="Arquivos ignorados">
+                {result.ignored.map((path) => (
+                  <li key={path}>{path}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+    </form>
   );
 }
 
