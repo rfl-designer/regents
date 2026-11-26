@@ -4,12 +4,13 @@
  * O `pg_dump` é o dublê (`fakes/dumper.ts`); o de verdade tem `postgres-backup.test.ts`.
  */
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InstallationDto } from "@shearim/contracts";
 import { migrationsFolder } from "../src/db/client";
 import { createNightlyBackups } from "../src/installation/backups";
+import { writeAtomically } from "../src/installation/dumper";
 import { fakeDumper } from "./fakes/dumper";
 import { eventually, onCleanup, type TestApp, testApp } from "./harness";
 
@@ -107,6 +108,40 @@ describe("backup noturno", () => {
     expect(backup.lastGoodAt).toBe("2026-11-24T12:00:00.000Z");
     expect(readdirSync(dir)).toEqual(["shearim-20261124T120000Z.dump"]);
   }, 60_000);
+
+  test("a pasta que o usuário do container não pode gravar: o motivo diz de quem ela tem que ser e o comando", async () => {
+    const t = await testApp();
+    await t.as(juliana).get("/api/me");
+    const dir = backupsDir();
+    // Como a ./backups do host com outro dono e modo 700: o uid do container nem entra nela.
+    chmodSync(dir, 0o000);
+    onCleanup(() => chmodSync(dir, 0o700));
+    const { job, dumper } = nightly(t, dir);
+
+    await job.runNow();
+
+    const { backup } = await installation(t);
+    const uid = process.getuid!();
+    expect(backup.last).toMatchObject({ ok: false, file: null });
+    expect(backup.last!.error).toContain(`não deixa o usuário do Shearim (uid ${uid}) gravar`);
+    expect(backup.last!.error).toContain(`sudo chown ${uid}:${uid} backups`);
+    expect(dumper.dumps).toEqual([]);
+  });
+});
+
+describe("a escrita do dump", () => {
+  test("se o dump falha e a limpeza do .partial também, o motivo é o do dump", async () => {
+    const dir = backupsDir();
+    onCleanup(() => chmodSync(dir, 0o700));
+
+    const write = writeAtomically(join(dir, "shearim.dump"), async () => {
+      // A pasta fecha no meio: o `rm` do .partial dá EACCES.
+      chmodSync(dir, 0o000);
+      throw new Error("pg_dump saiu com 1: connection refused");
+    });
+
+    expect(write).rejects.toThrow("pg_dump saiu com 1: connection refused");
+  });
 });
 
 describe("seção Instalação", () => {
