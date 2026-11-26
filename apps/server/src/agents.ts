@@ -23,6 +23,7 @@ import { claimHandle, handleBase, releaseHandle } from "./mention-handles";
 import { audienceOf } from "./participation";
 import { activeSkillsByAgent } from "./skills/tool";
 import type { ToolPort } from "./tools/port";
+import { leaveAgentWikis } from "./wiki/reach";
 
 export type Agent = typeof schema.agents.$inferSelect;
 /** O Agente com o identificador de Menção dele (`mention_handles`). */
@@ -234,8 +235,8 @@ export function agentRoutes(deps: {
    * conversas some: a linha dele fica, marcada `deleted_at`, porque as mensagens, o Andamento, os
    * Desfechos, os Pedidos de aprovação e os gastos apontam para ela. Ele sai das listas, do
    * identificador de Menção (o nome e o `@` voltam a ficar livres) e dos Canais; as DMs com ele
-   * ficam, e o que chegar ali diz que ele foi apagado. As Ferramentas concedidas e a lista de
-   * repositórios saem. O que ele tinha aberto é cancelado. A Memória do Agente sai junto (é o
+   * ficam, e o que chegar ali diz que ele foi apagado. As Ferramentas concedidas, as Habilidades, as
+   * Wikis ligadas e a lista de repositórios saem. O que ele tinha aberto é cancelado. A Memória do Agente sai junto (é o
    * único apagamento de Memória, spec #60); a Memória da Conversa que ele gerou fica. Apagar de
    * novo um Agente já apagado refaz a limpeza (cancelar e apagar a Memória dele), para o caso de
    * ela ter caído no meio da primeira vez.
@@ -258,6 +259,7 @@ export function agentRoutes(deps: {
           await releaseHandle(tx, { kind: "agent", id: agent.id });
           await tx.delete(agentTools).where(eq(agentTools.agentId, agent.id));
           await tx.delete(agentSkills).where(eq(agentSkills.agentId, agent.id));
+          await leaveAgentWikis(tx, agent.id);
           await tx.delete(agentGithubRepositories).where(eq(agentGithubRepositories.agentId, agent.id));
           // Na mesma transação: a marca não fica sem a Memória ter saído.
           await forgetAgent(tx, agent.id);

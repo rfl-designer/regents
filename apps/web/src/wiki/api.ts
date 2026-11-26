@@ -1,4 +1,5 @@
 import type {
+  AgentWikiDto,
   CreateWikiInput,
   SetWikiReachInput,
   WikiChannelDto,
@@ -31,6 +32,11 @@ export const wikiApi = {
   /** Liga ou desliga a Wiki de um Canal; devolve a lista nova. */
   setChannel: (wikiId: string, channelId: string, linked: boolean) =>
     call<WikiChannelDto[]>(`/api/wikis/${wikiId}/channels/${channelId}`, { method: linked ? "PUT" : "DELETE" }),
+  /** Todas as Wikis, com a marca de ligada ao Agente (a tela do Agente). */
+  ofAgent: (agentId: string) => call<AgentWikiDto[]>(`/api/agents/${agentId}/wikis`),
+  /** Liga ou desliga a Wiki do Agente; devolve a lista nova. */
+  setAgent: (agentId: string, wikiId: string, linked: boolean) =>
+    call<AgentWikiDto[]>(`/api/agents/${agentId}/wikis/${wikiId}`, { method: linked ? "PUT" : "DELETE" }),
   /** O alcance: pública, ou restrita à lista (os Membros ativos, com a marca). */
   reach: (wikiId: string) => call<WikiReachDto>(`/api/wikis/${wikiId}/reach`),
   /** Troca o alcance e a lista inteira; devolve a tela nova. */

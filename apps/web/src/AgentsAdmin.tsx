@@ -5,6 +5,7 @@ import {
   type AgentModel,
   type AgentSkillDto,
   type AgentToolDto,
+  type AgentWikiDto,
   type ToolOrigin,
   type WorkspaceKeyDto,
 } from "@shearim/contracts";
@@ -15,6 +16,7 @@ import { api, messageOf } from "./api";
 import { dateTimeShort } from "./format";
 import { INCIDENT_TEXT, usd } from "./KeyBanners";
 import { useDropDeletedAgents, useServerEvents } from "./live";
+import { wikiApi } from "./wiki/api";
 
 const MODEL_LABEL: Record<AgentModel, string> = {
   "claude-opus-5-5": "Claude Opus 5.5",
@@ -191,6 +193,7 @@ function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: 
               }}
             />
             <AgentSkills agent={a} />
+            <AgentWikis agent={a} />
             <AgentGitHub agent={a} onChanged={(repos) => onChanged({ ...a, githubRepositories: repos })} />
           </>
         )}
@@ -410,6 +413,63 @@ function AgentSkills({ agent }: { agent: AgentDto }) {
       {skills?.every((s) => s.builtin) && (
         <p className="hint">Nenhuma Habilidade no Workspace. Escreva uma em Habilidades.</p>
       )}
+      {error && (
+        <span className="error" role="alert">
+          {error}
+        </span>
+      )}
+    </fieldset>
+  );
+}
+
+/**
+ * As Wikis ligadas ao Agente (#84): ele as consulta em qualquer conversa, a DM inclusive, sempre
+ * dentro do alcance de cada uma. Vale na próxima resposta.
+ */
+function AgentWikis({ agent }: { agent: AgentDto }) {
+  const [wikis, setWikis] = useState<AgentWikiDto[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    wikiApi.ofAgent(agent.id).then(setWikis, () => setError("Não foi possível carregar as Wikis."));
+  }, [agent.id]);
+
+  async function toggle(wiki: AgentWikiDto) {
+    setBusy(wiki.id);
+    setError(null);
+    try {
+      setWikis(await wikiApi.setAgent(agent.id, wiki.id, !wiki.linked));
+    } catch (err) {
+      setError(messageOf(err, `A Wiki ${wiki.name} não foi ${wiki.linked ? "desligada" : "ligada"}. Tente de novo.`));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <fieldset className="settings-row" aria-label={`Wikis de ${agent.name}`}>
+      <legend>Wikis</legend>
+      <p className="hint">
+        {agent.name} consulta a Wiki ligada em qualquer conversa, só quando todos ali estão no alcance dela.
+      </p>
+      {wikis === null && !error && <p className="hint">Carregando…</p>}
+      {wikis?.map((w) => (
+        <label key={w.id} className="hint">
+          <input
+            type="checkbox"
+            aria-label={w.name}
+            checked={w.linked}
+            disabled={busy !== null}
+            onChange={() => toggle(w)}
+          />{" "}
+          {w.name}
+          {w.scope === "restricted" && <span className="tag">restrita</span>}
+          <br />
+          <small>{w.description}</small>
+        </label>
+      ))}
+      {wikis?.length === 0 && <p className="hint">Nenhuma Wiki no Workspace. Crie uma em Wikis.</p>}
       {error && (
         <span className="error" role="alert">
           {error}

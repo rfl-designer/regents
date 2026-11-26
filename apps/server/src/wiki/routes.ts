@@ -1,14 +1,18 @@
 import type { CreateWikiInput, SetWikiReachInput, WikiPageViewDto, WikiScope } from "@shearim/contracts";
 import { Hono } from "hono";
+import { findAgent, lockLiveAgent } from "../agents";
 import type { Clock } from "../clock";
 import { type Db, isUuid } from "../db/client";
 import type { Audience, EventHub } from "../events";
 import { adminOnly, type Env } from "../members";
 import {
+  agentWikisOf,
   channelForLink,
+  linkWikiToAgent,
   linkWikiToChannel,
   setWikiReach,
   unknownMembers,
+  unlinkWikiFromAgent,
   unlinkWikiFromChannel,
   wikiChannelsFor,
   wikiReachFor,
@@ -166,6 +170,37 @@ export function wikiRoutes(deps: {
       if (method === "put") await linkWikiToChannel(db, wiki.id, channel.id, clock.now());
       else await unlinkWikiFromChannel(db, wiki.id, channel.id);
       return c.json(await wikiChannelsFor(db, wiki.id, me));
+    });
+  }
+
+  /**
+   * As Wikis na tela do Agente (#84): todas, com a marca de ligada a ele. O Agente ligado consulta
+   * a Wiki em qualquer conversa, a DM inclusive, dentro do alcance dela.
+   */
+  routes.get("/agents/:id/wikis", adminOnly, async (c) => {
+    const [agent] = await findAgent(db, c.req.param("id"));
+    if (!agent) return c.json({ error: "not_found" }, 404);
+    return c.json(await agentWikisOf(db, agent.id));
+  });
+
+  /** Liga (`PUT`) ou desliga (`DELETE`) a Wiki do Agente; vale na próxima resposta dele. */
+  for (const method of ["put", "delete"] as const) {
+    routes[method]("/agents/:id/wikis/:wiki", adminOnly, async (c) => {
+      const [agent] = await findAgent(db, c.req.param("id"));
+      const wiki = await findWiki(db, c.req.param("wiki"));
+      if (!agent || !wiki) return c.json({ error: "not_found" }, 404);
+      if (method === "put") {
+        const done = await db.transaction(async (tx) => {
+          // Quem apaga o Agente leva as ligações dele: ligar espera ou desiste.
+          if (!(await lockLiveAgent(tx, agent.id))) return false;
+          await linkWikiToAgent(tx, wiki.id, agent.id, clock.now());
+          return true;
+        });
+        if (!done) return c.json({ error: "not_found" }, 404);
+      } else {
+        await unlinkWikiFromAgent(db, wiki.id, agent.id);
+      }
+      return c.json(await agentWikisOf(db, agent.id));
     });
   }
 

@@ -55,6 +55,20 @@ export interface WikiChannelDto {
   linked: boolean;
 }
 
+/**
+ * Uma Wiki na tela do Agente (#84): `GET /api/agents/:id/wikis` e a resposta de
+ * `PUT`/`DELETE /api/agents/:id/wikis/:wikiId` (só Admin). Lista todas as Wikis do Workspace, por
+ * nome, com a marca de ligada. O Agente ligado consulta a Wiki em qualquer conversa, a DM
+ * inclusive, dentro do alcance dela (`scope`).
+ */
+export interface AgentWikiDto {
+  id: string;
+  name: string;
+  description: string;
+  scope: WikiScope;
+  linked: boolean;
+}
+
 /** Um Membro na tela do alcance da Wiki, com a marca de quem está na lista. */
 export interface WikiReachMemberDto {
   id: string;
