@@ -13,5 +13,6 @@ O produto deixa de se chamar Shearim e passa a se chamar Regents. No Brasil, o n
 ## Consequências
 
 - A troca vem logo depois da próxima PR e muda tudo: a tela, o README, o glossário, as variáveis `SHEARIM_*`, a imagem, o instalador e o repositório no GitHub.
-- A instalação que já roda (a da Extraevo) precisa de uma versão que migre o `.env` e os volumes do nome antigo para o novo, para não quebrar na atualização.
+- Uma Instalação nova nasce com o nome novo em tudo, inclusive o hostname, a tag da tailnet e o papel e o banco do Postgres.
+- Uma Instalação que já existe (a da Extraevo) migra o nome na primeira atualização: o `.env` passa de `SHEARIM_*` para `REGENTS_*`, e os volumes são copiados para os do projeto novo. O hostname, a tag da tailnet e o papel e o banco do Postgres ficam os de antes. Trocar o hostname ou a tag muda a URL, e aí o app na Tela de Início, as inscrições de push e o GitHub App da Instalação param. O Postgres não renomeia o papel da própria sessão, e o nome do banco não aparece para ninguém. Quem cuida da Instalação pode trocar esses valores depois. Os detalhes estão na spec #96.
 - O domínio não foi verificado.
