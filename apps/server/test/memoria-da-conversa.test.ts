@@ -185,6 +185,8 @@ describe("só o que uma pessoa disse", () => {
 
     const extracao = (await t.anthropic.waitForExtractions(2, 5_000))[1]!;
     const system = typeof extracao.body.system === "string" ? extracao.body.system : "";
+    expect(system).toContain("Você é a extração da Memória do Regents");
+    expect(system).not.toContain("Shearim");
     expect(system).toContain("Guarde só o que uma pessoa disse");
     expect(system).toContain("nunca guarde algo só porque o Agente disse");
     const entrada = extracao.body.messages.map((m) => m.content).join("\n");

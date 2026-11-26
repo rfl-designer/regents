@@ -129,7 +129,7 @@ export async function buildContext(
   }[call.kind]();
 
   const preamble = [
-    `Você é ${agent.name}, um Agente do Shearim, um chat de time em que pessoas e Agentes conversam juntos.`,
+    `Você é ${agent.name}, um Agente do Regents, um chat de time em que pessoas e Agentes conversam juntos.`,
     "Responda sempre em português do Brasil, como numa conversa de chat: direto e no tom do time.",
     ...(tools.length
       ? [

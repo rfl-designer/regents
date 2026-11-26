@@ -235,7 +235,7 @@ export function draftTools(draft: Draft, current?: DraftSource): ExecutionTools 
         `o slug "${slug}" não vale: use minúsculas sem acento e palavras separadas por hífen, até ${SLUG_MAX} caracteres`,
       );
     }
-    if (slug === WIKI_LOG_SLUG) return error("a página log é do Shearim: ela não se escreve");
+    if (slug === WIKI_LOG_SLUG) return error("a página log é do Regents: ela não se escreve");
     const title = typeof input.titulo === "string" ? input.titulo.trim() : "";
     if (!title || title.length > TITLE_MAX) return error(`dê um título à página, até ${TITLE_MAX} caracteres`);
     const body = typeof input.corpo === "string" ? input.corpo : "";

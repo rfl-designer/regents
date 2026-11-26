@@ -138,6 +138,8 @@ describe("Montagem de contexto", () => {
     await enviar(t, bruno, geral.id, "@Faro me manda a proposta por e-mail amanhã?");
 
     const { system } = await contextoDaChamada(t);
+    expect(system).toContain("Você é Faro, um Agente do Regents");
+    expect(system).not.toContain("Shearim");
     expect(system).toContain("chat de time");
     expect(system).toContain("português do Brasil");
     expect(system).toContain("Você não tem ferramentas");
@@ -159,8 +161,9 @@ describe("Montagem de contexto", () => {
     const { system } = await contextoDaChamada(t);
     const quemEQuem = system.slice(system.indexOf("## Quem é quem"));
     expect(quemEQuem).toContain(["Pessoas:", "- Bruno: Cuido do financeiro.", "- Juliana", "Agentes:"].join("\n"));
-    // A Articuladora vem primeiro, com a descrição do Shearim; depois os Agentes do Canal.
+    // A Articuladora vem primeiro, com a descrição do Regents; depois os Agentes do Canal.
     expect(quemEQuem).toContain("Agentes:\n- Sophya: A Articuladora do Regents");
+    expect(system).not.toContain("Shearim");
     expect(quemEQuem).toContain(
       ["- Faro (você): Comercial: propostas e preços.", "- Lince: Pesquisa de mercado."].join("\n"),
     );

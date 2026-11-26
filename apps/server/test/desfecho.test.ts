@@ -132,6 +132,8 @@ describe("o Desfecho nenhum", () => {
     expect(system).toContain("@faro");
     expect(system).toContain("Comercial: propostas e preços.");
     expect(system).toContain("Na dúvida entre responder e nenhum");
+    expect(system).toContain("Você é Sophya, a Articuladora do Regents");
+    expect(system).not.toContain("Shearim");
     expect(conversa).toContain("Juliana (pessoa): A proposta da Acme vence sexta.");
     expect(conversa).toContain("Juliana (pessoa): Alguém revisa o preço?");
   });
@@ -305,7 +307,8 @@ describe("o Desfecho responder", () => {
     const { body, system, conversa } = await chamada(t, 2);
     expect(body.model).toBe("claude-opus-5-5");
     expect(body.output_config).toBeUndefined();
-    expect(system).toContain("Você é Sophya, um Agente do Shearim");
+    expect(system).toContain("Você é Sophya, um Agente do Regents");
+    expect(system).not.toContain("Shearim");
     expect(system).toContain("Você é a Articuladora do Workspace");
     expect(system).toContain(
       "Você decidiu responder você mesma à mensagem de Juliana no Canal #geral. Por quê: É sobre o time.",

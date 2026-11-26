@@ -309,7 +309,7 @@ describe('"Sincronizar a Wiki" é uma Habilidade do Regents', () => {
 
     const dela: AgentSkillDto[] = await (await t.as(juliana).get(`/api/agents/${sophya.id}/skills`)).json();
     const sincronizar = dela.find((h) => h.name === "Sincronizar a Wiki");
-    expect(sincronizar).toMatchObject({ active: true, builtin: true });
+    expect(sincronizar).toMatchObject({ id: "regents:sincronizar-a-wiki", active: true, builtin: true });
     expect(sincronizar!.description).toContain("É do Regents e não se edita.");
     // Só para leitura: nem desativar, nem ativar em outro Agente.
     expect((await t.as(juliana).delete(`/api/agents/${sophya.id}/skills/${sincronizar!.id}`)).status).toBe(404);
@@ -381,9 +381,14 @@ describe("o que cada chamada da Sincronização recebe", () => {
       const [primeira, , segunda] = t.anthropic.syncs.map(textoDe);
 
       for (const chamada of [primeira!, segunda!]) {
+        expect(chamada.system).toContain('[Regents] Sincronização da Wiki "Curso de Redes Sociais"');
+        expect(chamada.system).toContain("Você é a Articuladora do Regents");
         expect(chamada.system).toContain("## Regras da Wiki");
         expect(chamada.system).toContain("Curso de Redes Sociais");
         expect(chamada.ferramentas).toEqual(FERRAMENTAS_DA_SINCRONIZACAO);
+      }
+      for (const chamada of t.anthropic.syncs.map(textoDe)) {
+        expect(chamada.system + chamada.user).not.toContain("Shearim");
       }
       expect(primeira!.user).toContain("(a Wiki ainda não tem páginas)");
       expect(primeira!.user).toContain("Fonte nova: aula-01.md (Fonte 1 de 2)");
@@ -425,7 +430,7 @@ describe("o que cada chamada da Sincronização recebe", () => {
       const resultados = toolResults(t.anthropic.syncs[1]!.body);
       expect(resultados.map((r) => r.is_error)).toEqual([true, true, true, true]);
       expect(resultados[0]!.content).toContain("slug");
-      expect(resultados[1]!.content).toContain("log é do Shearim");
+      expect(resultados[1]!.content).toContain("a página log é do Regents");
       expect(resultados[2]!.content).toContain("apostila.pdf não está nesta Wiki");
       expect(resultados[3]!.content).toContain("não existe no rascunho");
       expect((await paginasDe(t, wiki, 1)).map((p) => p.slug)).toEqual(["index", "log"]);
