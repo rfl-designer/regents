@@ -10,10 +10,10 @@ import { useServerEvents } from "./live";
  * `devices.updated`) são a lista de Notificações e a base das faixas de push parado (#33).
  */
 
-const DEVICE_KEY = "shearim.device";
+const DEVICE_KEY = "regents.device";
 /** O que a pessoa decidiu neste aparelho: ligou, pulou o onboarding ou removeu o aparelho. */
-const CHOICE_KEY = "shearim.notifications.onboarding";
-const INSTALL_KEY = "shearim.install.skipped";
+const CHOICE_KEY = "regents.notifications.onboarding";
+const INSTALL_KEY = "regents.install.skipped";
 
 type Choice = "on" | "skipped" | "removed";
 
@@ -22,6 +22,27 @@ function storage(): Storage | undefined {
     return localStorage;
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * O navegador de antes do nome Regents guarda as mesmas escolhas em `shearim.*` (#102). Na
+ * primeira carga, o valor antigo passa para a chave nova (se ela ainda não existe) e a antiga
+ * sai. O id do aparelho fica o mesmo, então o servidor não registra um aparelho novo.
+ */
+export function moveLegacyKeys() {
+  const store = storage();
+  if (!store) return;
+  for (const key of [DEVICE_KEY, CHOICE_KEY, INSTALL_KEY]) {
+    const legacy = key.replace(/^regents\./, "shearim.");
+    try {
+      const old = store.getItem(legacy);
+      if (old === null) continue;
+      if (store.getItem(key) === null) store.setItem(key, old);
+      store.removeItem(legacy);
+    } catch {
+      // Sem armazenamento, fica a chave antiga; a próxima carga tenta de novo.
+    }
   }
 }
 
