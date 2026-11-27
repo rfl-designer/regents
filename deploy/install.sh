@@ -37,6 +37,8 @@ main() {
   RELEASES=https://github.com/$REPO/releases
   ASSET=regents-compose.tar.gz
   LABEL=com.regents.acordado
+  # O LaunchAgent do Shearim, que a migração do nome tira.
+  OLD_LABEL=com.shearim.acordado
   TTY=${REGENTS_TTY:-/dev/tty}
   WAIT_SECONDS=${REGENTS_WAIT_SECONDS:-180}
   DIR=$HOME/regents
@@ -69,7 +71,7 @@ main() {
   exec 3<"$TTY"
 
   WORK=$(mktemp -d "${TMPDIR:-/tmp}/regents-install.XXXXXX")
-  trap 'rm -rf "$WORK"' EXIT
+  trap on_exit EXIT
 
   OS=$(uname -s)
   case "$OS" in
@@ -125,7 +127,7 @@ update() {
   need_curl
   ensure_docker
   cd "$DIR"
-  from=$(compose_version)
+  from_version=$(compose_version)
 
   mkdir -p "$WORK/antes"
   cp -R compose.yaml deploy "$WORK/antes/"
@@ -145,7 +147,7 @@ update() {
   if [ "$HEALTHY" = 0 ]; then
     fail "o Regents não respondeu em $WAIT_SECONDS s depois de atualizar. Veja 'docker compose logs app'."
   fi
-  say "ok: Regents atualizado de $from para $(compose_version)"
+  say "ok: Regents atualizado de $from_version para $(compose_version)"
 }
 
 warn_pinned() {
@@ -155,26 +157,33 @@ warn_pinned() {
   fi
 }
 
-# Os volumes do projeto do Compose que a migração do nome copia.
+# Os projetos do Compose do Shearim e do Regents: o nome de cada volume começa por um deles.
+OLD_PROJECT=shearim
+PROJECT=regents
+# Os volumes do projeto do Compose que a migração do nome copia, e os do Shearim que ela achou.
 VOLUMES="ts-state ts-socket pgdata contas"
-# O compose e o deploy/ do Shearim, guardados enquanto a migração do nome não termina.
-ANTES=.migracao-regents/antes
+OLD_VOLUMES=""
+# A migração do nome que não terminou: as marcas dos passos feitos e, em antes/, o compose e o
+# deploy/ do Shearim.
+MIGRATION=.migracao-regents
+ANTES=$MIGRATION/antes
 
 # Uma Instalação que ainda é Shearim: uma migração do nome que não terminou (a pasta
 # .migracao-regents), o .env só com SHEARIM_*, ou o banco só no volume do projeto shearim. Sem
 # nenhum dos três, a atualização é a de sempre.
 still_shearim() {
-  if [ -d .migracao-regents ]; then return 0; fi
+  if [ -d "$MIGRATION" ]; then return 0; fi
   if grep -q '^SHEARIM_' .env && ! grep -q '^REGENTS_' .env; then return 0; fi
-  docker volume inspect shearim_pgdata >/dev/null 2>&1 && ! docker volume inspect regents_pgdata >/dev/null 2>&1
+  docker volume inspect "${OLD_PROJECT}_pgdata" >/dev/null 2>&1 &&
+    ! docker volume inspect "${PROJECT}_pgdata" >/dev/null 2>&1
 }
 
 # O compose do projeto shearim, com o .env de antes (o .env.shearim, depois que o .env mudou) e os
 # caminhos da pasta.
 shearim_compose() {
-  env=.env
-  if [ -f .env.shearim ]; then env=.env.shearim; fi
-  docker compose --project-directory "$DIR" --env-file "$DIR/$env" -f "$DIR/$ANTES/compose.yaml" "$@"
+  shearim_env=.env
+  if [ -f .env.shearim ]; then shearim_env=.env.shearim; fi
+  docker compose --project-directory "$DIR" --env-file "$DIR/$shearim_env" -f "$DIR/$ANTES/compose.yaml" "$@"
 }
 
 # A migração do nome (spec #96), uma vez: a Instalação Shearim passa a ser Regents com os mesmos
@@ -195,31 +204,32 @@ rename_installation() {
   say "  fica: a pasta $DIR"
   agree "Fazer a migração do nome agora?" ||
     fail "Nada mudou. A migração do nome precisa do seu sim: rode num terminal, ou com --yes para não perguntar."
-  mkdir -p .migracao-regents
+  mkdir -p "$MIGRATION"
   if [ ! -d "$ANTES" ]; then
     rm -rf "$ANTES.partial"
     mkdir "$ANTES.partial"
     cp -R compose.yaml deploy "$ANTES.partial/"
     mv "$ANTES.partial" "$ANTES"
   fi
-  from=$(compose_version "$ANTES/compose.yaml")
-  # Daqui até o app novo responder, toda falha volta para o Shearim.
+  old_version=$(compose_version "$ANTES/compose.yaml")
+  # Daqui até o app novo responder, toda saída com erro (um fail ou um comando que falha com o
+  # set -e) passa pela volta para o Shearim: on_exit chama rename_failed.
   RENAMING=1
   download
   backup_shearim
-  shearim_compose down || rename_failed "o 'docker compose down' do projeto shearim falhou (veja acima)."
+  shearim_compose down || fail "o 'docker compose down' do projeto shearim falhou (veja acima)."
   copy_volumes
   rename_env
-  docker compose config -q || rename_failed "o compose da $TAG não fecha com o .env novo (veja acima)."
+  docker compose config -q || fail "o compose da $TAG não fecha com o .env novo (veja acima)."
   warn_pinned
   if [ "$OS" = Darwin ]; then rename_keep_awake; fi
   start_regents
   if [ "$HEALTHY" = 0 ]; then
-    rename_failed "o Regents não respondeu em $WAIT_SECONDS s. Veja 'docker compose logs app'."
+    fail "o Regents não respondeu em $WAIT_SECONDS s. Veja 'docker compose logs app'."
   fi
   RENAMING=0
-  rm -rf .migracao-regents
-  say "ok: o Shearim $from agora é o Regents $(compose_version)"
+  rm -rf "$MIGRATION"
+  say "ok: o Shearim $old_version agora é o Regents $(compose_version)"
   say ""
   say "Os volumes do Shearim ficaram como estavam, para voltar se algo der errado:$OLD_VOLUMES"
   say "Quando o Regents estiver bem, apague-os para liberar o disco:"
@@ -236,69 +246,80 @@ rename_installation() {
 # o projeto regents sai, o compose, o deploy/ e o .env de antes voltam e o projeto shearim sobe com
 # os volumes shearim_*. Os volumes regents_* ficam, e a próxima tentativa os completa. O Shearim
 # volta a escrever nos shearim_*, então o backup e as cópias desta tentativa deixam de valer: a
-# próxima faz de novo.
+# próxima faz de novo. Só on_exit a chama, uma vez, sem o set -e: cada passo da volta tenta, mesmo
+# se o anterior falhou, e a mensagem diz o que voltou.
 rename_failed() {
-  RENAMING=0
   # Os dois projetos juntos teriam o mesmo hostname na tailnet.
-  if grep -q '^name: regents$' compose.yaml 2>/dev/null; then docker compose down >/dev/null 2>&1 || true; fi
-  rm -rf compose.yaml deploy
-  cp -R "$ANTES/compose.yaml" "$ANTES/deploy" .
+  if grep -q "^name: $PROJECT\$" compose.yaml 2>/dev/null; then docker compose down >/dev/null 2>&1 || true; fi
+  for mark in backup $VOLUMES; do rm -f "$MIGRATION/$mark"; done
+  restored=1
+  if ! { rm -rf compose.yaml deploy && cp -R "$ANTES/compose.yaml" "$ANTES/deploy" .; }; then restored=0; fi
   if [ -f .env.shearim ]; then
-    cat .env.shearim >.env
-    rm -f .env.shearim
+    # O .env pode ainda ser o de antes (a falha veio antes do .env novo): aí não há o que escrever.
+    if cmp -s .env.shearim .env || cat .env.shearim >.env; then rm -f .env.shearim; else restored=0; fi
   fi
-  for mark in backup $VOLUMES; do rm -f ".migracao-regents/$mark"; done
-  if shearim_compose up -d; then
-    back="Voltei o compose, o deploy/ e o .env de antes, e o Shearim subiu de novo com os volumes shearim_*."
+  if [ "$restored" = 1 ]; then
+    back="Voltei o compose, o deploy/ e o .env de antes"
   else
-    back="Voltei o compose, o deploy/ e o .env de antes, mas o Shearim não subiu (veja acima): rode 'cd $DIR && docker compose up -d'."
+    back="Não consegui voltar tudo (veja acima): o compose e o deploy/ do Shearim estão em $DIR/$ANTES, e o .env de antes em $DIR/.env.shearim"
   fi
-  fail "a migração do nome parou: $1 $back Os volumes regents_* ficaram; para tentar de novo, rode o instalador com --update outra vez."
+  # O shearim_compose usa os de antes onde estiverem: o Shearim sobe mesmo se a volta não terminou.
+  if shearim_compose up -d; then
+    back="$back, e o Shearim subiu de novo com os volumes shearim_*."
+  elif [ "$restored" = 1 ]; then
+    back="$back, mas o Shearim não subiu (veja acima): rode 'cd $DIR && docker compose up -d'."
+  else
+    back="$back, e o Shearim também não subiu (veja acima)."
+  fi
+  printf 'regents install: a migração do nome parou: %s %s Os volumes regents_* ficaram; para tentar de novo, rode o instalador com --update outra vez.\n' \
+    "$1" "$back" >&2
 }
 
 # No Mac, o LaunchAgent que não deixa o Mac dormir troca de nome: sai o do Shearim, entra o do Regents.
 rename_keep_awake() {
-  launchctl bootout "gui/$(id -u)/com.shearim.acordado" >/dev/null 2>&1 || true
-  rm -f "$HOME/Library/LaunchAgents/com.shearim.acordado.plist"
+  launchctl bootout "gui/$(id -u)/$OLD_LABEL" >/dev/null 2>&1 || true
+  rm -f "$HOME/Library/LaunchAgents/$OLD_LABEL.plist"
   keep_awake
-  say "ok: no Mac, com.regents.acordado no lugar de com.shearim.acordado"
+  say "ok: no Mac, $LABEL no lugar de $OLD_LABEL"
 }
 
 # O backup de antes da migração, com o Shearim ainda de pé: o pg_dump do Postgres da Instalação, no
 # formato dos backups da noite, em ./backups (um pre-migracao, que a retenção não apaga). Numa
 # execução depois de uma interrompida, o backup dela ainda vale: o Shearim não rodou desde então.
 backup_shearim() {
-  if [ -f .migracao-regents/backup ]; then return 0; fi
-  file=backups/shearim-pre-migracao-$(date -u +%Y%m%dT%H%M%SZ).dump
+  if [ -f "$MIGRATION/backup" ]; then return 0; fi
+  backup_file=backups/shearim-pre-migracao-$(date -u +%Y%m%dT%H%M%SZ).dump
   mkdir -p backups
   if ! shearim_compose exec -T postgres pg_dump -U shearim -d shearim --format=custom --no-owner --no-privileges \
-    >"$file.partial"; then
-    rm -f "$file.partial"
-    rename_failed "o backup de antes da migração falhou (veja acima). Nada foi parado."
+    >"$backup_file.partial"; then
+    rm -f "$backup_file.partial"
+    fail "o backup de antes da migração falhou (veja acima). Nada foi parado."
   fi
-  mv "$file.partial" "$file"
-  touch .migracao-regents/backup
-  say "ok: backup de antes da migração em $DIR/$file"
+  mv "$backup_file.partial" "$backup_file"
+  touch "$MIGRATION/backup"
+  say "ok: backup de antes da migração em $DIR/$backup_file"
 }
 
 # Cada volume shearim_<nome> vai para regents_<nome>, com o mesmo dono e as mesmas permissões
 # (cp -a como root, na imagem do Postgres que a Instalação já tem). O de origem não muda.
 copy_volumes() {
-  image=$(sed -n 's/^ *image: \(postgres:[^ ]*\)$/\1/p' compose.yaml | head -n 1)
-  mkdir -p .migracao-regents
+  copy_image=$(sed -n 's/^ *image: \(postgres:[^ ]*\)$/\1/p' compose.yaml | head -n 1)
+  mkdir -p "$MIGRATION"
   OLD_VOLUMES=""
   for v in $VOLUMES; do
-    docker volume inspect "shearim_$v" >/dev/null 2>&1 || continue
-    OLD_VOLUMES="$OLD_VOLUMES shearim_$v"
-    if [ -f ".migracao-regents/$v" ] && docker volume inspect "regents_$v" >/dev/null 2>&1; then continue; fi
-    docker volume inspect "regents_$v" >/dev/null 2>&1 ||
-      docker volume create --label com.docker.compose.project=regents --label "com.docker.compose.volume=$v" \
-        "regents_$v" >/dev/null || rename_failed "não consegui criar o volume regents_$v."
-    docker run --rm -v "shearim_$v:/antigo:ro" -v "regents_$v:/novo" "$image" \
+    old_volume=${OLD_PROJECT}_$v
+    new_volume=${PROJECT}_$v
+    docker volume inspect "$old_volume" >/dev/null 2>&1 || continue
+    OLD_VOLUMES="$OLD_VOLUMES $old_volume"
+    if [ -f "$MIGRATION/$v" ] && docker volume inspect "$new_volume" >/dev/null 2>&1; then continue; fi
+    docker volume inspect "$new_volume" >/dev/null 2>&1 ||
+      docker volume create --label "com.docker.compose.project=$PROJECT" --label "com.docker.compose.volume=$v" \
+        "$new_volume" >/dev/null || fail "não consegui criar o volume $new_volume."
+    docker run --rm -v "$old_volume:/antigo:ro" -v "$new_volume:/novo" "$copy_image" \
       sh -c 'rm -rf /novo/* /novo/.[!.]* /novo/..?* && cp -a /antigo/. /novo/' ||
-      rename_failed "não consegui copiar o volume shearim_$v para regents_$v."
-    touch ".migracao-regents/$v"
-    say "ok: volume shearim_$v copiado para regents_$v"
+      fail "não consegui copiar o volume $old_volume para $new_volume."
+    touch "$MIGRATION/$v"
+    say "ok: volume $old_volume copiado para $new_volume"
   done
 }
 
@@ -311,23 +332,24 @@ rename_env() {
     cp -p .env .env.shearim.partial
     mv .env.shearim.partial .env.shearim
   fi
-  awk '
-    NR == FNR { if (/^REGENTS_[A-Za-z0-9_]*=/) { key = $0; sub(/=.*/, "", key); have[key] = 1 }; next }
-    /^SHEARIM_[A-Za-z0-9_]*=/ {
-      key = "REGENTS_" substr($0, 9); sub(/=.*/, "", key)
+  awk -v from=SHEARIM_ -v to=REGENTS_ '
+    function suffix(line) { return substr(line, length(from) + 1) }
+    NR == FNR { if ($0 ~ "^" to "[A-Za-z0-9_]*=") { key = $0; sub(/=.*/, "", key); have[key] = 1 }; next }
+    $0 ~ "^" from "[A-Za-z0-9_]*=" {
+      key = to suffix($0); sub(/=.*/, "", key)
       if (key in have) next
-      $0 = "REGENTS_" substr($0, 9)
+      $0 = to suffix($0)
     }
     { print }
   ' .env.shearim .env.shearim >"$WORK/env"
-  kept=""
+  env_kept=""
   for line in TS_HOSTNAME=shearim REGENTS_TAILNET_TAG=tag:shearim REGENTS_POSTGRES_USER=shearim REGENTS_POSTGRES_DB=shearim; do
-    grep -q "^${line%%=*}=" "$WORK/env" || kept="$kept$line
+    grep -q "^${line%%=*}=" "$WORK/env" || env_kept="$env_kept$line
 "
   done
-  if [ -n "$kept" ]; then
+  if [ -n "$env_kept" ]; then
     printf '\n# Do Shearim: o hostname e a tag (a URL não muda) e o papel e o banco do Postgres. Veja o README.\n%s' \
-      "$kept" >>"$WORK/env"
+      "$env_kept" >>"$WORK/env"
   fi
   # Por cima, para o .env manter o dono e as permissões.
   cat "$WORK/env" >.env
@@ -340,10 +362,23 @@ compose_version() { sed -n 's/.*_VERSION:-\([^}]*\)}.*/\1/p' "${1:-compose.yaml}
 
 say() { printf '%s\n' "$*"; }
 fail() {
-  # No meio da migração do nome, toda falha (a do download, a do pull...) volta para o Shearim.
-  if [ "${RENAMING:-0}" = 1 ]; then rename_failed "$*"; fi
-  printf 'regents install: %s\n' "$*" >&2
+  # No meio da migração do nome, o motivo vai para a volta (on_exit), que o mostra com o que voltou.
+  if [ "${RENAMING:-0}" = 1 ]; then RENAME_REASON=$*; else printf 'regents install: %s\n' "$*" >&2; fi
   exit 1
+}
+
+# A saída do script, por onde for (o fim de main, um fail, um comando que falha com o set -e): no
+# meio da migração do nome, volta para o Shearim antes de sair.
+on_exit() {
+  status=$?
+  if [ "${RENAMING:-0}" = 1 ]; then
+    RENAMING=0
+    set +e
+    rename_failed "${RENAME_REASON:-um comando falhou (veja acima).}"
+    [ "$status" != 0 ] || status=1
+  fi
+  rm -rf "$WORK"
+  exit "$status"
 }
 
 # wait_until COMANDO...: tenta a cada 2 s, até WAIT_SECONDS.
@@ -517,7 +552,7 @@ download() {
   curl -fsSL "$url" -o "$WORK/$ASSET" ||
     fail "não consegui baixar $url (veja acima)."
   mkdir -p "$DIR"
-  tar -xzf "$WORK/$ASSET" -C "$DIR"
+  tar -xzf "$WORK/$ASSET" -C "$DIR" || fail "não consegui abrir $ASSET, o compose da release (veja acima)."
   if [ -z "$TAG" ]; then TAG=v$(compose_version "$DIR/compose.yaml"); fi
   say "ok: release $TAG em $DIR"
 }

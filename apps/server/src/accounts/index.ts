@@ -1,6 +1,6 @@
 /**
  * Contas (Spec, módulo 8; ADR 0005). Uma pasta por Membro debaixo de `root`, onde o
- * próprio Claude Code grava e renova o login. O Shearim nunca lê, copia nem guarda o token:
+ * próprio Claude Code grava e renova o login. O Regents nunca lê, copia nem guarda o token:
  * entrega o código colado ao `claude auth login` que espera por ele e guarda só o que
  * `claude auth status --json` diz (e-mail, plano, `loginExpiresAt`).
  *

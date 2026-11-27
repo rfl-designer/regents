@@ -45,7 +45,7 @@ export async function skillById(db: Db, id: string): Promise<SkillDto | undefine
 
 /**
  * Todas as Habilidades, por nome, com a marca de ativa no Agente `agentId` (a tela do Agente). Na
- * Articuladora (`builtin`), primeiro a Habilidade do Shearim "Sincronizar a Wiki", só para leitura.
+ * Articuladora (`builtin`), primeiro a Habilidade do Regents "Sincronizar a Wiki", só para leitura.
  */
 export async function agentSkillsOf(db: Db, agentId: string, builtin = false): Promise<AgentSkillDto[]> {
   const rows = await db

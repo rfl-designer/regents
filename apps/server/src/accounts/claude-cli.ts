@@ -3,7 +3,7 @@
  * `auth logout` e a chamada mínima de validação. Cada processo roda com `CLAUDE_CONFIG_DIR`
  * na pasta da Conta e um `env` montado do zero.
  *
- * O Shearim nunca lê a pasta: só o que o próprio Claude Code imprime. O stdout do login
+ * O Regents nunca lê a pasta: só o que o próprio Claude Code imprime. O stdout do login
  * repete o código colado, então nada daqui vai para log.
  */
 import type { Clock } from "../clock";

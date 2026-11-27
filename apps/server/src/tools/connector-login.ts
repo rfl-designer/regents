@@ -1,7 +1,7 @@
 /**
  * O login de um Conector pelo próprio servidor MCP (#56, Spec #44): a autorização do MCP, que é
  * OAuth 2.1 com PKCE. O servidor diz onde fica o servidor de autorização dele (RFC 9728, ou o
- * próprio endereço como reserva); o Shearim se registra como cliente (RFC 7591), manda o navegador
+ * próprio endereço como reserva); o Regents se registra como cliente (RFC 7591), manda o navegador
  * de quem liga ao login, troca o código do retorno pelos tokens e renova o de acesso antes de vencer.
  *
  * Só fala com o servidor de fora; quem guarda (cifrado) e decide o que fazer é `connectors.ts`.
@@ -73,7 +73,7 @@ function tokensOf(tokens: OAuthTokens, grant: Omit<LoginGrant, "refreshToken">, 
 }
 
 /**
- * Começa o login: descobre o servidor de autorização, registra o Shearim como cliente com
+ * Começa o login: descobre o servidor de autorização, registra o Regents como cliente com
  * `redirectUri` e monta o endereço do login. `NoLogin` se o servidor não oferece; o resto
  * (sem resposta) propaga.
  */

@@ -10,7 +10,7 @@ type Entry = { name: string; read(): string | undefined | Promise<string | undef
 /**
  * Lê o arquivo da importação: um `SKILL.md` (o frontmatter YAML dá o `name` e a `description`; o
  * resto é o corpo) ou um `.zip` de skill, com o `SKILL.md` na raiz ou numa pasta. Do `.zip`, os
- * outros arquivos ficam de fora (os Agentes do Shearim não executam código) e voltam em `ignored`,
+ * outros arquivos ficam de fora (os Agentes do Regents não executam código) e voltam em `ignored`,
  * com o caminho a partir da pasta do `SKILL.md`. Sem `name` ou sem `description`, ou um `.zip` sem
  * `SKILL.md`, a importação falha com o motivo.
  */

@@ -12,7 +12,7 @@ import {
   wikiSyncStepText,
 } from "@regents/contracts";
 import { configFrom } from "../src/config";
-import { wikiFromEnv } from "../src/wiki/sources";
+import { wikiFromConfig } from "../src/wiki/sources";
 import { lastUserText, type RecordedRequest, toolResults } from "./fakes/messages-api";
 import { scriptedBrain } from "./fakes/scripted-brain";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
@@ -327,9 +327,9 @@ describe('"Sincronizar a Wiki" é uma Habilidade do Regents', () => {
 
 describe("o teto de turnos da Sincronização", () => {
   test("é ajustável na Instalação (SHEARIM_WIKI_SYNC_MAX_TURNS)", () => {
-    expect(wikiFromEnv(configFrom({}))).toEqual({});
-    expect(wikiFromEnv(configFrom({ SHEARIM_WIKI_SYNC_MAX_TURNS: "60" }))).toEqual({ syncMaxToolTurns: 60 });
-    expect(() => wikiFromEnv(configFrom({ SHEARIM_WIKI_SYNC_MAX_TURNS: "0" }))).toThrow(
+    expect(wikiFromConfig(configFrom({}))).toEqual({});
+    expect(wikiFromConfig(configFrom({ SHEARIM_WIKI_SYNC_MAX_TURNS: "60" }))).toEqual({ syncMaxToolTurns: 60 });
+    expect(() => wikiFromConfig(configFrom({ SHEARIM_WIKI_SYNC_MAX_TURNS: "0" }))).toThrow(
       "SHEARIM_WIKI_SYNC_MAX_TURNS=0 não é um número inteiro maior que zero.",
     );
   });

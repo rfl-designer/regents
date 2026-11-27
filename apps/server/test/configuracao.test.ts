@@ -32,7 +32,7 @@ function cleanEnv(): Vars {
 /** O que uma Instalação precisa para subir com a identidade de dev, num PGlite em memória (sem prefixo). */
 function installation(): Vars {
   const { config } = throwawayAccounts();
-  const dir = mkdtempSync(join(tmpdir(), "shearim-config-"));
+  const dir = mkdtempSync(join(tmpdir(), "regents-config-"));
   onCleanup(() => rmSync(dir, { recursive: true, force: true }));
   const masterKey = join(dir, "master_key");
   writeFileSync(masterKey, "11".repeat(32));
@@ -133,5 +133,14 @@ describe("configuração: REGENTS_* com SHEARIM_* como reserva", () => {
     const semIdentidade = await run("serve", named("REGENTS", { ...installation(), IDENTITY: "" }));
     expect(semIdentidade).toMatchObject({ code: 1 });
     expect(semIdentidade.log()).toContain("REGENTS_IDENTITY=(vazio) não é suportado.");
+  }, 60_000);
+
+  test("o contato do push que não é mailto: nem https: para o arranque com o nome que foi lido", async () => {
+    for (const prefix of ["REGENTS", "SHEARIM"] as const) {
+      const app = await run("serve", named(prefix, { ...installation(), VAPID_CONTACT: "rafa@example.com" }));
+      expect(app).toMatchObject({ code: 1 });
+      expect(app.log()).toContain(`${prefix}_VAPID_CONTACT=rafa@example.com não é mailto: nem https:.`);
+      expect(app.log()).not.toContain("undefined");
+    }
   }, 60_000);
 });

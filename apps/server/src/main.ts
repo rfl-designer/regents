@@ -37,11 +37,11 @@ import { resolve } from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { createApp } from "./app";
-import { approvalTtlFromEnv } from "./approvals";
+import { approvalTtlFromConfig } from "./approvals";
 import { systemClock } from "./clock";
-import { configFrom, PREFIX } from "./config";
+import { configFrom, PREFIX, type Suffix } from "./config";
 import { connect, MEMORY } from "./db/connect";
-import { limitsFromEnv } from "./executions";
+import { limitsFromConfig } from "./executions";
 import { createDevIdentity } from "./identity/dev";
 import type { IdentityPort } from "./identity/port";
 import { createWhoisIdentity } from "./identity/whois";
@@ -55,10 +55,10 @@ import {
 } from "./installation/commands";
 import { migrationState, NewerDatabaseError } from "./installation/migrations";
 import { localApiNodeKey, type NodeKeyPort, noNodeKey } from "./installation/node-key";
-import { memoryFromEnv } from "./memory/extraction";
+import { memoryFromConfig } from "./memory/extraction";
 import { loadMasterKey, secretBox } from "./secrets";
-import { toolMaxTurnsFromEnv, toolTimeoutFromEnv } from "./tools/port";
-import { wikiFromEnv } from "./wiki/sources";
+import { toolMaxTurnsFromConfig, toolTimeoutFromConfig } from "./tools/port";
+import { wikiFromConfig } from "./wiki/sources";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 
@@ -68,17 +68,17 @@ function fail(message: string): never {
 }
 
 /** Só desenvolvimento: a Apple recusa o push com `sub` sem domínio real. */
-const DEV_VAPID_CONTACT = "mailto:shearim@example.com";
+const DEV_VAPID_CONTACT = "mailto:regents@example.com";
 
 /** A configuração da Instalação: `REGENTS_*`, com `SHEARIM_*` como reserva (o aviso sai no log). */
 const config = configFrom(process.env, (line) => console.warn(`regents: ${line}`));
 
 /** O valor da configuração `suffix`, ou `undefined`. */
-const setting = (suffix: string) => config.read(suffix)?.value;
+const setting = (suffix: Suffix) => config.read(suffix)?.value;
 
 const DEFAULT_TS_SOCKET = "/var/run/tailscale/tailscaled.sock";
 
-function identityFromEnv(): { identity: IdentityPort; routes?: Hono; describe: string; nodeKey: NodeKeyPort } {
+function identityFromConfig(): { identity: IdentityPort; routes?: Hono; describe: string; nodeKey: NodeKeyPort } {
   const read = config.read("IDENTITY");
   const mode = read?.value;
   if (mode === "dev") {
@@ -114,7 +114,7 @@ function secretFromFile(path: string | undefined) {
 }
 
 /** `memory://` é um PGlite em memória, que some ao parar (o e2e usa para começar do zero). */
-function pgliteDirFromEnv(raw: string | undefined) {
+function pgliteDirFromConfig(raw: string | undefined) {
   if (raw === MEMORY) return raw;
   return resolve(raw ?? resolve(repoRoot, ".data/pglite"));
 }
@@ -147,7 +147,7 @@ async function nightlyBackups(conn: ReturnType<typeof connect>) {
   const at = backupAt?.value || "03:00";
   const [hour, minute] = at.split(":").map(Number);
   if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour! > 23 || minute! > 59) {
-    fail(`${backupAt?.name}=${backupAt?.value} não é uma hora (HH:MM).`);
+    fail(`${backupAt?.name ?? `${PREFIX}_BACKUP_AT`}=${at} não é uma hora (HH:MM).`);
   }
   let warned = false;
   for (;;) {
@@ -181,7 +181,7 @@ async function main(command: string | undefined) {
   const conn = connect({
     DATABASE_URL: process.env.DATABASE_URL,
     DATABASE_PASSWORD: secretFromFile(process.env.DATABASE_PASSWORD_FILE),
-    pgliteDir: pgliteDirFromEnv(setting("PGLITE_DIR")),
+    pgliteDir: pgliteDirFromConfig(setting("PGLITE_DIR")),
     pgBinDir: setting("PG_BIN_DIR") || undefined,
   });
 
@@ -216,7 +216,7 @@ async function main(command: string | undefined) {
     fail(`comando desconhecido: ${command ?? "(nenhum)"}. Use "serve", "migrate" ou "restore <arquivo>".`);
   }
 
-  const who = identityFromEnv();
+  const who = identityFromConfig();
   const masterKeyFile = setting("MASTER_KEY_FILE");
   let secrets: Awaited<ReturnType<typeof secretBox>>;
   try {
@@ -231,24 +231,28 @@ async function main(command: string | undefined) {
   await migrateOrFail(conn);
   const vapid = config.read("VAPID_CONTACT");
   const vapidContact = vapid?.value || DEV_VAPID_CONTACT;
-  if (!/^(mailto:|https:)/.test(vapidContact)) fail(`${vapid?.name}=${vapidContact} não é mailto: nem https:.`);
-  let limits: ReturnType<typeof limitsFromEnv>;
+  if (!/^(mailto:|https:)/.test(vapidContact)) {
+    fail(`${vapid?.name ?? `${PREFIX}_VAPID_CONTACT`}=${vapidContact} não é mailto: nem https:.`);
+  }
+  let limits: ReturnType<typeof limitsFromConfig>;
   let toolTimeoutMs: number | undefined;
   let toolMaxTurns: number | undefined;
   let approvalTtlMs: number | undefined;
-  let memory: ReturnType<typeof memoryFromEnv> = {};
-  let wiki: ReturnType<typeof wikiFromEnv> = {};
+  let memory: ReturnType<typeof memoryFromConfig> = {};
+  let wiki: ReturnType<typeof wikiFromConfig> = {};
   try {
-    limits = limitsFromEnv(config);
-    toolTimeoutMs = toolTimeoutFromEnv(config);
-    toolMaxTurns = toolMaxTurnsFromEnv(config);
-    approvalTtlMs = approvalTtlFromEnv(config);
-    memory = memoryFromEnv(config);
-    wiki = wikiFromEnv(config);
+    limits = limitsFromConfig(config);
+    toolTimeoutMs = toolTimeoutFromConfig(config);
+    toolMaxTurns = toolMaxTurnsFromConfig(config);
+    approvalTtlMs = approvalTtlFromConfig(config);
+    memory = memoryFromConfig(config);
+    wiki = wikiFromConfig(config);
   } catch (err) {
     fail((err as Error).message);
   }
-  const shearim = createApp({
+  const githubUrl = setting("GITHUB_URL");
+  const githubApiUrl = setting("GITHUB_API_URL");
+  const regents = createApp({
     db: conn.db,
     identity: who.identity,
     clock: systemClock,
@@ -259,8 +263,8 @@ async function main(command: string | undefined) {
     secrets,
     anthropicBaseUrl: setting("ANTHROPIC_BASE_URL"),
     github: {
-      ...(setting("GITHUB_URL") ? { webUrl: setting("GITHUB_URL") } : {}),
-      ...(setting("GITHUB_API_URL") ? { apiUrl: setting("GITHUB_API_URL") } : {}),
+      ...(githubUrl ? { webUrl: githubUrl } : {}),
+      ...(githubApiUrl ? { apiUrl: githubApiUrl } : {}),
     },
     devRoutes: who.routes,
     push: { contact: vapidContact },
@@ -278,11 +282,11 @@ async function main(command: string | undefined) {
     wiki,
   });
   // O par VAPID nasce na primeira subida (e daí em diante é sempre o mesmo, guardado no banco).
-  await shearim.push.ensureKeys();
-  await shearim.start();
+  await regents.push.ensureKeys();
+  await regents.start();
 
   const root = new Hono();
-  root.route("/", shearim.app);
+  root.route("/", regents.app);
   // Rota de API desconhecida não cai no fallback do PWA.
   root.all("/api/*", (c) => c.json({ error: "not_found" }, 404));
   const webDist = resolve(setting("WEB_DIST") ?? resolve(repoRoot, "apps/web/dist"));
@@ -295,24 +299,24 @@ async function main(command: string | undefined) {
     hostname: process.env.HOST ?? "0.0.0.0",
     port: Number(process.env.PORT ?? 3000),
     fetch: root.fetch,
-    websocket: shearim.websocket,
+    websocket: regents.websocket,
   });
   console.log(`regents: ouvindo em http://${server.hostname}:${server.port} (${conn.describe}; ${who.describe})`);
 
   // SIGTERM (o `docker compose stop`, com 30 s de folga): dreno, até 20 s para o que está rodando
   // terminar. SIGINT (Ctrl-C no dev): para na hora. Nos dois, os WebSockets fecham com 1012 logo
-  // de início, e o PWA mostra "Atualizando o Shearim" até reconectar. O que não terminou vira "o servidor
+  // de início, e o PWA mostra "Atualizando o Regents" até reconectar. O que não terminou vira "o servidor
   // reiniciou" na próxima subida, com a nova tentativa automática.
   let stopping = false;
   const stop = (drain: boolean) => async () => {
     if (stopping) return;
     stopping = true;
-    await (drain ? shearim.drain() : shearim.halt());
+    await (drain ? regents.drain() : regents.halt());
     // No Bun 1.3.11, depois que o servidor fecha um WebSocket (o 1012 acima, ou o 4403 de um Membro
     // removido), a promessa do `stop()` nunca resolve, embora a porta feche na hora: espera as
     // requisições em curso até 1 s.
     await Promise.race([server.stop(), Bun.sleep(1_000)]);
-    await shearim.close();
+    await regents.close();
     await conn.close();
     process.exit(0);
   };

@@ -40,7 +40,7 @@ export function skillRoutes(deps: { db: Db; clock: Clock }) {
     return skill ? c.json(skill) : c.json({ error: "not_found" }, 404);
   });
 
-  /** Cria a Habilidade, ou responde `409 name_taken` (o nome já existe, ou é o da Habilidade do Shearim). */
+  /** Cria a Habilidade, ou responde `409 name_taken` (o nome já existe, ou é o da Habilidade do Regents). */
   async function create(c: Context<Env>, input: CreateSkillInput, origin: SkillOrigin) {
     if (reserved(input.name)) return reservedName(c);
     const now = clock.now();
@@ -175,7 +175,7 @@ function checkFields(raw: Record<string, unknown> | null, opts: { partial: boole
   return out;
 }
 
-/** O nome da Habilidade do Shearim (`SYNC_SKILL`), sem diferenciar maiúsculas: nenhuma outra o usa. */
+/** O nome da Habilidade do Regents (`SYNC_SKILL`), sem diferenciar maiúsculas: nenhuma outra o usa. */
 const reserved = (name: string) => name.trim().toLowerCase() === SYNC_SKILL.name.toLowerCase();
 
 const reservedName = (c: Context<Env>) =>

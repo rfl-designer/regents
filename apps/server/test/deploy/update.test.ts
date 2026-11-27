@@ -441,6 +441,17 @@ describe("a migração do nome que falha ou para no meio", () => {
   const failures = [
     ["o app novo não responde", "não respondeu", (w: World) => w.set("health", "unhealthy")],
     ["o docker compose up -d falha", "docker compose up -d", (w: World) => w.set("fail-on", "docker compose up -d")],
+    [
+      "o compose da release não abre (o tar falha)",
+      "não consegui abrir",
+      (w: World) => w.set("releases/v1.3.0/regents-compose.tar.gz", "não é um tar\n"),
+    ],
+    // Um comando sem `|| fail`: o `cat >.env` do .env novo, num .env só de leitura.
+    [
+      "o .env novo não pode ser escrito",
+      "Permission denied",
+      (w: World) => chmodSync(join(w.home, "shearim/.env"), 0o444),
+    ],
   ] as const;
   for (const [how, reason, failure] of failures) {
     test(`se ${how}: volta o compose, o deploy/ e o .env de antes, sobe o projeto shearim e sai com o motivo`, async () => {

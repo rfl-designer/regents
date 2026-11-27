@@ -258,7 +258,7 @@ export function App() {
     };
   }, [down, load]);
 
-  // Tocar numa notificação com o Shearim já aberto: o service worker pede a conversa aqui.
+  // Tocar numa notificação com o Regents já aberto: o service worker pede a conversa aqui.
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     const onMessage = (e: MessageEvent) => {

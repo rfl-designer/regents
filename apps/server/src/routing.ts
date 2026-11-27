@@ -10,7 +10,7 @@ import { type Answer, wikisInReach } from "./wiki/reach";
 const { messages, agents, channels, channelAgents, channelParticipants, mentionHandles } = schema;
 
 /**
- * O contrato de roteamento da Articuladora (Spec, módulo 4; ADR 0004). É do Shearim: o Admin
+ * O contrato de roteamento da Articuladora (Spec, módulo 4; ADR 0004). É do Regents: o Admin
  * não o edita. A entrada é a mensagem, poucas mensagens anteriores, as Instruções do Canal, os
  * Agentes do Canal e o mapa do Workspace visto pelo autor (os outros Agentes e os Canais que ele
  * pode ver). A saída é `responder | delegar | nenhum`, até 2 Agentes do Canal com a frase do que

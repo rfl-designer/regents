@@ -29,7 +29,7 @@ import type { Agent } from "./agents";
 import { APPROVAL_EXPIRED_REASON, continuationNote, insertApproval, publishApproval } from "./approvals";
 import { ROUTING_MODEL } from "./articuladora";
 import type { Clock } from "./clock";
-import type { Config } from "./config";
+import { type Config, positiveInt, type Suffix } from "./config";
 import { buildContext, type Call } from "./context";
 import { type Db, schema, type Tx } from "./db/client";
 import { type EventHub, reaches, without } from "./events";
@@ -100,23 +100,18 @@ const LIMIT_SUFFIXES = {
   perAccount: "MAX_PER_ACCOUNT",
   key: "MAX_ON_KEY",
   processes: "MAX_PROCESSES",
-} as const satisfies Record<keyof ExecutionLimits, string>;
+} as const satisfies Record<keyof ExecutionLimits, Suffix>;
 
 /**
  * Os tetos que o `.env` ajusta (`REGENTS_MAX_PER_ACCOUNT`, `REGENTS_MAX_ON_KEY`,
  * `REGENTS_MAX_PROCESSES`); o que falta fica com o padrão. Valor que não é inteiro maior que zero
  * é erro (o servidor não sobe).
  */
-export function limitsFromEnv(config: Config): Partial<ExecutionLimits> {
+export function limitsFromConfig(config: Config): Partial<ExecutionLimits> {
   const limits: Partial<ExecutionLimits> = {};
-  for (const [field, suffix] of Object.entries(LIMIT_SUFFIXES) as [keyof ExecutionLimits, string][]) {
-    const setting = config.read(suffix);
-    if (!setting) continue;
-    const n = Number(setting.value);
-    if (!Number.isInteger(n) || n < 1) {
-      throw new Error(`${setting.name}=${setting.value} não é um número inteiro maior que zero.`);
-    }
-    limits[field] = n;
+  for (const [field, suffix] of Object.entries(LIMIT_SUFFIXES) as [keyof ExecutionLimits, Suffix][]) {
+    const n = positiveInt(config, suffix);
+    if (n !== undefined) limits[field] = n;
   }
   return limits;
 }
@@ -223,12 +218,12 @@ export interface Executions {
    */
   cancel(originMessageId: string): Promise<ExecutionDto[]>;
   /**
-   * Cancela, pelo Shearim, tudo o que as mensagens desse Membro ainda têm aberto (o Admin o
+   * Cancela, pelo Regents, tudo o que as mensagens desse Membro ainda têm aberto (o Admin o
    * removeu), com o motivo à vista de quem vê a conversa. Devolve as canceladas.
    */
   cancelAuthoredBy(memberId: string, reason: string): Promise<ExecutionDto[]>;
   /**
-   * Cancela, pelo Shearim, tudo o que o Agente ainda tem aberto (o Admin o apagou, #65), a
+   * Cancela, pelo Regents, tudo o que o Agente ainda tem aberto (o Admin o apagou, #65), a
    * extração da Memória inclusive, com `AGENT_DELETED_REASON`. Devolve as canceladas.
    */
   cancelAgent(agentId: string): Promise<ExecutionDto[]>;
@@ -843,7 +838,7 @@ export function createExecutions(deps: {
 
   /**
    * Cancela, em qualquer passo, as execuções abertas que atendem a `where`: a que está rodando é
-   * interrompida. `reason` nulo é o cancelamento por quem escreveu; com motivo, foi o Shearim.
+   * interrompida. `reason` nulo é o cancelamento por quem escreveu; com motivo, foi o Regents.
    */
   async function cancelWhere(where: SQL, reason: string | null): Promise<ExecutionDto[]> {
     const now = clock.now();

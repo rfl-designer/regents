@@ -1,6 +1,6 @@
 import { formatBytes, WIKI_SYNC_OPEN_STATES, type WikiSourceDto, type WikiSourceFormat } from "@regents/contracts";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import type { Config } from "../config";
+import { type Config, positiveInt, positiveNumber } from "../config";
 import { type Db, schema, type Tx } from "../db/client";
 import { pendingOf, reflectedSources } from "./wikis";
 
@@ -44,36 +44,19 @@ export const DEFAULT_SOURCE_MAX_BYTES = 5_000_000;
  * (`REGENTS_WIKI_SYNC_MAX_TURNS`) e o tamanho de parte de uma Fonte, em caracteres
  * (`REGENTS_WIKI_PART_MAX_CHARS`). O que falta fica com o padrão; valor inválido é erro.
  */
-export function wikiFromEnv(config: Config): {
+export function wikiFromConfig(config: Config): {
   sourceMaxBytes?: number;
   syncMaxToolTurns?: number;
   partMaxChars?: number;
 } {
   const out: { sourceMaxBytes?: number; syncMaxToolTurns?: number; partMaxChars?: number } = {};
-  const size = config.read("WIKI_SOURCE_MAX_MB");
-  if (size) {
-    const mb = Number(size.value);
-    if (!Number.isFinite(mb) || mb <= 0) {
-      throw new Error(`${size.name}=${size.value} não é um número maior que zero.`);
-    }
-    out.sourceMaxBytes = Math.round(mb * 1_000_000);
-  }
+  const mb = positiveNumber(config, "WIKI_SOURCE_MAX_MB");
+  if (mb !== undefined) out.sourceMaxBytes = Math.round(mb * 1_000_000);
   const turns = positiveInt(config, "WIKI_SYNC_MAX_TURNS");
   if (turns) out.syncMaxToolTurns = turns;
   const part = positiveInt(config, "WIKI_PART_MAX_CHARS");
   if (part) out.partMaxChars = part;
   return out;
-}
-
-/** Um inteiro maior que zero na configuração `suffix`, ou `undefined` se ela falta; inválido é erro. */
-function positiveInt(config: Config, suffix: string) {
-  const setting = config.read(suffix);
-  if (!setting) return undefined;
-  const n = Number(setting.value);
-  if (!Number.isInteger(n) || n < 1) {
-    throw new Error(`${setting.name}=${setting.value} não é um número inteiro maior que zero.`);
-  }
-  return n;
 }
 
 /** Por que um arquivo não vira Fonte: o código do erro HTTP e o motivo, em pt-BR. */
