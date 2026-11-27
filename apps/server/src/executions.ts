@@ -4,7 +4,7 @@ import {
   type ExecutionStep,
   OPEN_STATES,
   type YourAccountDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import {
   type AnyColumn,
   and,
@@ -29,6 +29,7 @@ import type { Agent } from "./agents";
 import { APPROVAL_EXPIRED_REASON, continuationNote, insertApproval, publishApproval } from "./approvals";
 import { ROUTING_MODEL } from "./articuladora";
 import type { Clock } from "./clock";
+import { type Config, positiveInt, type Suffix } from "./config";
 import { buildContext, type Call } from "./context";
 import { type Db, schema, type Tx } from "./db/client";
 import { type EventHub, reaches, without } from "./events";
@@ -95,25 +96,22 @@ export interface ExecutionLimits {
 }
 export const DEFAULT_LIMITS: ExecutionLimits = { perAccount: 2, key: 4, processes: 8 };
 
-const LIMIT_VARS = {
-  perAccount: "SHEARIM_MAX_PER_ACCOUNT",
-  key: "SHEARIM_MAX_ON_KEY",
-  processes: "SHEARIM_MAX_PROCESSES",
-} as const satisfies Record<keyof ExecutionLimits, string>;
+const LIMIT_SUFFIXES = {
+  perAccount: "MAX_PER_ACCOUNT",
+  key: "MAX_ON_KEY",
+  processes: "MAX_PROCESSES",
+} as const satisfies Record<keyof ExecutionLimits, Suffix>;
 
 /**
- * Os tetos que o `.env` ajusta (`SHEARIM_MAX_PER_ACCOUNT`, `SHEARIM_MAX_ON_KEY`,
- * `SHEARIM_MAX_PROCESSES`); o que falta fica com o padrão. Valor que não é inteiro maior que zero
+ * Os tetos que o `.env` ajusta (`REGENTS_MAX_PER_ACCOUNT`, `REGENTS_MAX_ON_KEY`,
+ * `REGENTS_MAX_PROCESSES`); o que falta fica com o padrão. Valor que não é inteiro maior que zero
  * é erro (o servidor não sobe).
  */
-export function limitsFromEnv(env: Record<string, string | undefined>): Partial<ExecutionLimits> {
+export function limitsFromConfig(config: Config): Partial<ExecutionLimits> {
   const limits: Partial<ExecutionLimits> = {};
-  for (const [field, name] of Object.entries(LIMIT_VARS) as [keyof ExecutionLimits, string][]) {
-    const raw = env[name]?.trim();
-    if (!raw) continue;
-    const n = Number(raw);
-    if (!Number.isInteger(n) || n < 1) throw new Error(`${name}=${raw} não é um número inteiro maior que zero.`);
-    limits[field] = n;
+  for (const [field, suffix] of Object.entries(LIMIT_SUFFIXES) as [keyof ExecutionLimits, Suffix][]) {
+    const n = positiveInt(config, suffix);
+    if (n !== undefined) limits[field] = n;
   }
   return limits;
 }
@@ -220,12 +218,12 @@ export interface Executions {
    */
   cancel(originMessageId: string): Promise<ExecutionDto[]>;
   /**
-   * Cancela, pelo Shearim, tudo o que as mensagens desse Membro ainda têm aberto (o Admin o
+   * Cancela, pelo Regents, tudo o que as mensagens desse Membro ainda têm aberto (o Admin o
    * removeu), com o motivo à vista de quem vê a conversa. Devolve as canceladas.
    */
   cancelAuthoredBy(memberId: string, reason: string): Promise<ExecutionDto[]>;
   /**
-   * Cancela, pelo Shearim, tudo o que o Agente ainda tem aberto (o Admin o apagou, #65), a
+   * Cancela, pelo Regents, tudo o que o Agente ainda tem aberto (o Admin o apagou, #65), a
    * extração da Memória inclusive, com `AGENT_DELETED_REASON`. Devolve as canceladas.
    */
   cancelAgent(agentId: string): Promise<ExecutionDto[]>;
@@ -272,11 +270,11 @@ export function createExecutions(deps: {
   limits?: Partial<ExecutionLimits>;
   /** O teto de turnos de Ferramenta de uma resposta (padrão: `MAX_TOOL_TURNS`, 20; #53). */
   maxToolTurns?: number;
-  /** O prazo do Pedido de aprovação (padrão: 24 h, `APPROVAL_TTL_MS`; `SHEARIM_APPROVAL_TTL_H`). */
+  /** O prazo do Pedido de aprovação (padrão: 24 h, `APPROVAL_TTL_MS`; `REGENTS_APPROVAL_TTL_H`). */
   approvalTtlMs?: number;
-  /** O modelo pequeno da extração da Memória (padrão: `DEFAULT_MEMORY_MODEL`; `SHEARIM_MEMORY_MODEL`). */
+  /** O modelo pequeno da extração da Memória (padrão: `DEFAULT_MEMORY_MODEL`; `REGENTS_MEMORY_MODEL`). */
   memoryModel?: string;
-  /** O orçamento do resumo da Memória em cada resposta, em caracteres (`SHEARIM_MEMORY_SUMMARY_CHARS`). */
+  /** O orçamento do resumo da Memória em cada resposta, em caracteres (`REGENTS_MEMORY_SUMMARY_CHARS`). */
   memorySummaryChars?: number;
 }): Executions {
   const { db, clock, events, model, secrets, hooks, reading, ledger, push } = deps;
@@ -840,7 +838,7 @@ export function createExecutions(deps: {
 
   /**
    * Cancela, em qualquer passo, as execuções abertas que atendem a `where`: a que está rodando é
-   * interrompida. `reason` nulo é o cancelamento por quem escreveu; com motivo, foi o Shearim.
+   * interrompida. `reason` nulo é o cancelamento por quem escreveu; com motivo, foi o Regents.
    */
   async function cancelWhere(where: SQL, reason: string | null): Promise<ExecutionDto[]> {
     const now = clock.now();
@@ -1182,8 +1180,8 @@ export function createExecutions(deps: {
         await run(job, agent, payer, controller);
       } catch (err) {
         if (!controller.signal.aborted) {
-          console.error("shearim: execução falhou", err);
-          await fail(job, "erro inesperado no Shearim").catch(() => {});
+          console.error("regents: execução falhou", err);
+          await fail(job, "erro inesperado no Regents").catch(() => {});
         }
       } finally {
         running.delete(job.id);
@@ -1240,7 +1238,7 @@ export function createExecutions(deps: {
         if (await armRetryAlarm(now)) continue;
       } catch (err) {
         if (stopping) break;
-        console.error("shearim: a fila de execuções falhou ao pegar trabalho", err);
+        console.error("regents: a fila de execuções falhou ao pegar trabalho", err);
         await pause(1_000);
         continue;
       }
@@ -1288,7 +1286,7 @@ export function createExecutions(deps: {
         const current = monthOf(clock.now());
         if (current !== month) {
           month = current;
-          void reconsider().catch((err) => console.error("shearim: a fila falhou ao virar o mês", err));
+          void reconsider().catch((err) => console.error("regents: a fila falhou ao virar o mês", err));
         }
         arm();
       });
@@ -1320,7 +1318,7 @@ export function createExecutions(deps: {
     try {
       await expireApprovals();
     } catch (err) {
-      console.error("shearim: a expiração dos Pedidos falhou; tenta de novo em 1 min", err);
+      console.error("regents: a expiração dos Pedidos falhou; tenta de novo em 1 min", err);
       armExpiry(new Date(clock.now().getTime() + EXPIRY_RETRY_MS));
     }
   }

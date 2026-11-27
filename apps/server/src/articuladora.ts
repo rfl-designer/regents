@@ -4,15 +4,15 @@ import { type Db, schema } from "./db/client";
 import { addAgent } from "./participation";
 
 /**
- * A Articuladora (ADR 0004): o Agente embutido do Shearim, Sophya por padrão, em todo Canal.
+ * A Articuladora (ADR 0004): o Agente embutido do Regents, Sophya por padrão, em todo Canal.
  * A linha dela em `agents` tem a marca `builtin` e nasce na migração `0012`. O Admin muda o
  * nome, a foto e o modelo; a descrição, as instruções e o contrato de roteamento são daqui, do
- * código, e mudam só com uma versão nova do Shearim.
+ * código, e mudam só com uma versão nova do Regents.
  */
 
 /** A descrição pública dela (o que todo Membro vê e o que os outros Agentes leem em "quem é quem"). */
 export const ARTICULADORA_DESCRIPTION =
-  "A Articuladora do Shearim: está em todo Canal, decide a cada mensagem se alguém precisa responder, responde ela mesma ou passa para os Agentes do Canal, e conhece todos os Agentes do Workspace.";
+  "A Articuladora do Regents: está em todo Canal, decide a cada mensagem se alguém precisa responder, responde ela mesma ou passa para os Agentes do Canal, e conhece todos os Agentes do Workspace.";
 
 /** As instruções dela quando responde (a resposta dela e a Menção a ela). */
 export const ARTICULADORA_INSTRUCTIONS = [
@@ -39,7 +39,7 @@ export async function addArticuladora(tx: Executor, channelId: string, at: Date)
   await addAgent(tx as Db, channelId, (await articuladoraOf(tx)).id, at);
 }
 
-/** O Agente como o mundo o vê: a Articuladora com a descrição e as instruções do Shearim. */
+/** O Agente como o mundo o vê: a Articuladora com a descrição e as instruções do Regents. */
 export function withBuiltinText<T extends Pick<Agent, "builtin" | "description" | "instructions">>(agent: T): T {
   return agent.builtin
     ? { ...agent, description: ARTICULADORA_DESCRIPTION, instructions: ARTICULADORA_INSTRUCTIONS }

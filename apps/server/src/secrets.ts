@@ -48,7 +48,7 @@ export function parseMasterKey(text: string): Uint8Array {
 }
 
 /**
- * Lê a chave mestra do arquivo (`SHEARIM_MASTER_KEY_FILE`; no compose, `./secrets/master_key`
+ * Lê a chave mestra do arquivo (`REGENTS_MASTER_KEY_FILE`; no compose, `./secrets/master_key`
  * gerado pelo `deploy/setup.sh`). Com `generate`, um arquivo que falta é criado (0600): só no
  * desenvolvimento. Sem a mesma chave mestra, a Chave gravada não abre e o Admin a grava de novo.
  */
@@ -63,7 +63,7 @@ export function loadMasterKey(
       mode: 0o600,
     });
     chmodSync(file, 0o600);
-    (opts.log ?? console.log)(`shearim: chave mestra nova gerada em ${file}`);
+    (opts.log ?? console.log)(`regents: chave mestra nova gerada em ${file}`);
   }
   try {
     return parseMasterKey(readFileSync(file, "utf8"));

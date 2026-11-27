@@ -13,7 +13,7 @@
  * - O uso e o custo de todos os turnos somam no orçamento do Agente.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, AgentToolDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, AgentToolDto, ChannelDto, ExecutionDto, MessageDto } from "@regents/contracts";
 import { schema } from "../src/db/client";
 import { STALL_MS } from "../src/executions";
 import { createToolPort, type ToolDefinition, ToolFailure } from "../src/tools/port";

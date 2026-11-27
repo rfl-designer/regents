@@ -6,7 +6,7 @@ import {
   type WikiSyncReportDto,
   type WikiVersionDto,
   wikiLinkSlugs,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { and, asc, desc, eq, inArray, max } from "drizzle-orm";
 import { type Db, schema, type Tx } from "../db/client";
 import type { DraftPage } from "./draft";
@@ -220,7 +220,7 @@ export async function readPage(
   };
 }
 
-/** O índice que o Shearim escreve quando a Articuladora não deixou um: uma linha por página. */
+/** O índice que o Regents escreve quando a Articuladora não deixou um: uma linha por página. */
 function fallbackIndex(pages: ReadonlyMap<string, DraftPage>): DraftPage {
   const lines = [...pages]
     .filter(([slug]) => slug !== WIKI_LOG_SLUG && slug !== WIKI_INDEX_SLUG)

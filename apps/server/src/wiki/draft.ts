@@ -6,7 +6,7 @@ import {
   type WikiPageRefDto,
   type WikiSyncReportDto,
   wikiLinkSlugs,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import type { ExecutionTools, ToolResult, ToolSpec } from "../tools/port";
 import { POINT_CONTRADICTION, READ_PAGE, REMOVE_PAGE, WRITE_PAGE } from "./rules";
 
@@ -140,7 +140,7 @@ export class Draft {
     const index = this.pages.get(WIKI_INDEX_SLUG);
     const indexed = new Set(index ? wikiLinkSlugs(index.body) : []);
     // O índice também é conferido nos links (uma linha para uma página que saiu); o `log` não: é do
-    // Shearim e guarda as versões antigas, que ligam páginas que já saíram.
+    // Regents e guarda as versões antigas, que ligam páginas que já saíram.
     const brokenLinks: WikiCheckDto["brokenLinks"] = [];
     const linked = new Set<string>();
     for (const [slug, page] of [...(index ? [[WIKI_INDEX_SLUG, index] as const] : []), ...content]) {
@@ -235,7 +235,7 @@ export function draftTools(draft: Draft, current?: DraftSource): ExecutionTools 
         `o slug "${slug}" não vale: use minúsculas sem acento e palavras separadas por hífen, até ${SLUG_MAX} caracteres`,
       );
     }
-    if (slug === WIKI_LOG_SLUG) return error("a página log é do Shearim: ela não se escreve");
+    if (slug === WIKI_LOG_SLUG) return error("a página log é do Regents: ela não se escreve");
     const title = typeof input.titulo === "string" ? input.titulo.trim() : "";
     if (!title || title.length > TITLE_MAX) return error(`dê um título à página, até ${TITLE_MAX} caracteres`);
     const body = typeof input.corpo === "string" ? input.corpo : "";

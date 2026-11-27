@@ -1,4 +1,4 @@
-import { ACCOUNT_PATH } from "@shearim/contracts";
+import { ACCOUNT_PATH } from "@regents/contracts";
 import type { AccountHooks } from "./accounts";
 import type { Clock } from "./clock";
 import type { Db } from "./db/client";
@@ -22,7 +22,7 @@ export function accountPushes(deps: { db: Db; clock: Clock; notify: Push["notify
   const NO_BUDGET = "as para Agente sem orçamento no mês esperam na fila";
 
   const later = (what: string, work: Promise<void>) =>
-    void work.catch((err) => console.error(`shearim: o push ${what} falhou`, err));
+    void work.catch((err) => console.error(`regents: o push ${what} falhou`, err));
 
   return {
     accountDropped(memberId, drop) {

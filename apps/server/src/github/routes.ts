@@ -4,7 +4,7 @@ import {
   type GitHubInstallDto,
   type GitHubManifestDto,
   type StartGitHubManifestInput,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { Hono } from "hono";
 import { findAgent } from "../agents";
 import type { Db } from "../db/client";
@@ -101,13 +101,13 @@ export function githubRoutes(deps: { db: Db; github: GitHub }) {
       return c.json({ error: "invalid_input", message: "O nome da organização não é válido." }, 400);
     const state = await github.begin({ origin });
     const manifest = {
-      name: `Shearim ${new URL(origin).hostname.split(".")[0]}`.slice(0, 34),
+      name: `Regents ${new URL(origin).hostname.split(".")[0]}`.slice(0, 34),
       url: origin,
       public: false,
       redirect_url: `${origin}/api/github/manifest/callback`,
       setup_url: `${origin}/api/github/installation/callback`,
       setup_on_update: true,
-      // O Shearim não recebe webhooks (fica na tailnet); o GitHub exige o endereço mesmo assim.
+      // O Regents não recebe webhooks (fica na tailnet); o GitHub exige o endereço mesmo assim.
       hook_attributes: { url: `${origin}/api/github/webhook`, active: false },
       default_permissions: APP_PERMISSIONS,
       default_events: [],
@@ -130,7 +130,7 @@ export function githubRoutes(deps: { db: Db; github: GitHub }) {
     try {
       await github.convert(code);
     } catch (err) {
-      console.error("shearim: a criação do GitHub App falhou", err);
+      console.error("regents: a criação do GitHub App falhou", err);
       return c.redirect(backToPwa({ error: "O GitHub não criou o GitHub App. Comece de novo." }));
     }
     return c.redirect(backToPwa({ ok: "created" }));
@@ -154,7 +154,7 @@ export function githubRoutes(deps: { db: Db; github: GitHub }) {
     try {
       await github.link(id);
     } catch (err) {
-      console.error("shearim: a instalação do GitHub App não foi confirmada", err);
+      console.error("regents: a instalação do GitHub App não foi confirmada", err);
       return c.redirect(backToPwa({ error: "O GitHub não confirmou a instalação. Instale de novo." }));
     }
     return c.redirect(backToPwa({ ok: "installed" }));

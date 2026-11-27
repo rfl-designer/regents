@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ChannelDto, DeviceDto, DmDto, MeDto, MessageDto, PushKeyDto } from "@shearim/contracts";
+import type { ChannelDto, DeviceDto, DmDto, MeDto, MessageDto, PushKeyDto } from "@regents/contracts";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };

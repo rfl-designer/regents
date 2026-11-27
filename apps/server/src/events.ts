@@ -1,4 +1,4 @@
-import { EVENTS_CLOSE_UPDATING, type ServerEvent } from "@shearim/contracts";
+import { EVENTS_CLOSE_UPDATING, type ServerEvent } from "@regents/contracts";
 import type { MiddlewareHandler } from "hono";
 import { upgradeWebSocket } from "hono/bun";
 import type { Member } from "./members";
@@ -112,7 +112,7 @@ export function createEventHub() {
     connections.clear();
     for (const c of all) {
       for (const fn of closeListeners) fn(c.id);
-      c.close(EVENTS_CLOSE_UPDATING, "o Shearim vai reiniciar");
+      c.close(EVENTS_CLOSE_UPDATING, "o Regents vai reiniciar");
     }
   }
 

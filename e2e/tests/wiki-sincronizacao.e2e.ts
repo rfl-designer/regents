@@ -153,7 +153,7 @@ describe("Sincronização da Wiki", () => {
   test('uma Fonte grande vai em partes, e o estado mostra "Fonte 1 de 1, parte 2 de 3"', {
     timeout: 90_000,
   }, async ({ app, screen }) => {
-    // O e2e corta em 500 caracteres (`SHEARIM_WIKI_PART_MAX_CHARS`): um parágrafo de 300 por parte.
+    // O e2e corta em 500 caracteres (`REGENTS_WIKI_PART_MAX_CHARS`): um parágrafo de 300 por parte.
     const paragrafo = (texto: string) => `${texto} ${"O curso explica cada passo com calma. ".repeat(8)}`.trim();
     const curso = [
       `# Curso\n\n${paragrafo("O gancho vem primeiro.")}`,
@@ -222,7 +222,7 @@ describe("Sincronização da Wiki", () => {
     await expect(fontes.getByRole("listitem").filter({ hasText: "carrossel.txt" })).toContainText("nova");
   });
 
-  test('a tela da Articuladora mostra "Sincronizar a Wiki" como Habilidade do Shearim, só para leitura', {
+  test('a tela da Articuladora mostra "Sincronizar a Wiki" como Habilidade do Regents, só para leitura', {
     timeout: 60_000,
   }, async ({ app, screen }) => {
     await app.open("/agentes");
@@ -234,7 +234,7 @@ describe("Sincronização da Wiki", () => {
 
     const habilidades = sophya.getByRole("group").filter({ hasText: "Habilidades" });
     await expect(habilidades).toContainText("Sincronizar a Wiki");
-    await expect(habilidades).toContainText("do Shearim");
+    await expect(habilidades).toContainText("do Regents");
     const doShearim = habilidades.getByRole("checkbox", { disabled: true });
     await expect(doShearim).toHaveCount(1);
     await expect(doShearim).toBeChecked();

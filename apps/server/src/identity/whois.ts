@@ -8,7 +8,7 @@ import type { Identity, IdentityPort } from "./port";
  */
 const LOCALAPI_HOST = "local-tailscaled.sock";
 
-/** Forma do `apitype.WhoIsResponse` que o Shearim lê. */
+/** Forma do `apitype.WhoIsResponse` que o Regents lê. */
 interface WhoIsResponse {
   Node?: { Tags?: string[]; ComputedName?: string; Hostinfo?: { Hostname?: string; ShareeNode?: boolean } };
   UserProfile?: { ID?: number; LoginName?: string; DisplayName?: string; ProfilePicURL?: string };

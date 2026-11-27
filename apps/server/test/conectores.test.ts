@@ -19,7 +19,7 @@ import type {
   ConnectorDto,
   ExecutionDto,
   MessageDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import type { ToolDefinition } from "../src/tools/port";
 import { WORKSPACE_TOOLS } from "../src/tools/workspace";
 import type { FakeClaudeCall } from "./fake-claude";
@@ -110,6 +110,9 @@ describe("adicionar um Conector", () => {
         ["criar-oportunidade", "write"],
       ]);
       expect(crm.tokens()).toContain(TOKEN);
+      // O servidor vê o Regents como o cliente MCP.
+      expect(crm.clients().length).toBeGreaterThan(0);
+      for (const cliente of crm.clients()) expect(cliente).toEqual({ name: "regents", title: "Regents" });
 
       const lista = await (await t.as(juliana).get("/api/connectors")).text();
       expect(lista).not.toContain(TOKEN);
@@ -296,7 +299,7 @@ describe("pela Conta", () => {
         .at(-1)!;
       const config = resposta.argv[resposta.argv.indexOf("--mcp-config") + 1]!;
       // O endereço e o token do CRM nunca vão ao processo do modelo.
-      expect(Object.keys(JSON.parse(config).mcpServers)).toEqual(["shearim"]);
+      expect(Object.keys(JSON.parse(config).mcpServers)).toEqual(["regents"]);
       expect(config).not.toContain(crm.url);
       expect(resposta.argv.join(" ")).not.toContain(TOKEN);
       expect(crm.calls).toEqual([{ name: "buscar_cliente", arguments: { nome: "Acme" }, token: TOKEN }]);

@@ -1,4 +1,4 @@
-import type { WikiSyncReportDto, WikiSyncStepDto } from "@shearim/contracts";
+import type { WikiSyncReportDto, WikiSyncStepDto } from "@regents/contracts";
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,

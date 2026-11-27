@@ -1,4 +1,4 @@
-import type { ApproveJoinRequestDto, JoinRequestAdminDto, JoinRequestDto, MyJoinRequestDto } from "@shearim/contracts";
+import type { ApproveJoinRequestDto, JoinRequestAdminDto, JoinRequestDto, MyJoinRequestDto } from "@regents/contracts";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "./clock";
@@ -85,7 +85,7 @@ export function myJoinRequestRoutes(deps: JoinRequestDeps) {
       hooks?.joinRequestCreated?.(dto!);
     } catch (err) {
       // O pedido já está gravado e o Admin o vê na lista; uma falha do aviso não o desfaz.
-      console.error("shearim: o gancho joinRequestCreated falhou", err);
+      console.error("regents: o gancho joinRequestCreated falhou", err);
     }
     return c.json(toDto(created), 201);
   });

@@ -13,7 +13,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import type { AccountDto, AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import type { AccountDto, AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@regents/contracts";
 import { FAKE_LOGIN_CODE, type FakeRun, fakeLogin } from "./fake-claude";
 import { type EventSocket, eventually, type Person, type TestApp, testApp } from "./harness";
 

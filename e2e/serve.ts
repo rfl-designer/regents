@@ -277,11 +277,11 @@ writeFileSync(masterKeyFile, Buffer.from(crypto.getRandomValues(new Uint8Array(3
 const server = Bun.spawn(["bun", resolve(import.meta.dir, "../apps/server/src/main.ts"), "serve"], {
   env: {
     ...process.env,
-    SHEARIM_ANTHROPIC_BASE_URL: anthropic.url,
-    SHEARIM_GITHUB_URL: github.config.webUrl,
-    SHEARIM_GITHUB_API_URL: github.config.apiUrl,
-    SHEARIM_MASTER_KEY_FILE: masterKeyFile,
-    SHEARIM_CLAUDE_BIN: claude.bin,
+    REGENTS_ANTHROPIC_BASE_URL: anthropic.url,
+    REGENTS_GITHUB_URL: github.config.webUrl,
+    REGENTS_GITHUB_API_URL: github.config.apiUrl,
+    REGENTS_MASTER_KEY_FILE: masterKeyFile,
+    REGENTS_CLAUDE_BIN: claude.bin,
     // O push service falso dos testes (`support/push-service.ts`) fala HTTPS com este certificado.
     NODE_EXTRA_CA_CERTS: pushServiceCert().certFile,
   },

@@ -5,8 +5,9 @@
  * ainda não começou aparece no Andamento ("esperando a vez").
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
-import { DEFAULT_LIMITS, limitsFromEnv } from "../src/executions";
+import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@regents/contracts";
+import { configFrom } from "../src/config";
+import { DEFAULT_LIMITS, limitsFromConfig } from "../src/executions";
 import type { FakeClaudeCall } from "./fake-claude";
 import { type ScriptedRun, scriptedBrain } from "./fakes/scripted-brain";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
@@ -211,15 +212,17 @@ describe("Prioridade", () => {
 describe("Tetos", () => {
   test("os tetos vêm do .env, com os da Spec por padrão; valor inválido não sobe", () => {
     expect(DEFAULT_LIMITS).toEqual({ perAccount: 2, key: 4, processes: 8 });
-    expect(limitsFromEnv({})).toEqual({});
+    expect(limitsFromConfig(configFrom({}))).toEqual({});
     expect(
-      limitsFromEnv({ SHEARIM_MAX_PER_ACCOUNT: "3", SHEARIM_MAX_ON_KEY: "6", SHEARIM_MAX_PROCESSES: "12" }),
+      limitsFromConfig(
+        configFrom({ SHEARIM_MAX_PER_ACCOUNT: "3", SHEARIM_MAX_ON_KEY: "6", SHEARIM_MAX_PROCESSES: "12" }),
+      ),
     ).toEqual({ perAccount: 3, key: 6, processes: 12 });
-    expect(limitsFromEnv({ SHEARIM_MAX_ON_KEY: "" })).toEqual({});
-    expect(() => limitsFromEnv({ SHEARIM_MAX_PROCESSES: "0" })).toThrow(
+    expect(limitsFromConfig(configFrom({ SHEARIM_MAX_ON_KEY: "" }))).toEqual({});
+    expect(() => limitsFromConfig(configFrom({ SHEARIM_MAX_PROCESSES: "0" }))).toThrow(
       "SHEARIM_MAX_PROCESSES=0 não é um número inteiro maior que zero.",
     );
-    expect(() => limitsFromEnv({ SHEARIM_MAX_PER_ACCOUNT: "dois" })).toThrow(
+    expect(() => limitsFromConfig(configFrom({ SHEARIM_MAX_PER_ACCOUNT: "dois" }))).toThrow(
       "SHEARIM_MAX_PER_ACCOUNT=dois não é um número inteiro maior que zero.",
     );
   });

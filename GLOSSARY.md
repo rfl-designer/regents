@@ -1,4 +1,4 @@
-# Shearim
+# Regents
 
 Chat de time em que pessoas e agentes de IA conversam nos mesmos lugares. Cada instalação serve um único Workspace.
 
@@ -7,11 +7,11 @@ Chat de time em que pessoas e agentes de IA conversam nos mesmos lugares. Cada i
 ### Quem participa
 
 **Workspace**:
-O grupo de pessoas, agentes e conversas servido por uma instalação do Shearim. Uma instalação tem exatamente um Workspace.
+O grupo de pessoas, agentes e conversas servido por uma instalação do Regents. Uma instalação tem exatamente um Workspace.
 _Avoid_: organização, tenant, espaço, time
 
 **Instalação**:
-Um Shearim rodando num computador do time, com o próprio banco e os próprios segredos. Serve exatamente um Workspace. O Admin vê o estado dela: a versão, o último backup e quando ela sai da tailnet.
+Um Regents rodando num computador do time, com o próprio banco e os próprios segredos. Serve exatamente um Workspace. O Admin vê o estado dela: a versão, o último backup e quando ela sai da tailnet.
 _Avoid_: instância, servidor, deploy
 
 **Membro**:
@@ -43,7 +43,7 @@ Um participante de IA do Workspace, com nome, descrição, instruções, modelo 
 _Avoid_: bot, assistente, IA
 
 **Articuladora**:
-O Agente que vem com o Workspace, se chama Sophya por padrão e está em todo Canal, público ou privado. Não pode ser apagada nem removida de um Canal. Num Canal com outros Agentes, ela dá o Desfecho de cada mensagem de pessoa; num Canal só com ela, responde só por Menção. Conhece todos os Agentes, com as Ferramentas de cada um e o nome e a descrição das Habilidades e das Wikis de cada um, e os Canais que quem escreveu pode ver. Só o Admin troca o nome, o modelo e o orçamento dela; as instruções dela são do Shearim.
+O Agente que vem com o Workspace, se chama Sophya por padrão e está em todo Canal, público ou privado. Não pode ser apagada nem removida de um Canal. Num Canal com outros Agentes, ela dá o Desfecho de cada mensagem de pessoa; num Canal só com ela, responde só por Menção. Conhece todos os Agentes, com as Ferramentas de cada um e o nome e a descrição das Habilidades e das Wikis de cada um, e os Canais que quem escreveu pode ver. Só o Admin troca o nome, o modelo e o orçamento dela; as instruções dela são do Regents.
 _Avoid_: Líder, braço direito, router, coordenador
 
 ### O que os Agentes sabem
@@ -57,7 +57,7 @@ Um texto ou markdown bruto que o Admin sobe numa Wiki, como um curso transcrito.
 _Avoid_: arquivo, upload, documento, material
 
 **Sincronização**:
-O trabalho da Articuladora que leva as Fontes de uma Wiki para as páginas dela: cria e liga páginas, atualiza o índice e aponta contradições e páginas sem link. Só o Admin a inicia, e o clique dele autoriza a Sincronização inteira, sem Pedido de aprovação. A Wiki só muda quando ela termina; se falhar ou for cancelada, a Wiki fica como estava. Cada Sincronização concluída gera uma versão da Wiki, e o Admin pode voltar à anterior. As regras da Sincronização são do Shearim.
+O trabalho da Articuladora que leva as Fontes de uma Wiki para as páginas dela: cria e liga páginas, atualiza o índice e aponta contradições e páginas sem link. Só o Admin a inicia, e o clique dele autoriza a Sincronização inteira, sem Pedido de aprovação. A Wiki só muda quando ela termina; se falhar ou for cancelada, a Wiki fica como estava. Cada Sincronização concluída gera uma versão da Wiki, e o Admin pode voltar à anterior. As regras da Sincronização são do Regents.
 _Avoid_: ingestão, indexação, processamento, atualização
 
 ### Onde se conversa
@@ -97,7 +97,7 @@ Um procedimento escrito por gente, com nome e descrição, que um Agente carrega
 _Avoid_: skill, prompt, macro, receita
 
 **Conector**:
-A ligação do Workspace a um sistema de fora, adicionada pelo Admin, que traz as Ferramentas desse sistema. A credencial é de cada Membro, que liga a sua, ou do Workspace, uma só para todos. Com a credencial do Workspace, quem fala com o Agente alcança o que ela alcança, e a descrição do Agente diz isso. Um Conector alcança o que a credencial alcança, mesmo numa conversa com quem não teria esse acesso, e o Andamento mostra de quem é a credencial usada. Para um autor que não ligou a credencial dele, as Ferramentas do Conector ficam indisponíveis naquela resposta, e só ele vê como ligá-la. O GitHub é um Conector que vem com o Shearim: o Admin o instala na conta do time no GitHub, escolhe os repositórios e pode restringir cada Agente a alguns deles.
+A ligação do Workspace a um sistema de fora, adicionada pelo Admin, que traz as Ferramentas desse sistema. A credencial é de cada Membro, que liga a sua, ou do Workspace, uma só para todos. Com a credencial do Workspace, quem fala com o Agente alcança o que ela alcança, e a descrição do Agente diz isso. Um Conector alcança o que a credencial alcança, mesmo numa conversa com quem não teria esse acesso, e o Andamento mostra de quem é a credencial usada. Para um autor que não ligou a credencial dele, as Ferramentas do Conector ficam indisponíveis naquela resposta, e só ele vê como ligá-la. O GitHub é um Conector que vem com o Regents: o Admin o instala na conta do time no GitHub, escolhe os repositórios e pode restringir cada Agente a alguns deles.
 _Avoid_: integração, plugin, app, MCP
 
 **Pedido de aprovação**:
@@ -111,11 +111,11 @@ _Avoid_: status, progresso, execução
 ### O que os Agentes lembram
 
 **Memória**:
-O que fica de uma conversa para os Agentes usarem em respostas futuras, sempre com a conversa de origem. Só entra numa resposta que alcança essa origem: o que nasceu num Canal privado ou numa DM não aparece fora do alcance dela, nem pelo nome. É guardada pelo Shearim ao fim de uma resposta de Agente, a partir do que as pessoas disseram naquela troca, à vista no Andamento e sem Pedido de aprovação; uma conversa só entre pessoas não vira Memória, nem o que veio de fora por uma Ferramenta. Quem vê a conversa de origem pode desfazer ou corrigir o que foi guardado, e cada Membro, Admin inclusive, só vê a Memória cuja origem ele vê. Uma correção substitui a versão anterior, que fica arquivada. O Admin liga ou desliga a Memória de cada Agente, e o Desfecho não a lê. Não substitui o Contexto do Workspace, as Instruções do Canal nem as instruções do Agente, que são escritos por gente e valem acima dela quando se contradizem.
+O que fica de uma conversa para os Agentes usarem em respostas futuras, sempre com a conversa de origem. Só entra numa resposta que alcança essa origem: o que nasceu num Canal privado ou numa DM não aparece fora do alcance dela, nem pelo nome. É guardada pelo Regents ao fim de uma resposta de Agente, a partir do que as pessoas disseram naquela troca, à vista no Andamento e sem Pedido de aprovação; uma conversa só entre pessoas não vira Memória, nem o que veio de fora por uma Ferramenta. Quem vê a conversa de origem pode desfazer ou corrigir o que foi guardado, e cada Membro, Admin inclusive, só vê a Memória cuja origem ele vê. Uma correção substitui a versão anterior, que fica arquivada. O Admin liga ou desliga a Memória de cada Agente, e o Desfecho não a lê. Não substitui o Contexto do Workspace, as Instruções do Canal nem as instruções do Agente, que são escritos por gente e valem acima dela quando se contradizem.
 _Avoid_: lembrança, conhecimento, contexto, histórico
 
 **Memória do Workspace**:
-A Memória que vale em todo o Workspace. Quem a escreve é um Admin, direto ou promovendo um item da Memória da Conversa de um Canal público; o Shearim não guarda nela sozinho.
+A Memória que vale em todo o Workspace. Quem a escreve é um Admin, direto ou promovendo um item da Memória da Conversa de um Canal público; o Regents não guarda nela sozinho.
 _Avoid_: memória global, memória do time
 
 **Memória da Conversa**:

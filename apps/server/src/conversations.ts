@@ -9,7 +9,7 @@ import {
   isChannelKind,
   type MessageDto,
   type SendMessageInput,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { type Agent, findAgent, lockLiveAgent } from "./agents";
@@ -98,7 +98,7 @@ export function conversationRoutes(deps: {
 
     const created = await db.transaction(async (tx) => {
       // Serializa a criação para a checagem de nome (sem diferença de maiúsculas) valer.
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('shearim:canal-novo'))`);
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('regents:canal-novo'))`);
       const [taken] = await tx
         .select({ id: channels.id })
         .from(channels)

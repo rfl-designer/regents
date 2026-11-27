@@ -1,6 +1,6 @@
 # Identidade da tailnet no Docker
 
-Pesquisa do ticket #3 (parte do mapa #1). Pergunta: com o Shearim num container atrás de um sidecar `tailscale/tailscale` (o app em `network_mode: service:tailscale`, publicado com Tailscale Serve em HTTPS), dá para confiar nos headers de identidade que o Serve entrega? Em que condições eles faltam, e o que o app precisa fazer para que ninguém consiga forjá-los?
+Pesquisa do ticket #3 (parte do mapa #1). Pergunta: com o Regents num container atrás de um sidecar `tailscale/tailscale` (o app em `network_mode: service:tailscale`, publicado com Tailscale Serve em HTTPS), dá para confiar nos headers de identidade que o Serve entrega? Em que condições eles faltam, e o que o app precisa fazer para que ninguém consiga forjá-los?
 
 Data: 2026-11-23. Código lido: `tailscale/tailscale` na tag **v1.106.0** (commit `9ff10465`, último estável na data). O `tailscale` local na máquina é 1.104.7 (só rodei `tailscale version`). Todos os links de código apontam para a tag v1.106.0.
 
@@ -35,7 +35,7 @@ O que o header **não** traz:
 | Nó de um usuário da própria tailnet | presentes | **documentado**, [serve.go#L1186-L1189](https://github.com/tailscale/tailscale/blob/v1.106.0/ipn/ipnlocal/serve.go#L1186-L1189) |
 | Funnel (internet pública) | ausentes; vem `Tailscale-Funnel-Request: ?1` | **documentado**, [serve.go#L1173-L1176](https://github.com/tailscale/tailscale/blob/v1.106.0/ipn/ipnlocal/serve.go#L1173-L1176), [KB Serve](https://tailscale.com/kb/1312/serve) |
 | Nó com tag (servidor, CI, outro container com auth key de tag) | ausentes | **documentado**, [serve.go#L1181-L1185](https://github.com/tailscale/tailscale/blob/v1.106.0/ipn/ipnlocal/serve.go#L1181-L1185), [KB Serve](https://tailscale.com/kb/1312/serve) |
-| Usuário de outra tailnet que aceitou um share do nó do Shearim | **presentes**, com a identidade desse usuário externo | **documentado**, [KB Serve](https://tailscale.com/kb/1312/serve): "this includes traffic from external users who have accepted a share of your device" |
+| Usuário de outra tailnet que aceitou um share do nó do Regents | **presentes**, com a identidade desse usuário externo | **documentado**, [KB Serve](https://tailscale.com/kb/1312/serve): "this includes traffic from external users who have accepted a share of your device" |
 | Origem que não está no netmap (tráfego local que não veio da tailnet) | ausentes | **documentado**, comentário "traffic from outside of Tailnet (funneled or local machine)" em [serve.go#L1177-L1180](https://github.com/tailscale/tailscale/blob/v1.106.0/ipn/ipnlocal/serve.go#L1177-L1180) |
 | O próprio nó do sidecar (algo dentro do namespace chamando o IP tailnet dele mesmo) | presentes se o nó for de um usuário (identidade do dono); ausentes se o nó tiver tag | **documentado**: o `SelfNode` entra no índice `nodeByAddr` ([node_backend.go#L749-L771](https://github.com/tailscale/tailscale/blob/v1.106.0/ipn/ipnlocal/node_backend.go#L749-L771)) e o resultado cai na regra de tag |
 
@@ -69,7 +69,7 @@ Três formas de fechar o desvio, sem decidir aqui qual usar:
 
 1. **Modo kernel + app em 127.0.0.1.** Caminho direto fechado pelo kernel. Custa `/dev/net/tun` e `cap_add: [net_admin]` (a doc usa também `net_raw`, [KB connect-docker-container](https://tailscale.com/docs/features/containers/docker/how-to/connect-docker-container)).
 2. **Userspace + app num Unix socket.** O Serve aceita `Proxy: "unix:/caminho.sock"` ([ipn/serve.go#L147-L148](https://github.com/tailscale/tailscale/blob/v1.106.0/ipn/serve.go#L147-L148), [serve.go#L896-L917](https://github.com/tailscale/tailscale/blob/v1.106.0/ipn/ipnlocal/serve.go#L896-L917)), e o Bun escuta em Unix socket com a opção `unix` (**documentado**, docs do Bun). Sem porta TCP, o netstack não tem para onde encaminhar. Custa um volume compartilhado entre os dois containers. **Ressalvas**: o Bun não documenta se `server.upgrade()` (WebSocket) funciona em Unix socket (**não verificado**); `server.requestIP()` devolve `null` em Unix socket (**documentado**); e desde a 1.98.9 alvos Unix do Serve são restritos a root ([TS-2026-005](https://tailscale.com/security-bulletins)), o que no container não deve atrapalhar porque o tailscaled roda como root (**não verificado**).
-3. **Userspace + app em 127.0.0.1 + ACL/grant limitando o nó a `tcp:443`.** O desvio continua existindo, e quem o fecha é a política da tailnet. Basta um grant `*` ou uma mudança na ACL para reabrir. Sintaxe de exemplo (**não verificado**): `{"src": ["autogroup:member"], "dst": ["tag:shearim"], "ip": ["tcp:443"]}`.
+3. **Userspace + app em 127.0.0.1 + ACL/grant limitando o nó a `tcp:443`.** O desvio continua existindo, e quem o fecha é a política da tailnet. Basta um grant `*` ou uma mudança na ACL para reabrir. Sintaxe de exemplo (**não verificado**): `{"src": ["autogroup:member"], "dst": ["tag:regents"], "ip": ["tcp:443"]}`.
 
 ### 3.3 Portas no compose
 
@@ -80,7 +80,7 @@ Três formas de fechar o desvio, sem decidir aqui qual usar:
 
 ### 3.4 Nó com tag e auto-identidade
 
-- **documentado**: se o nó do sidecar for de um usuário, uma requisição feita de dentro do namespace para o próprio Serve chega com a identidade do dono (seção 2). Com uma auth key de tag (ex.: `tag:shearim`), o nó tem tag e essa auto-requisição chega sem headers. Para auth keys OAuth, a tag é obrigatória ([KB Docker params](https://tailscale.com/docs/features/containers/docker/docker-params)).
+- **documentado**: se o nó do sidecar for de um usuário, uma requisição feita de dentro do namespace para o próprio Serve chega com a identidade do dono (seção 2). Com uma auth key de tag (ex.: `tag:regents`), o nó tem tag e essa auto-requisição chega sem headers. Para auth keys OAuth, a tag é obrigatória ([KB Docker params](https://tailscale.com/docs/features/containers/docker/docker-params)).
 
 ## 4. WebSocket pelo Serve
 
@@ -117,9 +117,9 @@ Não é decisão: é o mínimo para testar. A versão abaixo usa modo kernel + a
 services:
   tailscale:
     image: tailscale/tailscale:v1.106.0      # fixar versão
-    hostname: shearim                        # vira shearim.<tailnet>.ts.net
+    hostname: regents                        # vira regents.<tailnet>.ts.net
     environment:
-      TS_AUTHKEY: file:/run/secrets/ts_authkey   # auth key com tag:shearim
+      TS_AUTHKEY: file:/run/secrets/ts_authkey   # auth key com tag:regents
       TS_STATE_DIR: /var/lib/tailscale
       TS_SERVE_CONFIG: /config/serve.json
       TS_USERSPACE: "false"
@@ -142,7 +142,7 @@ services:
     environment:
       HOST: 127.0.0.1                        # Bun.serve({ hostname: "127.0.0.1" })
       PORT: "3000"
-      DATABASE_URL: postgres://shearim@postgres:5432/shearim
+      DATABASE_URL: postgres://regents@postgres:5432/regents
     depends_on: [tailscale, postgres]
     restart: unless-stopped
 
@@ -175,7 +175,7 @@ secrets:
 }
 ```
 
-Variante userspace + Unix socket (opção 2): tirar `TS_USERSPACE`, `devices` e `cap_add`; montar um volume `sock:/sock` nos dois serviços; o app escuta com `Bun.serve({ unix: "/sock/shearim.sock" })`; o handler vira `{ "Proxy": "unix:/sock/shearim.sock" }`. Falta verificar se WebSocket funciona nesse caminho.
+Variante userspace + Unix socket (opção 2): tirar `TS_USERSPACE`, `devices` e `cap_add`; montar um volume `sock:/sock` nos dois serviços; o app escuta com `Bun.serve({ unix: "/sock/regents.sock" })`; o handler vira `{ "Proxy": "unix:/sock/regents.sock" }`. Falta verificar se WebSocket funciona nesse caminho.
 
 **Não verificado**: o compose e o JSON acima não foram executados. Os campos batem com o código lido.
 

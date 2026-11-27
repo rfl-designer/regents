@@ -6,7 +6,7 @@ import {
   type InstallationDto,
   NODE_KEY_WARNING_DAYS,
   type NodeKeyDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
@@ -25,7 +25,7 @@ const DAY_MS = 24 * HOUR_MS;
 export const INSTALLATION_CHECK_MS = 15 * 60 * 1000;
 
 export interface InstallationConfig {
-  /** A versão que está rodando (a tag da imagem, `SHEARIM_VERSION`). */
+  /** A versão que está rodando (a tag da imagem, `REGENTS_VERSION`). */
   version?: string;
   /** Liga a verificação periódica com os pushes do Admin (o `main.ts` liga; nos testes, opcional). */
   watch?: boolean;
@@ -135,7 +135,7 @@ export function createInstallation(deps: {
       if (!(await firstTime(alert.kind, ref))) continue;
       if (alert.kind === "backup_failed") {
         await notifyAdmins({
-          title: "O backup do Shearim falhou",
+          title: "O backup do Regents falhou",
           body: alert.error,
           tag: "instalacao-backup",
           urgency: "high",
@@ -164,7 +164,7 @@ export function createInstallation(deps: {
         await notifyAdmins({
           title: days === 1 ? "A chave do nó vence amanhã" : `A chave do nó vence em ${days} dias`,
           body:
-            `Em ${dayAndTime(expiresAt)} a Instalação sai da tailnet e o Shearim para de abrir. ` +
+            `Em ${dayAndTime(expiresAt)} a Instalação sai da tailnet e o Regents para de abrir. ` +
             "Renove a chave do nó (ou desligue o vencimento) no painel do Tailscale, em Machines.",
           tag: "instalacao-chave-do-no",
           urgency: "normal",
@@ -184,7 +184,7 @@ export function createInstallation(deps: {
   function tick() {
     running = running
       .then(check)
-      .catch((err) => console.error("shearim: a verificação da Instalação falhou", err))
+      .catch((err) => console.error("regents: a verificação da Instalação falhou", err))
       .finally(() => {
         if (!stopped) cancel = clock.after(INSTALLATION_CHECK_MS, tick);
       });

@@ -1,5 +1,6 @@
-import { formatBytes, WIKI_SYNC_OPEN_STATES, type WikiSourceDto, type WikiSourceFormat } from "@shearim/contracts";
+import { formatBytes, WIKI_SYNC_OPEN_STATES, type WikiSourceDto, type WikiSourceFormat } from "@regents/contracts";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { type Config, positiveInt, positiveNumber } from "../config";
 import { type Db, schema, type Tx } from "../db/client";
 import { pendingOf, reflectedSources } from "./wikis";
 
@@ -38,39 +39,24 @@ export interface SourceUpload {
 export const DEFAULT_SOURCE_MAX_BYTES = 5_000_000;
 
 /**
- * O que a Instalação ajusta na Wiki: o tamanho máximo de uma Fonte (`SHEARIM_WIKI_SOURCE_MAX_MB`,
+ * O que a Instalação ajusta na Wiki: o tamanho máximo de uma Fonte (`REGENTS_WIKI_SOURCE_MAX_MB`,
  * aceita fração) e o teto de turnos de Ferramenta de cada chamada da Sincronização
- * (`SHEARIM_WIKI_SYNC_MAX_TURNS`) e o tamanho de parte de uma Fonte, em caracteres
- * (`SHEARIM_WIKI_PART_MAX_CHARS`). O que falta fica com o padrão; valor inválido é erro.
+ * (`REGENTS_WIKI_SYNC_MAX_TURNS`) e o tamanho de parte de uma Fonte, em caracteres
+ * (`REGENTS_WIKI_PART_MAX_CHARS`). O que falta fica com o padrão; valor inválido é erro.
  */
-export function wikiFromEnv(env: Record<string, string | undefined>): {
+export function wikiFromConfig(config: Config): {
   sourceMaxBytes?: number;
   syncMaxToolTurns?: number;
   partMaxChars?: number;
 } {
   const out: { sourceMaxBytes?: number; syncMaxToolTurns?: number; partMaxChars?: number } = {};
-  const raw = env.SHEARIM_WIKI_SOURCE_MAX_MB?.trim();
-  if (raw) {
-    const mb = Number(raw);
-    if (!Number.isFinite(mb) || mb <= 0) {
-      throw new Error(`SHEARIM_WIKI_SOURCE_MAX_MB=${raw} não é um número maior que zero.`);
-    }
-    out.sourceMaxBytes = Math.round(mb * 1_000_000);
-  }
-  const turns = positiveInt(env, "SHEARIM_WIKI_SYNC_MAX_TURNS");
+  const mb = positiveNumber(config, "WIKI_SOURCE_MAX_MB");
+  if (mb !== undefined) out.sourceMaxBytes = Math.round(mb * 1_000_000);
+  const turns = positiveInt(config, "WIKI_SYNC_MAX_TURNS");
   if (turns) out.syncMaxToolTurns = turns;
-  const part = positiveInt(env, "SHEARIM_WIKI_PART_MAX_CHARS");
+  const part = positiveInt(config, "WIKI_PART_MAX_CHARS");
   if (part) out.partMaxChars = part;
   return out;
-}
-
-/** Um inteiro maior que zero na variável `name`, ou `undefined` se ela falta; inválido é erro. */
-function positiveInt(env: Record<string, string | undefined>, name: string) {
-  const raw = env[name]?.trim();
-  if (!raw) return undefined;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1) throw new Error(`${name}=${raw} não é um número inteiro maior que zero.`);
-  return n;
 }
 
 /** Por que um arquivo não vira Fonte: o código do erro HTTP e o motivo, em pt-BR. */

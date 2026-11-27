@@ -6,7 +6,7 @@
  * tarefa pede, à vista no Andamento. Pela Chave e pela Conta.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, AgentSkillDto, ChannelDto, ExecutionDto, MessageDto, SkillDto } from "@shearim/contracts";
+import type { AgentDto, AgentSkillDto, ChannelDto, ExecutionDto, MessageDto, SkillDto } from "@regents/contracts";
 import type { ToolDefinition } from "../src/tools/port";
 import { WORKSPACE_TOOLS } from "../src/tools/workspace";
 import { toolResults } from "./fakes/messages-api";
@@ -134,7 +134,7 @@ describe("o Admin escreve Habilidades", () => {
     await t.as(juliana).get("/api/me");
     const recusa = {
       error: "name_taken",
-      message: "Sincronizar a Wiki é a Habilidade do Shearim: dê outro nome à sua.",
+      message: "Sincronizar a Wiki é a Habilidade do Regents: dê outro nome à sua.",
     };
 
     const criada = await t.as(juliana).post("/api/skills", { ...CARROSSEL, name: "sincronizar a WIKI" });

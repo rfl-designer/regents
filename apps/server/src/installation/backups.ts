@@ -1,6 +1,6 @@
 import { readdirSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
-import { BACKUP_RETENTION_DAYS } from "@shearim/contracts";
+import { BACKUP_RETENTION_DAYS } from "@regents/contracts";
 import { and, desc, eq, gt } from "drizzle-orm";
 import type { Clock } from "../clock";
 import { type Db, schema } from "../db/client";
@@ -10,8 +10,11 @@ import type { Dumper } from "./dumper";
 const { backups } = schema;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** O nome de um backup noturno: `shearim-20261124T030000Z.dump`. */
-const NIGHTLY = /^shearim-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z\./;
+/**
+ * O nome de um backup noturno: `regents-20261124T030000Z.dump`. Os `shearim-*` de antes do nome
+ * Regents (spec #96) seguem na mesma retenção.
+ */
+const NIGHTLY = /^(?:regents|shearim)-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z\./;
 
 /** A próxima vez que dá `hour:minute` na hora local do container (`TZ`), depois de `now`. */
 export function nextAt(now: Date, hour: number, minute: number): Date {
@@ -45,7 +48,7 @@ export function createNightlyBackups(deps: {
 
   async function runNow() {
     const startedAt = clock.now();
-    const file = join(dir, `shearim-${stamp(startedAt)}.${dumper.extension}`);
+    const file = join(dir, `regents-${stamp(startedAt)}.${dumper.extension}`);
     let row: typeof backups.$inferInsert;
     try {
       const { bytes } = await dumper.dump(file);

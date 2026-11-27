@@ -1,4 +1,4 @@
-import type { AgentWikiSummaryDto, WikiDto, WikiSourcePending, WikiSourceState } from "@shearim/contracts";
+import type { AgentWikiSummaryDto, WikiDto, WikiSourcePending, WikiSourceState } from "@regents/contracts";
 import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { type Db, isUuid, schema } from "../db/client";
 import { activeAdminIds } from "../members";

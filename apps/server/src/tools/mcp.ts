@@ -1,9 +1,9 @@
 /**
- * O endpoint MCP do Shearim (Spec #44, "Pela Conta"; emenda o ADR 0006): por onde o `claude -p`
+ * O endpoint MCP do Regents (Spec #44, "Pela Conta"; emenda o ADR 0006): por onde o `claude -p`
  * de uma resposta lista e chama as Ferramentas da execução, que passam pela porta de Ferramentas
  * como pela Chave (o passo no Andamento, o prazo, a concessão conferida na hora).
  *
- * - Fala MCP em streamable HTTP, respondendo cada POST com JSON (sem SSE: o Shearim não manda
+ * - Fala MCP em streamable HTTP, respondendo cada POST com JSON (sem SSE: o Regents não manda
  *   nada por conta própria ao cliente).
  * - Escuta só no loopback (`127.0.0.1`, porta livre): o `claude -p` roda no mesmo container, e o
  *   endpoint não passa pela tailnet nem pela identidade.
@@ -15,13 +15,13 @@ import { timingSafeEqual } from "node:crypto";
 import type { Server } from "bun";
 import type { ExecutionTools } from "./port";
 
-/** O nome do servidor no `--mcp-config`: as Ferramentas chegam ao modelo como `mcp__shearim__<id>`. */
-export const MCP_SERVER_NAME = "shearim";
+/** O nome do servidor no `--mcp-config`: as Ferramentas chegam ao modelo como `mcp__regents__<id>`. */
+export const MCP_SERVER_NAME = "regents";
 
 /** As versões do protocolo que o endpoint fala; a primeira é a que ele propõe. */
 const PROTOCOL_VERSIONS = ["2025-06-18", "2025-11-25", "2025-03-26", "2024-11-05"];
 
-/** O `--mcp-config` de uma sessão: um servidor só, o do Shearim. */
+/** O `--mcp-config` de uma sessão: um servidor só, o do Regents. */
 export interface McpConfig {
   mcpServers: Record<string, { type: "http"; url: string; headers: Record<string, string> }>;
 }
@@ -90,7 +90,7 @@ export function createMcpEndpoint(): McpEndpoint {
           result: {
             protocolVersion: asked && PROTOCOL_VERSIONS.includes(asked) ? asked : PROTOCOL_VERSIONS[0],
             capabilities: { tools: { listChanged: false } },
-            serverInfo: { name: MCP_SERVER_NAME, title: "Shearim", version: "1" },
+            serverInfo: { name: MCP_SERVER_NAME, title: "Regents", version: "1" },
           },
         };
       }

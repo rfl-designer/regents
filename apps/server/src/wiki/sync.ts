@@ -5,7 +5,7 @@ import {
   WIKIS_PATH,
   type WikiSyncDto,
   type WikiSyncStepDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { and, asc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { articuladoraOf } from "../articuladora";
 import type { Clock } from "../clock";
@@ -38,7 +38,7 @@ import { findWiki, pendingOf, toWikiDto, wikiAudience } from "./wikis";
 
 const { wikiSyncs, wikiSources, members } = schema;
 
-/** O teto de turnos de Ferramenta de cada chamada da Sincronização (`SHEARIM_WIKI_SYNC_MAX_TURNS`). */
+/** O teto de turnos de Ferramenta de cada chamada da Sincronização (`REGENTS_WIKI_SYNC_MAX_TURNS`). */
 export const DEFAULT_SYNC_MAX_TURNS = 40;
 
 /** O motivo da vigia numa chamada da Sincronização. */
@@ -57,7 +57,7 @@ type SyncCall = { prompt: string; tools: ExecutionTools };
 /** A Sincronização em curso, como as chamadas dela a veem. */
 type SyncRun = { id: string; startedBy: { id: string; name: string }; wiki: { name: string; description: string } };
 
-/** Espera `ms` no relógio do Shearim; `false` se o `signal` abortou antes (cancelada, parada). */
+/** Espera `ms` no relógio do Regents; `false` se o `signal` abortou antes (cancelada, parada). */
 function pause(clock: Clock, ms: number, signal: AbortSignal) {
   return new Promise<boolean>((resolve) => {
     if (signal.aborted) return resolve(false);
@@ -121,9 +121,9 @@ export interface WikiSyncs {
 }
 
 /**
- * A Sincronização é um trabalho próprio do Shearim, e não uma execução: não tem Canal nem mensagem
+ * A Sincronização é um trabalho próprio do Regents, e não uma execução: não tem Canal nem mensagem
  * de origem. A Articuladora leva cada Fonte pendente para as páginas, uma chamada de modelo por
- * Fonte, pelas Ferramentas internas do rascunho (`draft.ts`); o Shearim publica a versão no fim,
+ * Fonte, pelas Ferramentas internas do rascunho (`draft.ts`); o Regents publica a versão no fim,
  * numa transação só (`versions.ts`). O modelo é o da Articuladora, e o gasto conta no orçamento dela.
  *
  * Quem paga é decidido a cada chamada (`call`): a Conta do Admin que iniciou, com a Chave do
@@ -362,7 +362,7 @@ export function createWikiSyncs(deps: {
     const draft = new Draft(await pagesOfVersion(db, plan.version), plan.target);
     const run = { id: syncId, startedBy: starter, wiki };
     const total = plan.removals.length + plan.news.length;
-    // As Fontes "a remover" primeiro (#88): o Shearim tira do rascunho as páginas que vinham só
+    // As Fontes "a remover" primeiro (#88): o Regents tira do rascunho as páginas que vinham só
     // dela e a Fonte das outras; a Articuladora reescreve essas e arruma o índice. Uma Fonte que
     // nenhuma página cita não precisa de chamada.
     for (const [i, removal] of plan.removals.entries()) {
@@ -474,8 +474,8 @@ export function createWikiSyncs(deps: {
       const controller = new AbortController();
       const done = work(id, controller)
         .catch(async (err) => {
-          console.error("shearim: a Sincronização da Wiki falhou", err);
-          await fail(id, "erro inesperado no Shearim").catch(() => {});
+          console.error("regents: a Sincronização da Wiki falhou", err);
+          await fail(id, "erro inesperado no Regents").catch(() => {});
         })
         .finally(() => running.delete(id));
       running.set(id, { controller, done });

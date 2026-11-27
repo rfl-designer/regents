@@ -7,7 +7,13 @@
  * O estado mora em arquivos de `s.state`, que o teste muda antes de rodar o script:
  * `os` (Darwin/Linux), `docker-up` (o Docker responde), `docker-os` (o que `docker info` diz),
  * `tailnet.json` (o `tailscale status --json` do sidecar), `health` (do app), `latest` (a última
- * release), `releases/<tag>/` (os assets).
+ * release), `releases/<tag>/` (os assets), `volumes/<nome>/` (os volumes do Docker; o `docker run`
+ * roda o `sh -c` aqui, com os pontos de montagem trocados pelas pastas dos volumes), `running/<projeto>`
+ * (os projetos do Compose de pé: o `up -d` põe, o `down` tira, e o `pg_dump` só roda num de pé).
+ *
+ * `fail-on` e `interrupt-on` têm um padrão do `case` contra a chamada ("docker compose up -d",
+ * "docker run *regents_pgdata*"): a chamada que casa sai com erro, ou (uma vez) mata o script que a
+ * fez, como uma queda ou um `kill -9`, sem trap.
  */
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -15,10 +21,12 @@ import { REPO_ROOT, type Sandbox, sandbox } from "./sandbox";
 
 export const RELEASE_SCRIPT = join(REPO_ROOT, "deploy/release.sh");
 /** As releases públicas, de onde o instalador baixa. */
-export const RELEASES = "https://github.com/rfl-designer/shearim/releases";
+export const RELEASES = "https://github.com/rfl-designer/regents/releases";
+/** As mesmas releases pelo nome antigo do repositório, que o updater de uma Instalação Shearim usa. */
+const OLD_RELEASES = "https://github.com/rfl-designer/shearim/releases";
 /** A chamada que baixa o compose da release `tag` (sem tag: a última). */
 export const download = (tag?: string) =>
-  `curl -fsSL ${RELEASES}/${tag ? `download/${tag}` : "latest/download"}/shearim-compose.tar.gz`;
+  `curl -fsSL ${RELEASES}/${tag ? `download/${tag}` : "latest/download"}/regents-compose.tar.gz`;
 
 export type Tailnet = { magicDNS?: boolean; https?: boolean; tagged?: boolean; running?: boolean };
 
@@ -29,11 +37,11 @@ export function tailnetStatus({ magicDNS = true, https = true, tagged = true, ru
       BackendState: running ? "Running" : "NeedsLogin",
       Self: {
         ID: "n1",
-        HostName: "shearim",
-        DNSName: "shearim.tail1234.ts.net.",
-        ...(tagged ? { Tags: ["tag:shearim"] } : {}),
+        HostName: "regents",
+        DNSName: "regents.tail1234.ts.net.",
+        ...(tagged ? { Tags: ["tag:regents"] } : {}),
       },
-      CertDomains: https ? ["shearim.tail1234.ts.net"] : null,
+      CertDomains: https ? ["regents.tail1234.ts.net"] : null,
       CurrentTailnet: { Name: "time.example", MagicDNSSuffix: "tail1234.ts.net", MagicDNSEnabled: magicDNS },
     },
     null,
@@ -50,21 +58,36 @@ export type World = Sandbox & {
   installDir: string;
 };
 
+/** A injeção de falha e de interrupção, no começo de um dublê: o que o teste pediu para esta chamada. */
+const faultInjection = (name: string) => `call="${name} $*"
+if [ -f "$STATE/interrupt-on" ]; then
+  pat=$(cat "$STATE/interrupt-on")
+  case "$call" in $pat) rm -f "$STATE/interrupt-on"; kill -9 "$PPID"; exit 137 ;; esac
+fi
+if [ -f "$STATE/fail-on" ]; then
+  pat=$(cat "$STATE/fail-on")
+  case "$call" in $pat) echo "${name} falso: falha pedida pelo teste" >&2; exit 1 ;; esac
+fi`;
+
 export async function world({ os = "Darwin" }: { os?: "Darwin" | "Linux" } = {}): Promise<World> {
   const s = sandbox();
   const set = (file: string, content = "") => writeFileSync(join(s.state, file), content);
   set("os", os);
   set("docker-up");
   set("tailnet.json", tailnetStatus());
+  mkdirSync(join(s.state, "running"));
 
   s.fake("uname", `case "$1" in -m) echo arm64 ;; *) cat "$STATE/os" ;; esac`);
   s.fake("sleep");
   s.fake(
     "docker",
-    `up() {
+    `${faultInjection("docker")}
+up() {
   [ -f "$STATE/docker-up" ] || { echo "Cannot connect to the Docker daemon. Is the docker daemon running?" >&2; exit 1; }
   if [ -f "$STATE/docker-needs-sudo" ] && [ -z "\${AS_ROOT:-}" ]; then echo "permission denied while trying to connect to the Docker daemon socket" >&2; exit 1; fi
 }
+# O projeto do Compose: o name: do compose.yaml (ou do -f).
+project() { f=compose.yaml; prev=""; for a; do [ "$prev" = -f ] && f=$a; prev=$a; done; sed -n 's/^name: *//p' "$f" | head -n 1; }
 case "$*" in
   "info --format {{.OperatingSystem}}") up; if [ -f "$STATE/docker-os" ]; then cat "$STATE/docker-os"; else echo "Docker Desktop"; fi ;;
   info*) up ;;
@@ -72,14 +95,44 @@ case "$*" in
   "login ghcr.io"*) up; cat >"$STATE/docker-login-stdin" ;;
   "compose exec -T tailscale"*) cat "$STATE/tailnet.json" ;;
   "compose ps app --format {{.Health}}") if [ -f "$STATE/health" ]; then cat "$STATE/health"; else echo healthy; fi ;;
-  "compose config"*) [ -f "$STATE/config-fails" ] && { echo "required variable SHEARIM_VAPID_CONTACT is missing a value" >&2; exit 1; }; up ;;
+  *"exec -T postgres pg_dump"*)
+    up; [ -f "$STATE/running/$(project "$@")" ] || { echo "service \\"postgres\\" is not running" >&2; exit 1; }
+    echo "dump falso" ;;
+  # Os volumes: uma pasta cada em $STATE/volumes/<nome>.
+  "volume inspect "*) up; [ -d "$STATE/volumes/$3" ] || { echo "Error: No such volume: $3" >&2; exit 1; } ;;
+  "volume create "*) up; for name; do :; done; mkdir -p "$STATE/volumes/$name"; echo "$name" ;;
+  # \`docker run --rm -v <volume>:<ponto>[:ro]... <imagem> sh -c <script>\`: o script roda aqui, com
+  # cada ponto de montagem trocado pela pasta do volume.
+  "run "*)
+    up; shift; subs="" script=""
+    while [ $# -gt 0 ]; do case "$1" in
+      --rm) ;;
+      -v) vol=\${2%%:*}; at=\${2#*:}; at=\${at%%:*}; mkdir -p "$STATE/volumes/$vol"; subs="$subs -e s#$at#$STATE/volumes/$vol#g"; shift ;;
+      sh) script=$3; break ;;
+      *) ;;
+    esac; shift; done
+    [ -n "$script" ] || { echo "docker falso: run sem sh -c" >&2; exit 1; }
+    # shellcheck disable=SC2086
+    sh -c "$(printf '%s' "$script" | sed $subs)" ;;
+  "compose config"*)
+    # Como o Compose: cada \${VAR:?mensagem} do compose.yaml precisa da VAR no .env.
+    for v in $(sed -n 's/.*\${\\([A-Z_]*\\):?.*/\\1/p' compose.yaml); do
+      grep -q "^$v=." .env 2>/dev/null && continue
+      msg=$(sed -n "s/.*\\\${$v:?\\([^}]*\\)}.*/\\1/p" compose.yaml | head -n 1)
+      echo "error while interpolating: required variable $v is missing a value: $msg" >&2
+      exit 1
+    done
+    up ;;
+  compose*" up -d"*) up; touch "$STATE/running/$(project "$@")" ;;
+  compose*" down"*) up; rm -f "$STATE/running/$(project "$@")" ;;
   compose*) up ;;
   *) echo "docker falso: não sei responder a $*" >&2; exit 1 ;;
 esac`,
   );
   s.fake(
     "launchctl",
-    `case "$1" in
+    `${faultInjection("launchctl")}
+case "$1" in
   print) [ -f "$STATE/launchagent" ] ;;
   bootstrap) touch "$STATE/launchagent" ;;
   bootout) rm -f "$STATE/launchagent" ;;
@@ -103,11 +156,14 @@ esac`,
   s.fake("open", `case "$*" in "-a OrbStack"|"-a Docker") touch "$STATE/docker-up" ;; *) exit 1 ;; esac`);
   // Linux
   s.fake("sudo", `AS_ROOT=1 exec "$@"`);
-  // O script oficial do Docker e as releases públicas; o resto é 404 (o `-f` sai com 22).
+  // O script oficial do Docker e as releases públicas; o resto é 404 (o `-f` sai com 22). As
+  // releases pelo nome antigo do repositório vêm das mesmas: o GitHub redireciona o nome antigo.
   s.fake(
     "curl",
-    `out="" url=""
+    `${faultInjection("curl")}
+out="" url=""
 while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift ;; -*) ;; *) url=$1 ;; esac; shift; done
+case "$url" in ${OLD_RELEASES}/*) url=${RELEASES}\${url#${OLD_RELEASES}} ;; esac
 case "$url" in
   https://get.docker.com) cp "$STATE/get-docker.sh" "$out" ;;
   ${RELEASES}/latest/download/*)
@@ -151,7 +207,7 @@ esac`,
     hide(name) {
       renameSync(join(s.root, "bin", name), join(s.state, `hidden-${name}`));
     },
-    installDir: join(s.home, "shearim"),
+    installDir: join(s.home, "regents"),
     async release(version) {
       const dir = join(s.state, "releases", `v${version}`);
       mkdirSync(dir, { recursive: true });
@@ -164,9 +220,9 @@ esac`,
 }
 
 /** As variáveis com que o setup não pergunta nada (o caminho do instalador sem terminal). */
-export const SETUP_ENV = { TS_AUTHKEY: "tskey-auth-falsa", SHEARIM_CONTACT_EMAIL: "rafa@example.com" };
+export const SETUP_ENV = { TS_AUTHKEY: "tskey-auth-falsa", REGENTS_CONTACT_EMAIL: "rafa@example.com" };
 
-/** O `${SHEARIM_VERSION:-<versão>}` do compose da release: a tag que sobe sem nada no .env. */
-export const composeTag = (version: string) => `\${SHEARIM_VERSION:-${version}}`;
+/** O `${REGENTS_VERSION:-<versão>}` do compose da release: a tag que sobe sem nada no .env. */
+export const composeTag = (version: string) => `\${REGENTS_VERSION:-${version}}`;
 
 export { REPO_ROOT };

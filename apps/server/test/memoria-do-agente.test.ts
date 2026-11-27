@@ -7,7 +7,7 @@
  * inclusive, e apagar o Agente a leva junto, deixando a Memória da Conversa que ele gerou.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, DmDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, DmDto, MemoryItemDto, MessageDto } from "@regents/contracts";
 import { eq } from "drizzle-orm";
 import { schema } from "../src/db/client";
 import { eventually, type Person, type TestApp, testApp } from "./harness";

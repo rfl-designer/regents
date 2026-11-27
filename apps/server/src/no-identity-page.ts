@@ -1,4 +1,4 @@
-import { NO_IDENTITY_TEXT, type NoIdentityReason } from "@shearim/contracts";
+import { NO_IDENTITY_TEXT, type NoIdentityReason } from "@regents/contracts";
 
 const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
@@ -13,7 +13,7 @@ export function noIdentityPage(reason: NoIdentityReason): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shearim: não sabemos quem é você</title>
+<title>Regents: não sabemos quem é você</title>
 <style>
   :root { color-scheme: light dark; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   body { margin: 0; min-height: 100vh; display: grid; place-content: center; padding: 16px; background: Canvas; color: CanvasText; }
@@ -28,7 +28,7 @@ export function noIdentityPage(reason: NoIdentityReason): string {
   <h1>Não sabemos quem é você</h1>
   <p>${escapeHtml(text.why)}</p>
   <p><strong>O que fazer:</strong> ${escapeHtml(text.whatToDo)}</p>
-  <p class="muted">O Shearim reconhece cada pessoa pela conta dela na tailnet. Sem essa conta, não dá para entrar nem pedir para entrar.</p>
+  <p class="muted">O Regents reconhece cada pessoa pela conta dela na tailnet. Sem essa conta, não dá para entrar nem pedir para entrar.</p>
 </main>
 </body>
 </html>

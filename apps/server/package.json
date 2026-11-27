@@ -1,9 +1,9 @@
 {
-  "name": "@shearim/server",
+  "name": "@regents/server",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "SHEARIM_IDENTITY=dev HOST=127.0.0.1 bun --watch src/main.ts serve",
+    "dev": "REGENTS_IDENTITY=dev HOST=127.0.0.1 bun --watch src/main.ts serve",
     "typecheck": "tsc -p .",
     "db:generate": "drizzle-kit generate"
   },
@@ -11,7 +11,7 @@
     "@anthropic-ai/sdk": "1.8.0",
     "@electric-sql/pglite": "0.5.17",
     "@modelcontextprotocol/sdk": "1.32.2",
-    "@shearim/contracts": "workspace:*",
+    "@regents/contracts": "workspace:*",
     "drizzle-orm": "0.45.4",
     "hono": "4.13.20",
     "postgres": "3.4.9",

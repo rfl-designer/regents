@@ -1,5 +1,5 @@
 import { createPrivateKey, sign } from "node:crypto";
-import type { GitHubDto } from "@shearim/contracts";
+import type { GitHubDto } from "@regents/contracts";
 import { asc, eq, inArray } from "drizzle-orm";
 import { lockLiveAgent } from "../agents";
 import type { Clock } from "../clock";
@@ -64,7 +64,7 @@ export const INSTALLATION_GONE =
 const API_HEADERS = {
   accept: "application/vnd.github+json",
   "x-github-api-version": "2022-11-28",
-  "user-agent": "shearim",
+  "user-agent": "regents",
 };
 
 /**

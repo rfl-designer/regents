@@ -35,7 +35,7 @@ export function DevicesView({ push }: { push: PushState }) {
       )}
       {outcome?.kind === "blocked" && (
         <p role="alert">
-          As notificações estão bloqueadas neste navegador. Libere as notificações do Shearim nas configurações do site.
+          As notificações estão bloqueadas neste navegador. Libere as notificações do Regents nas configurações do site.
         </p>
       )}
       {outcome?.kind === "failed" && <p role="alert">Não consegui ligar as notificações: {outcome.detail}</p>}

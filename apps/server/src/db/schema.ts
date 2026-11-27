@@ -1,4 +1,4 @@
-import type { YourAccountDto } from "@shearim/contracts";
+import type { YourAccountDto } from "@regents/contracts";
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
@@ -767,7 +767,7 @@ export const connectorLogins = pgTable("connector_logins", {
 
 /**
  * O catálogo de cada Conector, como o `tools/list` dele o devolveu da última vez (relido quando o
- * Admin abre o Conector). `tool` é o id no Shearim; `name`, o do servidor. Só `readOnly` é leitura.
+ * Admin abre o Conector). `tool` é o id no Regents; `name`, o do servidor. Só `readOnly` é leitura.
  */
 export const connectorTools = pgTable(
   "connector_tools",
@@ -840,7 +840,7 @@ export const approvalState = pgEnum("approval_state", ["pending", "approved", "r
 /**
  * Os Pedidos de aprovação (ADR 0011): a escrita que um Agente pediu numa execução, guardada com a
  * ação exata (a Ferramenta, os argumentos e o hash deles) e o resumo que o autor da mensagem de
- * origem aprova ou recusa. Na aprovação, o Shearim executa a ação guardada; o resultado (ou a
+ * origem aprova ou recusa. Na aprovação, o Regents executa a ação guardada; o resultado (ou a
  * falha) e a recusa vão à execução de continuação.
  */
 export const approvalRequests = pgTable(
@@ -880,7 +880,7 @@ export const approvalRequests = pgTable(
     result: text(),
     failure: text(),
     /**
-     * A ação aprovada pode ter sido feita lá fora sem o Shearim saber (estourou o prazo, o servidor
+     * A ação aprovada pode ter sido feita lá fora sem o Regents saber (estourou o prazo, o servidor
      * reiniciou no meio): `failure` diz por quê e onde conferir.
      */
     uncertain: boolean().notNull().default(false),
@@ -915,7 +915,7 @@ export const githubApp = pgTable(
     installationId: bigint({ mode: "number" }),
     installationAccount: text(),
     installedAt: timestamp({ withTimezone: true }),
-    /** A instalação que o GitHub deixou de reconhecer: o motivo e quando o Shearim viu. */
+    /** A instalação que o GitHub deixou de reconhecer: o motivo e quando o Regents viu. */
     failureReason: text(),
     failedAt: timestamp({ withTimezone: true }),
   },

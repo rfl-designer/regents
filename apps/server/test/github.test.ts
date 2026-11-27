@@ -21,7 +21,7 @@ import type {
   ExecutionDto,
   GitHubDto,
   MessageDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { schema } from "../src/db/client";
 import type { FakeGitHub } from "./fakes/github-api";
 import { toolResults } from "./fakes/messages-api";
@@ -98,6 +98,32 @@ describe("criar o GitHub App pelo manifest", () => {
       app: { slug: gh.app!.slug, owner: "time" },
       installation: null,
     });
+  });
+
+  test('o App novo se chama "Regents <hostname>" no GitHub, com no máximo 34 caracteres', async () => {
+    const { t, gh } = await semGitHub();
+    await criarApp(t);
+    expect(gh.app!.manifest.name).toBe("Regents shearim");
+    expect((await github(t)).app!.name).toBe("Regents shearim");
+
+    // O GitHub não aceita nome de App com mais de 34 caracteres: o hostname longo é cortado.
+    const longo = await semGitHub();
+    const res = await longo.t.as(juliana).post("/api/github/manifest", {
+      origin: "https://instalacao-do-time-comercial-da-extraevo.time.ts.net",
+    });
+    const { manifest } = (await res.json()) as { manifest: string };
+    expect(JSON.parse(manifest).name).toBe("Regents instalacao-do-time-comerci");
+  });
+
+  test("um App criado antes, com o nome Shearim, continua com o nome dele e funciona", async () => {
+    const { t, gh } = await semGitHub();
+    gh.repo({ fullName: "time/site" });
+    // O Admin criou o App quando o produto ainda se chamava Shearim; o nome é do GitHub.
+    gh.nameNextApp("Shearim shearim");
+    await criarApp(t, { organization: "time" });
+    await instalar(t, gh, { repositories: ["time/site"] });
+
+    expect(await github(t)).toMatchObject({ state: "installed", app: { name: "Shearim shearim" }, failure: null });
   });
 
   test("a chave privada e os segredos do App ficam cifrados, nunca em texto puro no banco nem na API", async () => {
@@ -345,6 +371,8 @@ describe("as leituras do GitHub", () => {
       // E nenhuma chamada à API saiu sem token de instalação.
       expect(gh.calls.length).toBeGreaterThanOrEqual(6);
       expect(gh.calls.every((c) => c.token !== null && c.status === 200)).toBe(true);
+      // O GitHub vê o Regents como quem chama.
+      expect(new Set(gh.calls.map((c) => c.userAgent))).toEqual(new Set(["regents"]));
     },
     LONGO,
   );

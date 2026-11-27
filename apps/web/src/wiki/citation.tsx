@@ -1,4 +1,4 @@
-import { type WikiCitationDto, wikiCitationParts, wikiPagePath } from "@shearim/contracts";
+import { type WikiCitationDto, wikiCitationParts, wikiPagePath } from "@regents/contracts";
 import { createContext, Fragment, type MouseEvent, type ReactNode, useContext } from "react";
 
 /** A página da Wiki que o App abre: a versão atual, ou a versão `version` (a da citação). */

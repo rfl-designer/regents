@@ -316,6 +316,13 @@
       "when": 1795671471369,
       "tag": "0044_apagar-wiki",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1795719613587,
+      "tag": "0045_nome-da-articuladora",
+      "breakpoints": true
     }
   ]
 }

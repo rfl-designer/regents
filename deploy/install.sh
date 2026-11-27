@@ -1,14 +1,14 @@
 #!/bin/sh
-# Instalador de uma linha do Shearim (Spec, histórias 1 a 6 e 8; módulo 13). Em Mac ou Linux:
+# Instalador de uma linha do Regents (Spec, histórias 1 a 6 e 8; módulo 13). Em Mac ou Linux:
 #
-#   curl -fsSL https://github.com/rfl-designer/shearim/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/rfl-designer/regents/releases/latest/download/install.sh | sh
 #
 # As releases e a imagem no GHCR são públicas: não precisa de conta no GitHub. O que faz, nesta ordem:
 # 1. Confere o `curl`.
 # 2. Garante o Docker. No Linux: o Docker Engine e o Compose (pelo script oficial, depois de
 #    perguntar). No Mac: o Docker que existe (Docker Desktop, OrbStack ou Colima) ou, depois de
 #    perguntar, o Colima pelo Homebrew.
-# 3. Baixa o compose da release em ~/shearim (--dir muda).
+# 3. Baixa o compose da release em ~/regents (--dir muda).
 # 4. Roda o deploy/setup.sh: pede só a auth key do Tailscale e um e-mail, gera os segredos e confere
 #    MagicDNS e HTTPS.
 # 5. `docker compose pull` e `docker compose up -d`, e espera o app responder.
@@ -16,10 +16,11 @@
 # 7. Imprime o checklist "Mantê-lo rodando", com o que o terminal conseguiu verificar marcado.
 #
 # Pode rodar de novo: nunca troca um segredo nem o .env. Opções:
-#   --dir <pasta>      onde fica a Instalação (padrão: ~/shearim)
+#   --dir <pasta>      onde fica a Instalação (padrão: ~/regents)
 #   --version <tag>    a release (padrão: a deste instalador; sem ela, a última)
 #   --yes              instala ou inicia o Docker sem perguntar
-#   --update           atualiza uma Instalação (é o que o deploy/update.sh roda)
+#   --update           atualiza uma Instalação (é o que o deploy/update.sh roda); numa Instalação
+#                      que ainda é Shearim, faz antes a migração do nome (veja o README)
 #
 # Tudo fica dentro de main, chamada na última linha: um download pela metade não roda nada, e a
 # atualização pode trocar este arquivo enquanto ele roda.
@@ -32,13 +33,15 @@ RELEASE_TAG=""
 
 main() {
   set -eu
-  REPO=${SHEARIM_REPO:-rfl-designer/shearim}
+  REPO=${REGENTS_REPO:-rfl-designer/regents}
   RELEASES=https://github.com/$REPO/releases
-  ASSET=shearim-compose.tar.gz
-  LABEL=com.shearim.acordado
-  TTY=${SHEARIM_TTY:-/dev/tty}
-  WAIT_SECONDS=${SHEARIM_WAIT_SECONDS:-180}
-  DIR=$HOME/shearim
+  ASSET=regents-compose.tar.gz
+  LABEL=com.regents.acordado
+  # O LaunchAgent do Shearim, que a migração do nome tira.
+  OLD_LABEL=com.shearim.acordado
+  TTY=${REGENTS_TTY:-/dev/tty}
+  WAIT_SECONDS=${REGENTS_WAIT_SECONDS:-180}
+  DIR=$HOME/regents
   TAG=$RELEASE_TAG
   TAG_GIVEN=0
   YES=0
@@ -67,13 +70,13 @@ main() {
   if ! (exec <"$TTY") 2>/dev/null; then TTY=/dev/null; fi
   exec 3<"$TTY"
 
-  WORK=$(mktemp -d "${TMPDIR:-/tmp}/shearim-install.XXXXXX")
-  trap 'rm -rf "$WORK"' EXIT
+  WORK=$(mktemp -d "${TMPDIR:-/tmp}/regents-install.XXXXXX")
+  trap on_exit EXIT
 
   OS=$(uname -s)
   case "$OS" in
     Darwin | Linux) ;;
-    *) fail "o Shearim instala em Mac ou Linux, e este computador é $OS." ;;
+    *) fail "o Regents instala em Mac ou Linux, e este computador é $OS." ;;
   esac
 
   if [ "$MODE" = update ]; then
@@ -86,7 +89,7 @@ main() {
   ensure_docker
   download
   run_setup
-  if [ "$SETUP_OK" = 1 ]; then start_shearim; fi
+  if [ "$SETUP_OK" = 1 ]; then start_regents; fi
   if [ "$OS" = Darwin ]; then keep_awake; fi
   checklist
 
@@ -97,7 +100,7 @@ main() {
   fi
   if [ "$HEALTHY" = 0 ]; then
     say ""
-    say "O Shearim não respondeu em $WAIT_SECONDS s. Veja 'cd $DIR && docker compose logs app'."
+    say "O Regents não respondeu em $WAIT_SECONDS s. Veja 'cd $DIR && docker compose logs app'."
     return 1
   fi
   say ""
@@ -118,41 +121,264 @@ ensure_docker() {
 
 update() {
   [ -f "$DIR/compose.yaml" ] && [ -f "$DIR/.env" ] ||
-    fail "$DIR não parece uma Instalação do Shearim (falta compose.yaml ou .env). Para instalar, rode o instalador."
+    fail "$DIR não parece uma Instalação do Regents (falta compose.yaml ou .env). Para instalar, rode o instalador."
   # A tag gravada neste instalador é a da versão de agora: sem --version, a atualização vai para a última.
   if [ "$TAG_GIVEN" = 0 ]; then TAG=""; fi
   need_curl
   ensure_docker
   cd "$DIR"
-  from=$(compose_version)
+  from_version=$(compose_version)
 
   mkdir -p "$WORK/antes"
   cp -R compose.yaml deploy "$WORK/antes/"
+  if still_shearim; then
+    rename_installation
+    return
+  fi
   download
   if ! docker compose config -q; then
     rm -rf compose.yaml deploy
     cp -R "$WORK/antes/compose.yaml" "$WORK/antes/deploy" .
     fail "o compose da $TAG não fecha com o seu .env (veja acima). Voltei o compose de antes; nada foi reiniciado."
   fi
-  pinned=$(sed -n 's/^SHEARIM_VERSION=//p' .env | tail -n 1)
-  if [ -n "$pinned" ]; then
-    say "AVISO: o .env fixa SHEARIM_VERSION=$pinned: sobe essa versão, não a da release. Apague a linha para seguir as releases."
-  fi
+  warn_pinned
 
-  start_shearim
+  start_regents
   if [ "$HEALTHY" = 0 ]; then
-    fail "o Shearim não respondeu em $WAIT_SECONDS s depois de atualizar. Veja 'docker compose logs app'."
+    fail "o Regents não respondeu em $WAIT_SECONDS s depois de atualizar. Veja 'docker compose logs app'."
   fi
-  say "ok: Shearim atualizado de $from para $(compose_version)"
+  say "ok: Regents atualizado de $from_version para $(compose_version)"
 }
 
-# A versão que o compose (o da pasta, ou o arquivo dado) sobe por padrão: a da release.
-compose_version() { sed -n 's/.*SHEARIM_VERSION:-\([^}]*\)}.*/\1/p' "${1:-compose.yaml}" | head -n 1; }
+warn_pinned() {
+  pinned=$(sed -n 's/^REGENTS_VERSION=//p' .env | tail -n 1)
+  if [ -n "$pinned" ]; then
+    say "AVISO: o .env fixa REGENTS_VERSION=$pinned: sobe essa versão, não a da release. Apague a linha para seguir as releases."
+  fi
+}
+
+# Os projetos do Compose do Shearim e do Regents: o nome de cada volume começa por um deles.
+OLD_PROJECT=shearim
+PROJECT=regents
+# Os volumes do projeto do Compose que a migração do nome copia, e os do Shearim que ela achou.
+VOLUMES="ts-state ts-socket pgdata contas"
+OLD_VOLUMES=""
+# A migração do nome que não terminou: as marcas dos passos feitos e, em antes/, o compose e o
+# deploy/ do Shearim.
+MIGRATION=.migracao-regents
+ANTES=$MIGRATION/antes
+
+# Uma Instalação que ainda é Shearim: uma migração do nome que não terminou (a pasta
+# .migracao-regents), o .env só com SHEARIM_*, ou o banco só no volume do projeto shearim. Sem
+# nenhum dos três, a atualização é a de sempre.
+still_shearim() {
+  if [ -d "$MIGRATION" ]; then return 0; fi
+  if grep -q '^SHEARIM_' .env && ! grep -q '^REGENTS_' .env; then return 0; fi
+  docker volume inspect "${OLD_PROJECT}_pgdata" >/dev/null 2>&1 &&
+    ! docker volume inspect "${PROJECT}_pgdata" >/dev/null 2>&1
+}
+
+# O compose do projeto shearim, com o .env de antes (o .env.shearim, depois que o .env mudou) e os
+# caminhos da pasta.
+shearim_compose() {
+  shearim_env=.env
+  if [ -f .env.shearim ]; then shearim_env=.env.shearim; fi
+  docker compose --project-directory "$DIR" --env-file "$DIR/$shearim_env" -f "$DIR/$ANTES/compose.yaml" "$@"
+}
+
+# A migração do nome (spec #96), uma vez: a Instalação Shearim passa a ser Regents com os mesmos
+# dados e a mesma URL. Cada passo pode rodar de novo, e uma execução interrompida continua de onde
+# parou: o compose e o deploy/ do Shearim, o backup e os volumes já copiados ficam em
+# .migracao-regents/, e o .env novo sai sempre do .env.shearim, o .env de antes. Uma falha volta
+# tudo para o Shearim (rename_failed).
+rename_installation() {
+  old_host=$(sed -n 's/^TS_HOSTNAME=//p' .env | tail -n 1)
+  old_host=${old_host:-shearim}
+  say ""
+  say "Esta Instalação ainda é Shearim. A atualização faz a migração do nome, uma vez:"
+  say "  muda: o .env passa de SHEARIM_* para REGENTS_* (o de antes fica em .env.shearim)"
+  say "  muda: os volumes shearim_* são copiados para regents_* (shearim_pgdata para regents_pgdata,"
+  say "        e também ts-state, ts-socket e contas); os shearim_* ficam como estão"
+  say "  muda: o projeto do Compose passa de shearim para o projeto regents, depois de um backup"
+  say "  fica: o hostname $old_host e a URL, a tag tag:shearim e o papel e o banco shearim do Postgres"
+  say "  fica: a pasta $DIR"
+  agree "Fazer a migração do nome agora?" ||
+    fail "Nada mudou. A migração do nome precisa do seu sim: rode num terminal, ou com --yes para não perguntar."
+  mkdir -p "$MIGRATION"
+  if [ ! -d "$ANTES" ]; then
+    rm -rf "$ANTES.partial"
+    mkdir "$ANTES.partial"
+    cp -R compose.yaml deploy "$ANTES.partial/"
+    mv "$ANTES.partial" "$ANTES"
+  fi
+  old_version=$(compose_version "$ANTES/compose.yaml")
+  # Daqui até o app novo responder, toda saída com erro (um fail ou um comando que falha com o
+  # set -e) passa pela volta para o Shearim: on_exit chama rename_failed.
+  RENAMING=1
+  download
+  backup_shearim
+  shearim_compose down || fail "o 'docker compose down' do projeto shearim falhou (veja acima)."
+  copy_volumes
+  rename_env
+  docker compose config -q || fail "o compose da $TAG não fecha com o .env novo (veja acima)."
+  warn_pinned
+  if [ "$OS" = Darwin ]; then rename_keep_awake; fi
+  start_regents
+  if [ "$HEALTHY" = 0 ]; then
+    fail "o Regents não respondeu em $WAIT_SECONDS s. Veja 'docker compose logs app'."
+  fi
+  RENAMING=0
+  rm -rf "$MIGRATION"
+  say "ok: o Shearim $old_version agora é o Regents $(compose_version)"
+  say ""
+  say "Os volumes do Shearim ficaram como estavam, para voltar se algo der errado:$OLD_VOLUMES"
+  say "Quando o Regents estiver bem, apague-os para liberar o disco:"
+  say "  docker volume rm$OLD_VOLUMES"
+  say ""
+  say "O hostname ($old_host) e a tag (tag:shearim) ficaram os de antes, e a URL é a mesma. Para trocar,"
+  say "mude TS_HOSTNAME (e REGENTS_TAILNET_TAG, que também vai para os tagOwners da tailnet) no"
+  say "$DIR/.env e rode 'docker compose up -d'. A URL muda, e param: o app na Tela de Início (instale"
+  say "de novo), as notificações push (cada aparelho liga de novo) e o GitHub App da Instalação (a URL"
+  say "de callback é a antiga). Veja \"Migração do nome\" no README."
+}
+
+# Uma migração que falhou antes de o app novo responder (ADR 0003: o Shearim de pé, com o motivo):
+# o projeto regents sai, o compose, o deploy/ e o .env de antes voltam e o projeto shearim sobe com
+# os volumes shearim_*. Os volumes regents_* ficam, e a próxima tentativa os completa. O Shearim
+# volta a escrever nos shearim_*, então o backup e as cópias desta tentativa deixam de valer: a
+# próxima faz de novo. Só on_exit a chama, uma vez, sem o set -e: cada passo da volta tenta, mesmo
+# se o anterior falhou, e a mensagem diz o que voltou.
+rename_failed() {
+  # Os dois projetos juntos teriam o mesmo hostname na tailnet.
+  if grep -q "^name: $PROJECT\$" compose.yaml 2>/dev/null; then docker compose down >/dev/null 2>&1 || true; fi
+  for mark in backup $VOLUMES; do rm -f "$MIGRATION/$mark"; done
+  restored=1
+  if ! { rm -rf compose.yaml deploy && cp -R "$ANTES/compose.yaml" "$ANTES/deploy" .; }; then restored=0; fi
+  if [ -f .env.shearim ]; then
+    # O .env pode ainda ser o de antes (a falha veio antes do .env novo): aí não há o que escrever.
+    if cmp -s .env.shearim .env || cat .env.shearim >.env; then rm -f .env.shearim; else restored=0; fi
+  fi
+  if [ "$restored" = 1 ]; then
+    back="Voltei o compose, o deploy/ e o .env de antes"
+  else
+    back="Não consegui voltar tudo (veja acima): o compose e o deploy/ do Shearim estão em $DIR/$ANTES, e o .env de antes em $DIR/.env.shearim"
+  fi
+  # O shearim_compose usa os de antes onde estiverem: o Shearim sobe mesmo se a volta não terminou.
+  if shearim_compose up -d; then
+    back="$back, e o Shearim subiu de novo com os volumes shearim_*."
+  elif [ "$restored" = 1 ]; then
+    back="$back, mas o Shearim não subiu (veja acima): rode 'cd $DIR && docker compose up -d'."
+  else
+    back="$back, e o Shearim também não subiu (veja acima)."
+  fi
+  printf 'regents install: a migração do nome parou: %s %s Os volumes regents_* ficaram; para tentar de novo, rode o instalador com --update outra vez.\n' \
+    "$1" "$back" >&2
+}
+
+# No Mac, o LaunchAgent que não deixa o Mac dormir troca de nome: sai o do Shearim, entra o do Regents.
+rename_keep_awake() {
+  launchctl bootout "gui/$(id -u)/$OLD_LABEL" >/dev/null 2>&1 || true
+  rm -f "$HOME/Library/LaunchAgents/$OLD_LABEL.plist"
+  keep_awake
+  say "ok: no Mac, $LABEL no lugar de $OLD_LABEL"
+}
+
+# O backup de antes da migração, com o Shearim ainda de pé: o pg_dump do Postgres da Instalação, no
+# formato dos backups da noite, em ./backups (um pre-migracao, que a retenção não apaga). Numa
+# execução depois de uma interrompida, o backup dela ainda vale: o Shearim não rodou desde então.
+backup_shearim() {
+  if [ -f "$MIGRATION/backup" ]; then return 0; fi
+  backup_file=backups/shearim-pre-migracao-$(date -u +%Y%m%dT%H%M%SZ).dump
+  mkdir -p backups
+  if ! shearim_compose exec -T postgres pg_dump -U shearim -d shearim --format=custom --no-owner --no-privileges \
+    >"$backup_file.partial"; then
+    rm -f "$backup_file.partial"
+    fail "o backup de antes da migração falhou (veja acima). Nada foi parado."
+  fi
+  mv "$backup_file.partial" "$backup_file"
+  touch "$MIGRATION/backup"
+  say "ok: backup de antes da migração em $DIR/$backup_file"
+}
+
+# Cada volume shearim_<nome> vai para regents_<nome>, com o mesmo dono e as mesmas permissões
+# (cp -a como root, na imagem do Postgres que a Instalação já tem). O de origem não muda.
+copy_volumes() {
+  copy_image=$(sed -n 's/^ *image: \(postgres:[^ ]*\)$/\1/p' compose.yaml | head -n 1)
+  mkdir -p "$MIGRATION"
+  OLD_VOLUMES=""
+  for v in $VOLUMES; do
+    old_volume=${OLD_PROJECT}_$v
+    new_volume=${PROJECT}_$v
+    docker volume inspect "$old_volume" >/dev/null 2>&1 || continue
+    OLD_VOLUMES="$OLD_VOLUMES $old_volume"
+    if [ -f "$MIGRATION/$v" ] && docker volume inspect "$new_volume" >/dev/null 2>&1; then continue; fi
+    docker volume inspect "$new_volume" >/dev/null 2>&1 ||
+      docker volume create --label "com.docker.compose.project=$PROJECT" --label "com.docker.compose.volume=$v" \
+        "$new_volume" >/dev/null || fail "não consegui criar o volume $new_volume."
+    docker run --rm -v "$old_volume:/antigo:ro" -v "$new_volume:/novo" "$copy_image" \
+      sh -c 'rm -rf /novo/* /novo/.[!.]* /novo/..?* && cp -a /antigo/. /novo/' ||
+      fail "não consegui copiar o volume $old_volume para $new_volume."
+    touch "$MIGRATION/$v"
+    say "ok: volume $old_volume copiado para $new_volume"
+  done
+}
+
+# O .env novo, a partir do de antes (guardado em .env.shearim): cada SHEARIM_<sufixo> vira
+# REGENTS_<sufixo> com o mesmo valor (se as duas existem, fica a REGENTS_), e entram o hostname, a
+# tag e o papel e o banco do Postgres do Shearim, que o compose novo lê do .env.
+rename_env() {
+  # Pelo .partial: uma interrupção no meio não deixa um .env.shearim pela metade.
+  if [ ! -f .env.shearim ]; then
+    cp -p .env .env.shearim.partial
+    mv .env.shearim.partial .env.shearim
+  fi
+  awk -v from=SHEARIM_ -v to=REGENTS_ '
+    function suffix(line) { return substr(line, length(from) + 1) }
+    NR == FNR { if ($0 ~ "^" to "[A-Za-z0-9_]*=") { key = $0; sub(/=.*/, "", key); have[key] = 1 }; next }
+    $0 ~ "^" from "[A-Za-z0-9_]*=" {
+      key = to suffix($0); sub(/=.*/, "", key)
+      if (key in have) next
+      $0 = to suffix($0)
+    }
+    { print }
+  ' .env.shearim .env.shearim >"$WORK/env"
+  env_kept=""
+  for line in TS_HOSTNAME=shearim REGENTS_TAILNET_TAG=tag:shearim REGENTS_POSTGRES_USER=shearim REGENTS_POSTGRES_DB=shearim; do
+    grep -q "^${line%%=*}=" "$WORK/env" || env_kept="$env_kept$line
+"
+  done
+  if [ -n "$env_kept" ]; then
+    printf '\n# Do Shearim: o hostname e a tag (a URL não muda) e o papel e o banco do Postgres. Veja o README.\n%s' \
+      "$env_kept" >>"$WORK/env"
+  fi
+  # Por cima, para o .env manter o dono e as permissões.
+  cat "$WORK/env" >.env
+  say "ok: .env com REGENTS_* (o de antes está em $DIR/.env.shearim)"
+}
+
+# A versão que o compose (o da pasta, ou o arquivo dado) sobe por padrão: a da release. O prefixo
+# não importa: o compose de uma Instalação que ainda é Shearim tem SHEARIM_VERSION.
+compose_version() { sed -n 's/.*_VERSION:-\([^}]*\)}.*/\1/p' "${1:-compose.yaml}" | head -n 1; }
 
 say() { printf '%s\n' "$*"; }
 fail() {
-  printf 'shearim install: %s\n' "$*" >&2
+  # No meio da migração do nome, o motivo vai para a volta (on_exit), que o mostra com o que voltou.
+  if [ "${RENAMING:-0}" = 1 ]; then RENAME_REASON=$*; else printf 'regents install: %s\n' "$*" >&2; fi
   exit 1
+}
+
+# A saída do script, por onde for (o fim de main, um fail, um comando que falha com o set -e): no
+# meio da migração do nome, volta para o Shearim antes de sair.
+on_exit() {
+  status=$?
+  if [ "${RENAMING:-0}" = 1 ]; then
+    RENAMING=0
+    set +e
+    rename_failed "${RENAME_REASON:-um comando falhou (veja acima).}"
+    [ "$status" != 0 ] || status=1
+  fi
+  rm -rf "$WORK"
+  exit "$status"
 }
 
 # wait_until COMANDO...: tenta a cada 2 s, até WAIT_SECONDS.
@@ -179,8 +405,8 @@ need_answers() {
   [ "$TTY" = /dev/null ] || return 0
   missing=""
   if [ -z "${TS_AUTHKEY:-}" ] && [ ! -s "$DIR/secrets/ts_authkey" ]; then missing="TS_AUTHKEY=tskey-auth-..."; fi
-  if [ -z "${SHEARIM_CONTACT_EMAIL:-}" ] && ! grep -q '^SHEARIM_VAPID_CONTACT=.' "$DIR/.env" 2>/dev/null; then
-    missing="${missing:+$missing }SHEARIM_CONTACT_EMAIL=voce@exemplo.com"
+  if [ -z "${REGENTS_CONTACT_EMAIL:-}" ] && ! grep -q '^REGENTS_VAPID_CONTACT=.' "$DIR/.env" 2>/dev/null; then
+    missing="${missing:+$missing }REGENTS_CONTACT_EMAIL=voce@exemplo.com"
   fi
   [ -z "$missing" ] ||
     fail "sem terminal para perguntar. Rode num terminal, ou passe $missing antes do sh."
@@ -214,10 +440,10 @@ has_app() {
 mac_docker() {
   # Onde o Homebrew, o Docker Desktop e o OrbStack põem os comandos, que o PATH de um `| sh` nem
   # sempre tem.
-  extra=${SHEARIM_EXTRA_PATH-/opt/homebrew/bin:/usr/local/bin:$HOME/.orbstack/bin:/Applications/Docker.app/Contents/Resources/bin}
+  extra=${REGENTS_EXTRA_PATH-/opt/homebrew/bin:/usr/local/bin:$HOME/.orbstack/bin:/Applications/Docker.app/Contents/Resources/bin}
   if [ -n "$extra" ]; then PATH=$PATH:$extra; fi
   export PATH
-  APPS=${SHEARIM_APPLICATIONS:-/Applications:$HOME/Applications}
+  APPS=${REGENTS_APPLICATIONS:-/Applications:$HOME/Applications}
 
   if ! docker_answers; then
     if has_app OrbStack; then
@@ -241,7 +467,7 @@ mac_start() {
   name=$1
   shift
   agree "O $name está neste Mac, mas parado. Iniciar agora?" ||
-    fail "o Shearim roda no Docker, e o $name não está rodando. Abra o $name e rode de novo (--yes inicia sem perguntar)."
+    fail "o Regents roda no Docker, e o $name não está rodando. Abra o $name e rode de novo (--yes inicia sem perguntar)."
   "$@" || fail "não consegui iniciar o $name."
   say "Esperando o $name responder..."
   wait_until docker_answers || fail "o $name não respondeu em $WAIT_SECONDS s. Abra o $name, espere e rode de novo."
@@ -254,7 +480,7 @@ colima_service() {
 
 install_colima() {
   agree "Este Mac não tem Docker. Instalar o Colima (o Docker de código aberto, sem janela) com o Homebrew e deixá-lo subir a cada login?" ||
-    fail "o Shearim roda no Docker, e este Mac não tem um. Instale o Docker Desktop, OrbStack ou Colima e rode de novo (ou responda sim para o instalador instalar o Colima; --yes não pergunta)."
+    fail "o Regents roda no Docker, e este Mac não tem um. Instale o Docker Desktop, OrbStack ou Colima e rode de novo (ou responda sim para o instalador instalar o Colima; --yes não pergunta)."
   command -v brew >/dev/null 2>&1 ||
     fail "para instalar o Colima falta o Homebrew: https://brew.sh (ou instale o Docker Desktop ou o OrbStack). Depois, rode de novo."
   brew install colima docker docker-compose || fail "o Homebrew não instalou o Colima (veja acima)."
@@ -277,7 +503,7 @@ docker_as_root() { as_root docker info >/dev/null 2>&1; }
 linux_docker() {
   if ! command -v docker >/dev/null 2>&1; then
     agree "Este computador não tem Docker. Instalar o Docker Engine e o Compose pelo script oficial (https://get.docker.com, com sudo)?" ||
-      fail "o Shearim roda no Docker. Instale o Docker Engine (https://docs.docker.com/engine/install/) e rode de novo, ou responda sim para o instalador instalar (--yes não pergunta)."
+      fail "o Regents roda no Docker. Instale o Docker Engine (https://docs.docker.com/engine/install/) e rode de novo, ou responda sim para o instalador instalar (--yes não pergunta)."
     curl -fsSL https://get.docker.com -o "$WORK/get-docker.sh" || fail "não consegui baixar https://get.docker.com."
     as_root sh "$WORK/get-docker.sh" || fail "o script oficial do Docker falhou (veja acima)."
     say "ok: Docker Engine instalado"
@@ -326,7 +552,7 @@ download() {
   curl -fsSL "$url" -o "$WORK/$ASSET" ||
     fail "não consegui baixar $url (veja acima)."
   mkdir -p "$DIR"
-  tar -xzf "$WORK/$ASSET" -C "$DIR"
+  tar -xzf "$WORK/$ASSET" -C "$DIR" || fail "não consegui abrir $ASSET, o compose da release (veja acima)."
   if [ -z "$TAG" ]; then TAG=v$(compose_version "$DIR/compose.yaml"); fi
   say "ok: release $TAG em $DIR"
 }
@@ -342,12 +568,12 @@ run_setup() {
 
 app_healthy() { [ "$(docker compose ps app --format '{{.Health}}' 2>/dev/null)" = healthy ]; }
 
-start_shearim() {
+start_regents() {
   HEALTHY=0
   docker compose pull || fail "o 'docker compose pull' falhou (veja acima)."
   docker compose up -d || fail "o 'docker compose up -d' falhou (veja acima)."
   UP=1
-  say "Esperando o Shearim responder..."
+  say "Esperando o Regents responder..."
   if wait_until app_healthy; then HEALTHY=1; fi
 }
 
@@ -359,7 +585,7 @@ keep_awake() {
   cat >"$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Instalado pelo instalador do Shearim: o Mac não dorme enquanto o Docker está de pé. -->
+<!-- Instalado pelo instalador do Regents: o Mac não dorme enquanto o Docker está de pé. -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
@@ -402,7 +628,7 @@ checklist() {
   item "${UP:-0}" "Os containers voltam sozinhos quando o Docker sobe (restart: unless-stopped)"
   item "$(yes_if found '^ok: MagicDNS ligado')" "MagicDNS ligado na tailnet" "https://login.tailscale.com/admin/dns"
   item "$(yes_if found '^ok: HTTPS ligado')" "HTTPS ligado na tailnet" "https://login.tailscale.com/admin/dns (\"Enable HTTPS\")"
-  item "${HEALTHY:-0}" "O Shearim respondeu" "cd $DIR && docker compose ps"
+  item "${HEALTHY:-0}" "O Regents respondeu" "cd $DIR && docker compose ps"
   item 0 "Uma cópia de ./backups e ./secrets fora deste computador" "o backup completo é $DIR/backups mais $DIR/secrets"
 }
 

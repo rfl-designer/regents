@@ -5,10 +5,11 @@ import type {
   ToolCallDto,
   ToolConnectorDto,
   ToolOrigin,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { lockLiveAgent } from "../agents";
 import type { Clock } from "../clock";
+import { type Config, positiveInt } from "../config";
 import { type Db, schema } from "../db/client";
 
 const { agentTools, executionToolCalls } = schema;
@@ -16,24 +17,15 @@ const { agentTools, executionToolCalls } = schema;
 /** O prazo de uma chamada de Ferramenta quando ela não tem o seu (ADR 0003: um prazo por tool). */
 export const TOOL_TIMEOUT_MS = 60_000;
 
-/** O prazo padrão das Ferramentas que o `.env` ajusta (`SHEARIM_TOOL_TIMEOUT_S`, em segundos). */
-export function toolTimeoutFromEnv(env: Record<string, string | undefined>): number | undefined {
-  const raw = env.SHEARIM_TOOL_TIMEOUT_S?.trim();
-  if (!raw) return undefined;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1)
-    throw new Error(`SHEARIM_TOOL_TIMEOUT_S=${raw} não é um número inteiro maior que zero.`);
-  return n * 1000;
+/** O prazo padrão das Ferramentas que o `.env` ajusta (`REGENTS_TOOL_TIMEOUT_S`, em segundos). */
+export function toolTimeoutFromConfig(config: Config): number | undefined {
+  const n = positiveInt(config, "TOOL_TIMEOUT_S");
+  return n === undefined ? undefined : n * 1000;
 }
 
-/** O teto de turnos de Ferramenta de uma resposta que o `.env` ajusta (`SHEARIM_TOOL_MAX_TURNS`). */
-export function toolMaxTurnsFromEnv(env: Record<string, string | undefined>): number | undefined {
-  const raw = env.SHEARIM_TOOL_MAX_TURNS?.trim();
-  if (!raw) return undefined;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1)
-    throw new Error(`SHEARIM_TOOL_MAX_TURNS=${raw} não é um número inteiro maior que zero.`);
-  return n;
+/** O teto de turnos de Ferramenta de uma resposta que o `.env` ajusta (`REGENTS_TOOL_MAX_TURNS`). */
+export function toolMaxTurnsFromConfig(config: Config): number | undefined {
+  return positiveInt(config, "TOOL_MAX_TURNS");
 }
 
 /** A execução em que uma Ferramenta roda: de onde saem o alcance e o catálogo efetivo. */
@@ -116,7 +108,7 @@ export const WRITE_NOTE =
 
 /**
  * Uma Ferramenta que escreve (ADR 0011): não roda durante a resposta. A porta confere a entrada e o
- * alcance (`prepare`), cria o Pedido de aprovação com a ação exata e encerra a execução; o Shearim
+ * alcance (`prepare`), cria o Pedido de aprovação com a ação exata e encerra a execução; o Regents
  * só executa a ação (`perform`) quando o autor aprova.
  */
 export interface WriteTool extends ToolBase {
@@ -275,7 +267,7 @@ export function createToolPort(deps: {
     const ran = work(own.signal).then(
       (value) => ({ ok: true as const, value }),
       (err) => {
-        if (!(err instanceof ToolFailure)) console.error(`shearim: a Ferramenta ${def.id} falhou`, err);
+        if (!(err instanceof ToolFailure)) console.error(`regents: a Ferramenta ${def.id} falhou`, err);
         return {
           ok: false as const,
           reason: err instanceof ToolFailure ? err.reason : "erro inesperado na Ferramenta",
@@ -363,7 +355,7 @@ export function createToolPort(deps: {
     },
 
     /**
-     * O motivo de uma escrita que pode ter sido feita sem o Shearim saber ("o servidor reiniciou
+     * O motivo de uma escrita que pode ter sido feita sem o Regents saber ("o servidor reiniciou
      * durante a ação"): a causa e onde conferir.
      */
     async uncertainReason(tool: string, cause: string) {

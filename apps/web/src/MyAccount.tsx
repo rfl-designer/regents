@@ -1,4 +1,4 @@
-import type { AccountDto, AccountValidityDto } from "@shearim/contracts";
+import type { AccountDto, AccountValidityDto } from "@regents/contracts";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ApiFailure, api } from "./api";
 import { dayMonth, hourMinute } from "./format";

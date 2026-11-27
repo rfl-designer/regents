@@ -10,8 +10,9 @@ import {
   type WikiSyncDto,
   type WikiVersionDto,
   wikiSyncStepText,
-} from "@shearim/contracts";
-import { wikiFromEnv } from "../src/wiki/sources";
+} from "@regents/contracts";
+import { configFrom } from "../src/config";
+import { wikiFromConfig } from "../src/wiki/sources";
 import { lastUserText, type RecordedRequest, toolResults } from "./fakes/messages-api";
 import { scriptedBrain } from "./fakes/scripted-brain";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
@@ -290,7 +291,7 @@ describe("uma Sincronização por Wiki", () => {
   );
 });
 
-describe('"Sincronizar a Wiki" é uma Habilidade do Shearim', () => {
+describe('"Sincronizar a Wiki" é uma Habilidade do Regents', () => {
   test("a tela da Articuladora a mostra ativa e só para leitura; a de outro Agente, não", async () => {
     const t = await testApp();
     await workspace(t);
@@ -308,8 +309,8 @@ describe('"Sincronizar a Wiki" é uma Habilidade do Shearim', () => {
 
     const dela: AgentSkillDto[] = await (await t.as(juliana).get(`/api/agents/${sophya.id}/skills`)).json();
     const sincronizar = dela.find((h) => h.name === "Sincronizar a Wiki");
-    expect(sincronizar).toMatchObject({ active: true, builtin: true });
-    expect(sincronizar!.description).toContain("Sincronizar");
+    expect(sincronizar).toMatchObject({ id: "regents:sincronizar-a-wiki", active: true, builtin: true });
+    expect(sincronizar!.description).toContain("É do Regents e não se edita.");
     // Só para leitura: nem desativar, nem ativar em outro Agente.
     expect((await t.as(juliana).delete(`/api/agents/${sophya.id}/skills/${sincronizar!.id}`)).status).toBe(404);
     expect((await t.as(juliana).put(`/api/agents/${faro.id}/skills/${sincronizar!.id}`)).status).toBe(404);
@@ -326,9 +327,9 @@ describe('"Sincronizar a Wiki" é uma Habilidade do Shearim', () => {
 
 describe("o teto de turnos da Sincronização", () => {
   test("é ajustável na Instalação (SHEARIM_WIKI_SYNC_MAX_TURNS)", () => {
-    expect(wikiFromEnv({})).toEqual({});
-    expect(wikiFromEnv({ SHEARIM_WIKI_SYNC_MAX_TURNS: "60" })).toEqual({ syncMaxToolTurns: 60 });
-    expect(() => wikiFromEnv({ SHEARIM_WIKI_SYNC_MAX_TURNS: "0" })).toThrow(
+    expect(wikiFromConfig(configFrom({}))).toEqual({});
+    expect(wikiFromConfig(configFrom({ SHEARIM_WIKI_SYNC_MAX_TURNS: "60" }))).toEqual({ syncMaxToolTurns: 60 });
+    expect(() => wikiFromConfig(configFrom({ SHEARIM_WIKI_SYNC_MAX_TURNS: "0" }))).toThrow(
       "SHEARIM_WIKI_SYNC_MAX_TURNS=0 não é um número inteiro maior que zero.",
     );
   });
@@ -380,9 +381,14 @@ describe("o que cada chamada da Sincronização recebe", () => {
       const [primeira, , segunda] = t.anthropic.syncs.map(textoDe);
 
       for (const chamada of [primeira!, segunda!]) {
+        expect(chamada.system).toContain('[Regents] Sincronização da Wiki "Curso de Redes Sociais"');
+        expect(chamada.system).toContain("Você é a Articuladora do Regents");
         expect(chamada.system).toContain("## Regras da Wiki");
         expect(chamada.system).toContain("Curso de Redes Sociais");
         expect(chamada.ferramentas).toEqual(FERRAMENTAS_DA_SINCRONIZACAO);
+      }
+      for (const chamada of t.anthropic.syncs.map(textoDe)) {
+        expect(chamada.system + chamada.user).not.toContain("Shearim");
       }
       expect(primeira!.user).toContain("(a Wiki ainda não tem páginas)");
       expect(primeira!.user).toContain("Fonte nova: aula-01.md (Fonte 1 de 2)");
@@ -424,7 +430,7 @@ describe("o que cada chamada da Sincronização recebe", () => {
       const resultados = toolResults(t.anthropic.syncs[1]!.body);
       expect(resultados.map((r) => r.is_error)).toEqual([true, true, true, true]);
       expect(resultados[0]!.content).toContain("slug");
-      expect(resultados[1]!.content).toContain("log é do Shearim");
+      expect(resultados[1]!.content).toContain("a página log é do Regents");
       expect(resultados[2]!.content).toContain("apostila.pdf não está nesta Wiki");
       expect(resultados[3]!.content).toContain("não existe no rascunho");
       expect((await paginasDe(t, wiki, 1)).map((p) => p.slug)).toEqual(["index", "log"]);

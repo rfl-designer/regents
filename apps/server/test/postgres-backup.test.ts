@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ChannelDto, MessageDto } from "@shearim/contracts";
+import type { ChannelDto, MessageDto } from "@regents/contracts";
 import { sql } from "drizzle-orm";
 import { systemClock } from "../src/clock";
 import { connect } from "../src/db/connect";
@@ -75,7 +75,7 @@ async function freshDatabase() {
 
 async function runApp(args: string[], env: Record<string, string>) {
   const proc = Bun.spawn(["bun", MAIN, ...args], {
-    env: { ...process.env, DATABASE_PASSWORD_FILE: "", SHEARIM_PG_BIN_DIR: binDir!, ...env },
+    env: { ...process.env, DATABASE_PASSWORD_FILE: "", REGENTS_PG_BIN_DIR: binDir!, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -94,7 +94,7 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
     const url = await freshDatabase();
     const backupsDir = mkdtempSync(join(tmpdir(), "shearim-backups-"));
     onCleanup(() => rmSync(backupsDir, { recursive: true, force: true }));
-    const env = { DATABASE_URL: url, SHEARIM_BACKUPS_DIR: backupsDir };
+    const env = { DATABASE_URL: url, REGENTS_BACKUPS_DIR: backupsDir };
 
     expect((await runApp(["migrate"], env)).code).toBe(0);
     const conn = connect({ DATABASE_URL: url, pgliteDir: "", pgBinDir: binDir });
@@ -103,6 +103,7 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
       await t.as(juliana).post("/api/channels", { name: "vendas", kind: "public" })
     ).json();
     await t.as(juliana).post(`/api/channels/${channel.id}/messages`, { body: "antes do backup" });
+    // Um backup com o nome da versão Shearim: a restauração aceita os dois prefixos.
     const backup = await dumpNow({ conn, clock: systemClock, backupsDir, log: () => {} }, "shearim");
     await t.as(juliana).post(`/api/channels/${channel.id}/messages`, { body: "depois do backup" });
     await t.shutdown();
@@ -113,7 +114,7 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
     expect(run.stderr).toBe("");
     expect(run.code).toBe(0);
     expect(backup.file).toEndWith(".dump");
-    expect(readdirSync(backupsDir).filter((f) => f.startsWith("shearim-pre-restauracao-"))).toHaveLength(1);
+    expect(readdirSync(backupsDir).filter((f) => f.startsWith("regents-pre-restauracao-"))).toHaveLength(1);
     const again = connect({ DATABASE_URL: url, pgliteDir: "" });
     onCleanup(() => again.close());
     const t2 = await testApp({ db: again.db });
@@ -121,14 +122,14 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
     expect(messages.map((m) => m.body)).toEqual(["antes do backup"]);
     // Em dia com as migrações: subir de novo não pede dump nem migração.
     expect((await runApp(["migrate"], env)).code).toBe(0);
-    expect(readdirSync(backupsDir).filter((f) => f.startsWith("shearim-pre-migracao-"))).toEqual([]);
+    expect(readdirSync(backupsDir).filter((f) => f.startsWith("regents-pre-migracao-"))).toEqual([]);
   }, 120_000);
 
   test("arquivo que não é dump: `restore --sem-copia` sai com erro e não apaga o banco", async () => {
     const url = await freshDatabase();
     const backupsDir = mkdtempSync(join(tmpdir(), "shearim-backups-"));
     onCleanup(() => rmSync(backupsDir, { recursive: true, force: true }));
-    const env = { DATABASE_URL: url, SHEARIM_BACKUPS_DIR: backupsDir };
+    const env = { DATABASE_URL: url, REGENTS_BACKUPS_DIR: backupsDir };
     expect((await runApp(["migrate"], env)).code).toBe(0);
     const conn = connect({ DATABASE_URL: url, pgliteDir: "", pgBinDir: binDir });
     const t = await testApp({ db: conn.db });
@@ -154,7 +155,7 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
 
   test("banco migrado por uma versão mais nova: `migrate` se recusa também no Postgres", async () => {
     const url = await freshDatabase();
-    const env = { DATABASE_URL: url, SHEARIM_BACKUPS_DIR: tmpdir() };
+    const env = { DATABASE_URL: url, REGENTS_BACKUPS_DIR: tmpdir() };
     expect((await runApp(["migrate"], env)).code).toBe(0);
     const conn = connect({ DATABASE_URL: url, pgliteDir: "" });
     await conn.db.execute(
@@ -165,6 +166,6 @@ describe.skipIf(!binDir)("Postgres de verdade: pg_dump e pg_restore", () => {
     const run = await runApp(["migrate"], env);
 
     expect(run.code).toBe(1);
-    expect(run.stderr).toContain("migrado por uma versão mais nova do Shearim");
+    expect(run.stderr).toContain("migrado por uma versão mais nova do Regents");
   }, 120_000);
 });

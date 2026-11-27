@@ -7,7 +7,7 @@ import {
   type AgentWikiSummaryDto,
   type CreateAgentInput,
   type UpdateAgentInput,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { and, asc, desc, eq, getTableColumns, inArray, isNull, ne, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { withBuiltinText } from "./articuladora";
@@ -138,7 +138,7 @@ export function agentRoutes(deps: {
 
   /**
    * O Admin edita um Agente; campo ausente fica. Da Articuladora, tudo menos a descrição e as
-   * instruções, que são do Shearim (`403 builtin_locked`): o Admin desliga a Memória dela também. Trocar o nome troca
+   * instruções, que são do Regents (`403 builtin_locked`): o Admin desliga a Memória dela também. Trocar o nome troca
    * o identificador de Menção, pelo mesmo critério da criação.
    */
   routes.patch("/agents/:id", async (c) => {
@@ -151,7 +151,7 @@ export function agentRoutes(deps: {
 
     if (current.builtin && (input.description !== undefined || input.instructions !== undefined)) {
       return c.json(
-        { error: "builtin_locked", message: "A descrição e as instruções da Articuladora são do Shearim." },
+        { error: "builtin_locked", message: "A descrição e as instruções da Articuladora são do Regents." },
         403,
       );
     }
@@ -253,7 +253,7 @@ export function agentRoutes(deps: {
     const [agent] = isUuid(id) ? await db.select().from(agents).where(eq(agents.id, id)) : [];
     if (!agent) return c.json({ error: "not_found" }, 404);
     if (agent.builtin) {
-      return c.json({ error: "builtin_locked", message: "A Articuladora é do Shearim e não se apaga." }, 403);
+      return c.json({ error: "builtin_locked", message: "A Articuladora é do Regents e não se apaga." }, 403);
     }
     const left = agent.deletedAt
       ? await forgetAgent(db, agent.id).then(() => [])

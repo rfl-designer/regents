@@ -10,7 +10,7 @@
  *   faixa, um por incidente, até a primeira chamada bem-sucedida.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentBudgetDto, AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import type { AgentBudgetDto, AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@regents/contracts";
 import { keyCoverage } from "../src/key-budget";
 import { scriptedBrain } from "./fakes/scripted-brain";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";

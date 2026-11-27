@@ -8,7 +8,7 @@
  * pessoa da troca é descartada (e aparece no Andamento), e a origem do item é a mensagem citada.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ExecutionDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, ExecutionDto, MemoryItemDto, MessageDto } from "@regents/contracts";
 import { type EventSocket, eventually, type Person, type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };

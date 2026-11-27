@@ -1,5 +1,5 @@
 import { inflateRawSync } from "node:zlib";
-import { type CreateSkillInput, SKILL_BODY_MAX } from "@shearim/contracts";
+import { type CreateSkillInput, SKILL_BODY_MAX } from "@regents/contracts";
 
 /** O que sai de um `SKILL.md`: os campos da Habilidade (ainda sem conferir) e os arquivos ignorados. */
 export type SkillFile = { input: Partial<CreateSkillInput>; ignored: string[] } | { error: string };
@@ -10,7 +10,7 @@ type Entry = { name: string; read(): string | undefined | Promise<string | undef
 /**
  * Lê o arquivo da importação: um `SKILL.md` (o frontmatter YAML dá o `name` e a `description`; o
  * resto é o corpo) ou um `.zip` de skill, com o `SKILL.md` na raiz ou numa pasta. Do `.zip`, os
- * outros arquivos ficam de fora (os Agentes do Shearim não executam código) e voltam em `ignored`,
+ * outros arquivos ficam de fora (os Agentes do Regents não executam código) e voltam em `ignored`,
  * com o caminho a partir da pasta do `SKILL.md`. Sem `name` ou sem `description`, ou um `.zip` sem
  * `SKILL.md`, a importação falha com o motivo.
  */

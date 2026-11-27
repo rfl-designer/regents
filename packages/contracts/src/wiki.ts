@@ -15,7 +15,7 @@ export interface WikiVersionSummaryDto {
   publishedAt: string;
 }
 
-/** Os slugs das páginas especiais de toda versão: o índice (da Articuladora) e o registro (do Shearim). */
+/** Os slugs das páginas especiais de toda versão: o índice (da Articuladora) e o registro (do Regents). */
 export const WIKI_INDEX_SLUG = "index";
 export const WIKI_LOG_SLUG = "log";
 
@@ -248,7 +248,7 @@ export interface WikiVersionDto {
 /**
  * Uma página de uma versão: `GET /api/wikis/:id/versions/:n/pages` (só Admin, por slug). O corpo é
  * markdown com links `[[slug]]` (ou `[[slug|texto]]`) para outras páginas. `sources` são as Fontes
- * de onde ela veio (vazio só no `log`, que é do Shearim).
+ * de onde ela veio (vazio só no `log`, que é do Regents).
  */
 export interface WikiPageDto {
   slug: string;

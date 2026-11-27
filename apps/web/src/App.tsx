@@ -19,7 +19,7 @@ import {
   WORKSPACE_KEY_PATH,
   wikiPageOfPath,
   wikiPagePath,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { AgentsSettings, WorkspaceKeySettings } from "./AgentsAdmin";
 import { Avatar } from "./Avatar";
@@ -258,7 +258,7 @@ export function App() {
     };
   }, [down, load]);
 
-  // Tocar numa notificação com o Shearim já aberto: o service worker pede a conversa aqui.
+  // Tocar numa notificação com o Regents já aberto: o service worker pede a conversa aqui.
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     const onMessage = (e: MessageEvent) => {
@@ -342,7 +342,7 @@ export function App() {
       <div className="shell">
         <ConnectionBanner notice={connection} />
         <header className="topbar">
-          <strong>Shearim</strong>
+          <strong>Regents</strong>
           <div className="row">
             <button
               type="button"

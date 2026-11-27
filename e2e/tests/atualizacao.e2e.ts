@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { describe, test } from "@e2e-dev/web";
 import { expect } from "e2e";
 
-const ATUALIZANDO = "Atualizando o Shearim";
+const ATUALIZANDO = "Atualizando o Regents";
 
 /** Uma porta livre agora, para o Shearim próprio deste teste subir e voltar nela. */
 function freePort() {
@@ -41,11 +41,11 @@ const updateTest = test.extend<{
       proc = spawn("bun", [resolve(import.meta.dirname, "../serve.ts")], {
         env: {
           ...process.env,
-          SHEARIM_IDENTITY: "dev",
+          REGENTS_IDENTITY: "dev",
           HOST: "127.0.0.1",
           PORT: String(port),
-          SHEARIM_PGLITE_DIR: join(data, "pglite"),
-          SHEARIM_ACCOUNTS_DIR: join(data, "contas"),
+          REGENTS_PGLITE_DIR: join(data, "pglite"),
+          REGENTS_ACCOUNTS_DIR: join(data, "contas"),
         },
         stdio: ["ignore", out, out],
       });
@@ -78,9 +78,9 @@ const updateTest = test.extend<{
   },
 });
 
-describe("atualização do Shearim", () => {
+describe("atualização do Regents", () => {
   updateTest(
-    'mostra a faixa "Atualizando o Shearim" enquanto o servidor reinicia',
+    'mostra a faixa "Atualizando o Regents" enquanto o servidor reinicia',
     async ({ app, screen, shearim }) => {
       await app.open(`${shearim.url}/`);
       await expect(screen.getByRole("list", "Mensagens de #geral")).toHaveAttribute("aria-busy", "false");

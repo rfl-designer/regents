@@ -6,7 +6,7 @@
  * código, e a resposta os lista.
  */
 import { describe, expect, test } from "bun:test";
-import type { ImportSkillResultDto, SkillDto } from "@shearim/contracts";
+import type { ImportSkillResultDto, SkillDto } from "@regents/contracts";
 import { zip } from "./fakes/zip";
 import { type Person, type TestApp, testApp } from "./harness";
 

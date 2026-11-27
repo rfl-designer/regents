@@ -94,3 +94,36 @@ describe("Migração da Articuladora (0012)", () => {
     expect(where.map((r) => [r.channelId, r.agentId])).toEqual([[ids.vendas, builtin[0]!.id]]);
   });
 });
+
+describe("Migração do nome da Articuladora (0045)", () => {
+  /** Uma Instalação de antes, com a Articuladora que a 0012 criou e o nome que ela tem hoje. */
+  async function articuladoraChamada(name: string) {
+    const { db, client } = await migratedUntil("0044_apagar-wiki");
+    await client.query(`UPDATE agents SET name = $1 WHERE builtin`, [name]);
+    await migrate(db, { migrationsFolder });
+    const [articuladora] = await db.select().from(schema.agents);
+    return articuladora!;
+  }
+
+  test('a Articuladora que a 0012 chamou "Sophya (Shearim)" passa a se chamar "Sophya (Regents)"', async () => {
+    expect(await articuladoraChamada("Sophya (Shearim)")).toMatchObject({ name: "Sophya (Regents)", builtin: true });
+  });
+
+  test("um nome que o Admin deu à Articuladora não muda", async () => {
+    expect((await articuladoraChamada("Sophya (Shearim) da Acme")).name).toBe("Sophya (Shearim) da Acme");
+    expect((await articuladoraChamada("Clara")).name).toBe("Clara");
+  });
+
+  test('um Agente que não é a Articuladora, com o nome "Sophya (Shearim)", não muda', async () => {
+    const { db, client } = await migratedUntil("0044_apagar-wiki");
+    const id = crypto.randomUUID();
+    await client.query(`UPDATE agents SET name = 'Sophya' WHERE builtin`);
+    await client.query(
+      `INSERT INTO agents (id, name, model, created_at) VALUES ($1, 'Sophya (Shearim)', 'claude-sonnet-5-5', now())`,
+      [id],
+    );
+    await migrate(db, { migrationsFolder });
+    const agentes = await db.select().from(schema.agents);
+    expect(agentes.find((a) => a.id === id)!.name).toBe("Sophya (Shearim)");
+  });
+});

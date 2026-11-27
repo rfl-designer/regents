@@ -11,9 +11,10 @@
  *   aprovação.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ApprovalRequestDto, ChannelDto, ExecutionDto, MessageDto, UnreadDto } from "@shearim/contracts";
+import type { AgentDto, ApprovalRequestDto, ChannelDto, ExecutionDto, MessageDto, UnreadDto } from "@regents/contracts";
 import { and, eq } from "drizzle-orm";
-import { approvalTtlFromEnv } from "../src/approvals";
+import { approvalTtlFromConfig } from "../src/approvals";
+import { configFrom } from "../src/config";
 import { schema } from "../src/db/client";
 import { EXCERPT_MAX } from "../src/push";
 import type { ToolDefinition, WriteTool } from "../src/tools/port";
@@ -222,7 +223,7 @@ describe("a decisão do autor", () => {
       expect((await respostaA(t, geral.id, origem)).body).toBe("Pronto, avisei no #anuncios.");
       const [, continuacao] = respostas(t);
       expect(textoDe(continuacao!)).toContain("Postar em #anuncios: “@prisma a reunião mudou para 15h.”");
-      expect(textoDe(continuacao!)).toContain("Bruno aprovou, e o Shearim fez: mensagem postada em #anuncios");
+      expect(textoDe(continuacao!)).toContain("Bruno aprovou, e o Regents fez: mensagem postada em #anuncios");
       // A continuação não pediu de novo a escrita: só dois pedidos de resposta, nenhum roteamento.
       expect(t.anthropic.requests).toHaveLength(2);
       const noAnuncios = (await (
@@ -470,7 +471,7 @@ describe("responder em Thread e duas escritas", () => {
 
       expect((await respostaA(t, geral.id, origem)).body).toBe("Postei o aviso; a resposta na Thread ficou de fora.");
       const ultima = textoDe(respostas(t)[2]!);
-      expect(ultima).toContain("Bruno aprovou, e o Shearim fez: mensagem postada em #anuncios");
+      expect(ultima).toContain("Bruno aprovou, e o Regents fez: mensagem postada em #anuncios");
       expect(ultima).toContain("Bruno recusou, sem dar motivo");
       expect((await pedidos(t, geral.id)).map((p) => p.state)).toEqual(["approved", "rejected"]);
       const doAnuncios = await mensagens(t, anuncios.id);
@@ -589,13 +590,13 @@ describe("o Pedido que ninguém decide", () => {
   test(
     "o prazo é o da Instalação (SHEARIM_APPROVAL_TTL_H), e o Pedido vencido com o servidor parado expira ao subir",
     async () => {
-      expect(approvalTtlFromEnv({})).toBeUndefined();
-      expect(approvalTtlFromEnv({ SHEARIM_APPROVAL_TTL_H: "2" })).toBe(2 * HORA);
-      expect(approvalTtlFromEnv({ SHEARIM_APPROVAL_TTL_H: "0.5" })).toBe(HORA / 2);
-      expect(() => approvalTtlFromEnv({ SHEARIM_APPROVAL_TTL_H: "0" })).toThrow(
+      expect(approvalTtlFromConfig(configFrom({}))).toBeUndefined();
+      expect(approvalTtlFromConfig(configFrom({ SHEARIM_APPROVAL_TTL_H: "2" }))).toBe(2 * HORA);
+      expect(approvalTtlFromConfig(configFrom({ SHEARIM_APPROVAL_TTL_H: "0.5" }))).toBe(HORA / 2);
+      expect(() => approvalTtlFromConfig(configFrom({ SHEARIM_APPROVAL_TTL_H: "0" }))).toThrow(
         "SHEARIM_APPROVAL_TTL_H=0 não é um número maior que zero.",
       );
-      expect(() => approvalTtlFromEnv({ SHEARIM_APPROVAL_TTL_H: "um dia" })).toThrow();
+      expect(() => approvalTtlFromConfig(configFrom({ SHEARIM_APPROVAL_TTL_H: "um dia" }))).toThrow();
 
       const t = await testApp({ approvals: { ttlMs: 2 * HORA } });
       const { geral } = await workspace(t);
@@ -897,7 +898,7 @@ describe("a escrita aprovada que não termina", () => {
       expect(respostasNoGeral.map((m) => m.body).sort()).toEqual(["Avisei.", "Tudo bem, não avisei."]);
       const continuacoes = respostas(t).slice(2).map(textoDe).join("\n");
       expect(continuacoes).toContain("Bruno recusou, sem dar motivo");
-      expect(continuacoes).toContain("Bruno aprovou, e o Shearim fez: mensagem postada em #anuncios");
+      expect(continuacoes).toContain("Bruno aprovou, e o Regents fez: mensagem postada em #anuncios");
     },
     LONGO,
   );

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { JoinRequestAdminDto, MessageDto } from "@shearim/contracts";
+import type { JoinRequestAdminDto, MessageDto } from "@regents/contracts";
 import { type TestApp, testApp } from "./harness";
 
 const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
@@ -254,7 +254,10 @@ describe("Pedido de entrada", () => {
     const html = await page.text();
     expect(html).toContain('<html lang="pt-BR">');
     expect(html).toContain("Não sabemos quem é você");
-    expect(html).toContain("O acesso veio pela internet aberta (Funnel)");
+    expect(html).toContain("O acesso veio pela internet aberta (Funnel), e o Regents só atende quem está na tailnet.");
+    expect(html).toContain("<title>Regents: não sabemos quem é você</title>");
+    expect(html).toContain("O Regents reconhece cada pessoa pela conta dela na tailnet.");
+    expect(html).not.toContain("Shearim");
     expect(pedido.status).toBe(403);
     expect(await pedido.json()).toEqual({ error: "no_identity", reason: "funnel" });
     expect(await pendentes(t)).toEqual([]);

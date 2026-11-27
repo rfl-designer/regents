@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { WikiDto, WikiSourceDto } from "@shearim/contracts";
-import { wikiFromEnv } from "../src/wiki/sources";
+import type { WikiDto, WikiSourceDto } from "@regents/contracts";
+import { configFrom } from "../src/config";
+import { wikiFromConfig } from "../src/wiki/sources";
 import { type Person, type TestApp, testApp } from "./harness";
 
 // A Wiki e as Fontes na administração (#78): o Admin cria a Wiki, sobe as Fontes e vê as pendentes.
@@ -127,11 +128,11 @@ describe("a Fonte fora do formato ou do tamanho é recusada na hora", () => {
   });
 
   test("o tamanho máximo é ajustável na Instalação (SHEARIM_WIKI_SOURCE_MAX_MB)", () => {
-    expect(wikiFromEnv({})).toEqual({});
-    expect(wikiFromEnv({ SHEARIM_WIKI_SOURCE_MAX_MB: "2" })).toEqual({ sourceMaxBytes: 2_000_000 });
-    expect(wikiFromEnv({ SHEARIM_WIKI_SOURCE_MAX_MB: "0.5" })).toEqual({ sourceMaxBytes: 500_000 });
+    expect(wikiFromConfig(configFrom({}))).toEqual({});
+    expect(wikiFromConfig(configFrom({ SHEARIM_WIKI_SOURCE_MAX_MB: "2" }))).toEqual({ sourceMaxBytes: 2_000_000 });
+    expect(wikiFromConfig(configFrom({ SHEARIM_WIKI_SOURCE_MAX_MB: "0.5" }))).toEqual({ sourceMaxBytes: 500_000 });
     for (const errado of ["0", "-3", "muito"]) {
-      expect(() => wikiFromEnv({ SHEARIM_WIKI_SOURCE_MAX_MB: errado })).toThrow(
+      expect(() => wikiFromConfig(configFrom({ SHEARIM_WIKI_SOURCE_MAX_MB: errado }))).toThrow(
         `SHEARIM_WIKI_SOURCE_MAX_MB=${errado} não é um número maior que zero.`,
       );
     }

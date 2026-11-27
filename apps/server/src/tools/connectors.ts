@@ -2,7 +2,7 @@
  * Os Conectores (Spec #44): servidores MCP remotos que o Admin liga ao Workspace, com a credencial
  * do Workspace (um token colado, cifrado com a chave mestra como a Chave). As Ferramentas de cada
  * um saem do `tools/list` dele e entram no catálogo da porta de Ferramentas; quem fala com o
- * servidor é sempre o Shearim (os cérebros chamam a porta), nunca o modelo.
+ * servidor é sempre o Regents (os cérebros chamam a porta), nunca o modelo.
  *
  * - Só o que o servidor marca como "só leitura" (`readOnlyHint`) é leitura; o resto é escrita e
  *   passa pelo Pedido de aprovação.
@@ -28,7 +28,7 @@ import {
   type CreateConnectorLoginInput,
   MY_CONNECTORS_PATH,
   type MyConnectorDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { and, asc, eq, isNotNull, lt, lte, notInArray, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
@@ -124,7 +124,7 @@ async function withRemote<T>(
   const transport = new StreamableHTTPClientTransport(new URL(url), {
     requestInit: { headers: { Authorization: `Bearer ${token}` } },
   });
-  const client = new Client({ name: "shearim", version: "1" });
+  const client = new Client({ name: "regents", title: "Regents", version: "1" });
   try {
     await client.connect(transport, { signal });
     return await work(client);
@@ -250,7 +250,7 @@ export function createConnectors(deps: {
             : await markRefused(connectorId, sameGrant);
           return refused ? ("refused" as const) : ("renewed" as const);
         }
-        console.error(`shearim: a renovação da credencial do Conector ${connector.name} falhou`, err);
+        console.error(`regents: a renovação da credencial do Conector ${connector.name} falhou`, err);
         return "failed" as const;
       }
     })().finally(() => renewing.delete(key));
@@ -291,7 +291,7 @@ export function createConnectors(deps: {
   function tick() {
     watching = watching
       .then(renewDue)
-      .catch((err) => console.error("shearim: a renovação das credenciais dos Conectores falhou", err))
+      .catch((err) => console.error("regents: a renovação das credenciais dos Conectores falhou", err))
       .finally(() => {
         if (!stopped) stopWatch = clock.after(RENEW_CHECK_MS, tick);
       });
@@ -481,7 +481,7 @@ export function createConnectors(deps: {
         throw new ToolFailure(`o ${connector.name} recusou a credencial ${credential.whose}`, credential.connect);
       }
       if (signal.aborted) throw err;
-      console.error(`shearim: o Conector ${connector.name} falhou`, err);
+      console.error(`regents: o Conector ${connector.name} falhou`, err);
       throw new ToolFailure(`o ${connector.name} não respondeu`);
     }
     const blocks = (result.content ?? []) as { type: string; text?: string }[];
@@ -776,7 +776,7 @@ export function createConnectors(deps: {
 
   /**
    * Começa um login: confere o endereço da Instalação, descobre o login do servidor, registra o
-   * Shearim e guarda o fluxo (cifrado) até o retorno. `422 oauth_unavailable` sem login no servidor.
+   * Regents e guarda o fluxo (cifrado) até o retorno. `422 oauth_unavailable` sem login no servidor.
    */
   async function startLogin(
     c: Context<Env>,
@@ -919,7 +919,7 @@ export function createConnectors(deps: {
       tokens = await finishLogin(pending, code, flow.redirectUri);
     } catch (err) {
       if (err instanceof LoginRefused) return back(path, `O ${label} recusou o login. Ligue de novo.`);
-      console.error(`shearim: o fim do login do Conector ${label} falhou`, err);
+      console.error(`regents: o fim do login do Conector ${label} falhou`, err);
       return back(path, `O ${label} não respondeu ao fim do login. Ligue de novo.`);
     }
     let remote: RemoteTool[];

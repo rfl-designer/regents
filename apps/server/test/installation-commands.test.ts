@@ -9,7 +9,7 @@ import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
-import type { AgentDto, ChannelDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, MessageDto } from "@regents/contracts";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { systemClock } from "../src/clock";
@@ -91,7 +91,7 @@ async function databaseAt(dir: string, opts: { until?: string; extra?: { tag: st
 
 /** O ambiente de um comando do app num PGlite em disco, com a pasta de backups. */
 function envFor(dataDir: string, backupsDir: string) {
-  return { SHEARIM_PGLITE_DIR: dataDir, SHEARIM_BACKUPS_DIR: backupsDir };
+  return { REGENTS_PGLITE_DIR: dataDir, REGENTS_BACKUPS_DIR: backupsDir };
 }
 
 describe("banco migrado por uma versão mais nova", () => {
@@ -108,15 +108,15 @@ describe("banco migrado por uma versão mais nova", () => {
     const migrated = await runApp(["migrate"], envFor(dataDir, backupsDir));
     const served = await runApp(["serve"], {
       ...envFor(dataDir, backupsDir),
-      SHEARIM_IDENTITY: "dev",
-      SHEARIM_MASTER_KEY_FILE: keyFile,
+      REGENTS_IDENTITY: "dev",
+      REGENTS_MASTER_KEY_FILE: keyFile,
       HOST: "127.0.0.1",
       PORT: "0",
     });
 
     for (const run of [migrated, served]) {
       expect(run.code).toBe(1);
-      expect(run.stderr).toContain("migrado por uma versão mais nova do Shearim");
+      expect(run.stderr).toContain("migrado por uma versão mais nova do Regents");
       expect(run.stderr).toContain("restore");
     }
     expect(served.stdout).not.toContain("ouvindo");
@@ -139,7 +139,7 @@ describe("migrações com um dump antes", () => {
 
     expect(run.code).toBe(0);
     const files = readdirSync(backupsDir);
-    expect(files).toEqual([expect.stringMatching(/^shearim-pre-migracao-\d{8}T\d{6}Z\.tar\.gz$/)]);
+    expect(files).toEqual([expect.stringMatching(/^regents-pre-migracao-\d{8}T\d{6}Z\.tar\.gz$/)]);
     expect(run.stdout).toContain(files[0]!);
   }, 120_000);
 
@@ -159,7 +159,7 @@ describe("restore", () => {
   const juliana = { id: "1001", login: "juliana@exemplo.com", name: "Juliana" };
   const masterKey = new Uint8Array(32).fill(7);
 
-  test("`restore <arquivo>` põe o Workspace de volta como estava no backup, e com a mesma ./secrets a Chave segue valendo", async () => {
+  test("`restore <arquivo>` põe o Workspace de volta como estava num backup shearim-* de antes do nome Regents, e com a mesma ./secrets a Chave segue valendo", async () => {
     const dataDir = tmpDir("shearim-pg-");
     const backupsDir = tmpDir("shearim-backups-");
     const conn = connect({ pgliteDir: dataDir });
@@ -171,7 +171,9 @@ describe("restore", () => {
     const faro: AgentDto = await (await ju.post("/api/agents", { name: "Faro", model: "claude-sonnet-5-5" })).json();
     await ju.post(`/api/channels/${channel.id}/agents`, { agentId: faro.id });
     await ju.post(`/api/channels/${channel.id}/messages`, { body: "antes do backup" });
+    // O nome que o backup tinha na versão Shearim.
     const backup = await dumpNow({ conn, clock: systemClock, backupsDir, log: () => {} }, "shearim");
+    expect(backup.file).toMatch(/\/shearim-\d{8}T\d{6}Z\.tar\.gz$/);
     await ju.post(`/api/channels/${channel.id}/messages`, { body: "depois do backup" });
     await t.shutdown();
     await conn.close();
@@ -197,13 +199,13 @@ describe("restore", () => {
     const backupsDir = tmpDir("shearim-backups-");
     const conn = connect({ pgliteDir: dataDir });
     await conn.migrate();
-    const backup = await dumpNow({ conn, clock: systemClock, backupsDir, log: () => {} }, "shearim");
+    const backup = await dumpNow({ conn, clock: systemClock, backupsDir, log: () => {} }, "regents");
     await conn.close();
 
     const run = await runApp(["restore", backup.file], envFor(dataDir, backupsDir));
 
     expect(run.code).toBe(0);
-    const copies = readdirSync(backupsDir).filter((f) => f.startsWith("shearim-pre-restauracao-"));
+    const copies = readdirSync(backupsDir).filter((f) => f.startsWith("regents-pre-restauracao-"));
     expect(copies).toHaveLength(1);
     expect(run.stdout).toContain(copies[0]!);
   }, 120_000);
@@ -266,7 +268,7 @@ describe("serviço backup", () => {
     proc.kill("SIGTERM");
 
     expect(await proc.exited).toBe(0);
-    expect(readdirSync(backupsDir)).toEqual([expect.stringMatching(/^shearim-\d{8}T\d{6}Z\.tar\.gz$/)]);
+    expect(readdirSync(backupsDir)).toEqual([expect.stringMatching(/^regents-\d{8}T\d{6}Z\.tar\.gz$/)]);
     const conn = connect({ pgliteDir: dataDir });
     onCleanup(() => conn.close());
     const t = await testApp({ db: conn.db });

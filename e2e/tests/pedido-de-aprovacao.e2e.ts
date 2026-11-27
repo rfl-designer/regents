@@ -2,7 +2,7 @@ import { describe, test } from "@e2e-dev/web";
 import { expect } from "e2e";
 import { addMember, as, type DevPerson, jsonBody, newPerson } from "../support/people";
 
-/** O prazo do Pedido no e2e (`SHEARIM_APPROVAL_TTL_H` em `e2e.config.ts`): 45 s. */
+/** O prazo do Pedido no e2e (`REGENTS_APPROVAL_TTL_H` em `e2e.config.ts`): 45 s. */
 const PRAZO_MS = 45_000;
 
 /** Chama a API como a "Pessoa Dev" (a primeira a chegar, Admin), sem passar pela tela. */

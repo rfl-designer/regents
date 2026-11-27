@@ -1,4 +1,4 @@
-import type { MeDto, MemoryItemDto } from "@shearim/contracts";
+import type { MeDto, MemoryItemDto } from "@regents/contracts";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { useServerEvents } from "./live";
@@ -42,7 +42,7 @@ export function WorkspaceMemory({ me }: { me: MeDto }) {
       <h1 className="channel-name">Memória do Workspace</h1>
       <p className="hint">
         O que vale em todo o Workspace: entra primeiro na Memória de toda resposta de Agente, em todo Canal e DM. Quem
-        escreve é um Admin, direto aqui ou promovendo um item da Memória da Conversa de um Canal público. O Shearim não
+        escreve é um Admin, direto aqui ou promovendo um item da Memória da Conversa de um Canal público. O Regents não
         guarda aqui sozinho.
       </p>
       {isAdmin && <WriteItem onWritten={show} />}

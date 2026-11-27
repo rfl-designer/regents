@@ -18,7 +18,7 @@ import type {
   ExecutionDto,
   MessageDto,
   MyConnectorDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import type { FakeRemoteMcp, FakeRemoteTool } from "./fakes/remote-mcp";
 import { type EventSocket, eventually, type Person, remoteMcp, type TestApp, testApp } from "./harness";
 
@@ -144,6 +144,8 @@ describe("ligar pelo login do servidor", () => {
       const destino = await seguirLogin(t, juliana, authorizationUrl);
       expect(`${destino.pathname}${destino.search}`).toBe("/conectores?conector=ligado");
       expect(crm.oauth.registeredRedirects()).toEqual([`${INSTALACAO}/api/connector-login/callback`]);
+      // O servidor de login mostra o nome do produto na tela dele.
+      expect(crm.oauth.registrations()).toEqual([{ clientId: "cliente-1", clientName: "Regents" }]);
 
       const lista = await (await t.as(juliana).get("/api/connectors")).text();
       expect(lista).not.toContain(crm.oauth.tokenOf("time-no-crm")!);
@@ -176,6 +178,8 @@ describe("ligar pelo login do servidor", () => {
       expect(resposta.body).toBe("A Acme é Ouro.");
       expect(crm.oauth.renewals()).toBe(1);
       expect(crm.calls.at(-1)).toMatchObject({ token: crm.oauth.tokenOf("time-no-crm")! });
+      // A renovação usa o registro que já existe (o mesmo `client_id`), sem registrar de novo.
+      expect(crm.oauth.registrations().map((r) => r.clientId)).toEqual(["cliente-1"]);
       const relido = (await (await t.as(juliana).get(`/api/connectors/${conector.id}`)).json()) as ConnectorDto;
       expect(relido.credentialState).toBe("ok");
     },

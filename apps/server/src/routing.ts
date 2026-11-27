@@ -1,4 +1,4 @@
-import { normalizeHandle } from "@shearim/contracts";
+import { normalizeHandle } from "@regents/contracts";
 import { and, asc, eq, inArray, isNotNull, notInArray, or } from "drizzle-orm";
 import type { Agent } from "./agents";
 import { recentMessages } from "./context";
@@ -10,7 +10,7 @@ import { type Answer, wikisInReach } from "./wiki/reach";
 const { messages, agents, channels, channelAgents, channelParticipants, mentionHandles } = schema;
 
 /**
- * O contrato de roteamento da Articuladora (Spec, módulo 4; ADR 0004). É do Shearim: o Admin
+ * O contrato de roteamento da Articuladora (Spec, módulo 4; ADR 0004). É do Regents: o Admin
  * não o edita. A entrada é a mensagem, poucas mensagens anteriores, as Instruções do Canal, os
  * Agentes do Canal e o mapa do Workspace visto pelo autor (os outros Agentes e os Canais que ele
  * pode ver). A saída é `responder | delegar | nenhum`, até 2 Agentes do Canal com a frase do que
@@ -217,7 +217,7 @@ export async function buildRouting(db: Db, articuladora: Agent, originMessageId:
   const spoke = inThread ? await spokeInThread(db, origin.threadRootId!, team) : [];
 
   const contract = [
-    `Você é ${articuladora.name}, a Articuladora do Shearim, um chat de time em que pessoas e Agentes conversam juntos.`,
+    `Você é ${articuladora.name}, a Articuladora do Regents, um chat de time em que pessoas e Agentes conversam juntos.`,
     inThread
       ? `Você está numa Thread do Canal #${channel!.name}, aberta pela mensagem de ${recent[0]!.author}. Dê o Desfecho da última mensagem, de ${author}: decida quem responde.`
       : `Você está no Canal #${channel!.name}. Dê o Desfecho da última mensagem, de ${author}: decida quem responde.`,

@@ -1,5 +1,5 @@
 import { describe, test } from "@e2e-dev/web";
-import type { DeviceDto } from "@shearim/contracts";
+import type { DeviceDto } from "@regents/contracts";
 import { expect } from "e2e";
 import { as } from "../support/people";
 

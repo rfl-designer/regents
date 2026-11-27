@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@shearim/contracts";
+import { describe, expect, spyOn, test } from "bun:test";
+import type { AgentDto, ChannelDto, ExecutionDto, MessageDto } from "@regents/contracts";
 import { sql } from "drizzle-orm";
 import { scriptedBrain } from "./fakes/scripted-brain";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
@@ -50,11 +50,22 @@ describe("Nenhuma mensagem no limbo (ADR 0003)", () => {
     await t.as(bruno).post(`/api/channels/${geral.id}/join`);
     t.anthropic.reply({ hang: true });
 
-    // O banco falha no meio, depois de gravar a mensagem (no cálculo das não-lidas).
+    // O banco falha no meio, depois de gravar a mensagem (no cálculo das não-lidas). O Hono põe
+    // a falha no log (`relation "message_reads" does not exist`): ela é esperada, e o teste a
+    // confere em vez de deixá-la na saída da suíte, onde parece um erro de verdade.
+    const log = spyOn(console, "error").mockImplementation(() => {});
     await t.db.execute(sql`alter table message_reads rename to message_reads_fora`);
-    const res = await t.as(juliana).post(`/api/channels/${geral.id}/messages`, { body: "@Faro tá aí?" });
-    await t.db.execute(sql`alter table message_reads_fora rename to message_reads`);
+    let res: Response;
+    let logged: unknown[];
+    try {
+      res = await t.as(juliana).post(`/api/channels/${geral.id}/messages`, { body: "@Faro tá aí?" });
+    } finally {
+      await t.db.execute(sql`alter table message_reads_fora rename to message_reads`);
+      logged = log.mock.calls.map(([err]) => (err as { cause?: { code?: string } } | undefined)?.cause?.code);
+      log.mockRestore();
+    }
     expect(res.status).toBe(500);
+    expect(logged).toContain("42P01");
 
     const [origem] = (await (await t.as(juliana).get(`/api/channels/${geral.id}/messages`)).json()) as MessageDto[];
     expect(origem).toMatchObject({ body: "@Faro tá aí?" });

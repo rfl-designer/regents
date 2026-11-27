@@ -1,5 +1,5 @@
 {
-  "name": "@shearim/contracts",
+  "name": "@regents/contracts",
   "private": true,
   "type": "module",
   "exports": {

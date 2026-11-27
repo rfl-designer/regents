@@ -25,7 +25,7 @@ const MAX_TOKENS = 64_000;
 /**
  * O cérebro da Chave: a Messages API em streaming, pelo SDK oficial, normalizada para os
  * eventos da porta. Sem novas tentativas do SDK (`maxRetries: 0`): a política de nova tentativa
- * é do Shearim (#24). A recusa do modelo é falha com motivo, sem nova tentativa; sem fallback do
+ * é do Regents (#24). A recusa do modelo é falha com motivo, sem nova tentativa; sem fallback do
  * lado do servidor, quem responde é sempre o modelo do Agente.
  */
 export function keyBrain(opts: { baseURL?: string } = {}): ModelBrain {

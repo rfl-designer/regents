@@ -17,7 +17,7 @@ import {
   type ServerEvent,
   type ServerEventOf,
   type ServerEventType,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { type AppDeps, createApp } from "../src/app";

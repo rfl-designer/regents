@@ -4,7 +4,7 @@ import {
   type MessageDto,
   type UnreadDto,
   type UnreadMessagesDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { and, count, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { type Context, Hono } from "hono";

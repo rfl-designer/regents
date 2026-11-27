@@ -5,7 +5,7 @@ import { ensureAdmin, newPerson } from "../support/people";
 
 const SEM_INTERNET = "Você está sem internet";
 const RECONECTANDO = "Reconectando…";
-const SEM_CONEXAO = "Sem conexão com o Shearim";
+const SEM_CONEXAO = "Sem conexão com o Regents";
 
 describe("conexão", () => {
   describe("com a conversa aberta", () => {
@@ -47,7 +47,7 @@ describe("conexão", () => {
       await expect(screen.getByText(RECONECTANDO)).toBeHidden();
     });
 
-    test('mostra "Sem conexão com o Shearim", com a dica do Tailscale, quando o servidor não responde', async ({
+    test('mostra "Sem conexão com o Regents", com a dica do Tailscale, quando o servidor não responde', async ({
       app,
       browser,
       screen,
@@ -62,7 +62,7 @@ describe("conexão", () => {
       await expect(screen.getByText("Tailscale", { exact: false })).toBeVisible();
     });
 
-    test('"Sem conexão com o Shearim" some sozinha quando o servidor volta', async ({ app, browser, screen }) => {
+    test('"Sem conexão com o Regents" some sozinha quando o servidor volta', async ({ app, browser, screen }) => {
       await emulateNetwork(browser);
       await app.open("/");
       await expect(screen.getByRole("list", "Mensagens de #geral")).toHaveAttribute("aria-busy", "false");
@@ -75,8 +75,8 @@ describe("conexão", () => {
     });
   });
 
-  describe("ao abrir o Shearim", () => {
-    test('com o servidor fora, mostra "Sem conexão com o Shearim"', async ({ app, browser, screen }) => {
+  describe("ao abrir o Regents", () => {
+    test('com o servidor fora, mostra "Sem conexão com o Regents"', async ({ app, browser, screen }) => {
       await emulateNetwork(browser, "server-down");
 
       await app.open("/");

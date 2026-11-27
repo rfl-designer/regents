@@ -41,7 +41,7 @@ self.addEventListener("push", (event) => {
           message.app_badge > 0 ? self.navigator.setAppBadge(message.app_badge) : self.navigator.clearAppBadge();
         await badge.catch(() => {});
       }
-      await self.registration.showNotification(n.title || "Shearim", {
+      await self.registration.showNotification(n.title || "Regents", {
         body: n.body,
         tag: n.tag,
         lang: n.lang || "pt-BR",

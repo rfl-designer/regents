@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { InstallationDto } from "@shearim/contracts";
+import type { InstallationDto } from "@regents/contracts";
 import { createNightlyBackups } from "../src/installation/backups";
 import { localApiNodeKey } from "../src/installation/node-key";
 import { fakeLocalApi, recordedStatus } from "./fake-localapi";
@@ -86,6 +86,7 @@ describe("chave do nó na seção Instalação", () => {
       tag: "instalacao-chave-do-no",
     });
     expect(push.payload.notification.body).toContain("01/03");
+    expect(push.payload.notification.body).toContain("a Instalação sai da tailnet e o Regents para de abrir");
     expect(push.urgency).toBe("normal");
 
     // As verificações seguintes não repetem: o próximo push é o do backup que falha.
@@ -94,6 +95,6 @@ describe("chave do nó na seção Instalação", () => {
     dumper.failWith("disco cheio");
     await job.runNow();
     t.clock.advance(CHECK);
-    expect((await celular.next({ timeoutMs: 5_000 })).payload.notification.title).toBe("O backup do Shearim falhou");
+    expect((await celular.next({ timeoutMs: 5_000 })).payload.notification.title).toBe("O backup do Regents falhou");
   }, 60_000);
 });

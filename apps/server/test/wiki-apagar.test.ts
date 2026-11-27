@@ -5,7 +5,7 @@
  * cancelada antes. As citações antigas ficam sem link e sem o nome da Wiki.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, MessageDto, WikiDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, MessageDto, WikiDto } from "@regents/contracts";
 import { scriptedBrain } from "./fakes/scripted-brain";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 

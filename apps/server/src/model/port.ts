@@ -47,13 +47,13 @@ export interface ModelRequest {
   maxToolTurns?: number;
 }
 
-/** O teto de turnos de Ferramenta de uma resposta, se a Instalação não ajusta (`SHEARIM_TOOL_MAX_TURNS`). */
+/** O teto de turnos de Ferramenta de uma resposta, se a Instalação não ajusta (`REGENTS_TOOL_MAX_TURNS`). */
 export const MAX_TOOL_TURNS = 20;
 
 /** O que a última chamada diz ao modelo quando a resposta chegou ao teto de turnos de Ferramenta. */
 export function toolLimitNote(turns: number) {
   return (
-    `[Shearim] Esta resposta chegou ao limite de Ferramentas (${turns} turnos de Ferramenta). ` +
+    `[Regents] Esta resposta chegou ao limite de Ferramentas (${turns} turnos de Ferramenta). ` +
     "Não há mais Ferramentas: responda agora com o que você tem e diga o que ficou faltando, se faltou algo."
   );
 }

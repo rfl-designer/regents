@@ -1,4 +1,4 @@
-import type { AgentBudgetDto, KeyIncidentDto } from "@shearim/contracts";
+import type { AgentBudgetDto, KeyIncidentDto } from "@regents/contracts";
 import { and, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { type Db, schema } from "./db/client";

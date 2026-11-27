@@ -1,6 +1,6 @@
 /**
  * Contas (Spec, módulo 8; ADR 0005). Uma pasta por Membro debaixo de `root`, onde o
- * próprio Claude Code grava e renova o login. O Shearim nunca lê, copia nem guarda o token:
+ * próprio Claude Code grava e renova o login. O Regents nunca lê, copia nem guarda o token:
  * entrega o código colado ao `claude auth login` que espera por ele e guarda só o que
  * `claude auth status --json` diz (e-mail, plano, `loginExpiresAt`).
  *
@@ -29,7 +29,7 @@ import type {
   AccountStatusDto,
   AccountValidityDto,
   SubmitAccountCodeInput,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { and, eq, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Clock } from "../clock";
@@ -93,7 +93,7 @@ export const LINKING_FAILURES = {
   couldNotStart: "Não conseguimos abrir o login da Anthropic. Tente de novo em alguns minutos.",
   missing: "O Claude Code não está instalado neste servidor. Avise quem cuida da Instalação.",
   unavailable: "Não conseguimos conferir a sua Conta agora. Tente de novo em alguns minutos.",
-  cannotWrite: "O Shearim não consegue gravar a sua Conta neste servidor. Avise quem cuida da Instalação.",
+  cannotWrite: "O Regents não consegue gravar a sua Conta neste servidor. Avise quem cuida da Instalação.",
 } as const;
 
 function explainValidation(v: Extract<Validation, { ok: false }>): string {
@@ -300,7 +300,7 @@ export function createAccounts(deps: {
 
   /** Um passo que ninguém espera (timer, saída do processo) e falha de novo, com o banco fora, não derruba o processo. */
   const logged = (p: Promise<unknown>) => {
-    p.catch((err) => console.error("shearim: o fluxo de ligar a Conta falhou", err));
+    p.catch((err) => console.error("regents: o fluxo de ligar a Conta falhou", err));
   };
   /** Algo inesperado num passo vira falha visível, nunca silêncio. */
   const guarded = (memberId: string, flow: Flow, work: () => Promise<void>) => {
@@ -319,14 +319,14 @@ export function createAccounts(deps: {
       // O caso conhecido: o volume `contas` criado como root por uma imagem sem /data/contas.
       const uid = process.getuid?.() ?? 1000;
       console.error(
-        `shearim: a pasta das Contas ${config.root} não deixa o usuário do Shearim (uid ${uid}) gravar ` +
+        `regents: a pasta das Contas ${config.root} não deixa o usuário do Regents (uid ${uid}) gravar ` +
           `(${(err as NodeJS.ErrnoException).code}). Dê a pasta a ele: no host, ` +
           `docker compose run --rm --no-deps --user root --cap-add CHOWN --entrypoint chown app ${uid}:${uid} ${config.root}`,
       );
       await fail(memberId, flow, LINKING_FAILURES.cannotWrite);
       return { ok: true, account: await dto(memberId) };
     }
-    if (closed) return { ok: false, message: "O Shearim está parando. Tente de novo em instantes." };
+    if (closed) return { ok: false, message: "O Regents está parando. Tente de novo em instantes." };
 
     try {
       flow.login = startLogin(config.claudeBin, flow.dir, procs);
@@ -534,7 +534,7 @@ export function createAccounts(deps: {
       const v = validityOf(warned, clock.now());
       if (v && v.state !== "ok") deps.hooks?.accountExpiring?.(memberId, { until: v.until, state: v.state });
     } catch (err) {
-      console.error("shearim: o aviso de vencimento da Conta falhou", err);
+      console.error("regents: o aviso de vencimento da Conta falhou", err);
     }
   }
 
@@ -566,7 +566,7 @@ export function createAccounts(deps: {
         await publish(memberId);
         await schedule(memberId);
       } catch (err) {
-        console.error("shearim: a releitura da validade da Conta falhou", err);
+        console.error("regents: a releitura da validade da Conta falhou", err);
       }
     }
   }
@@ -576,7 +576,7 @@ export function createAccounts(deps: {
     const tick = () => {
       if (closed) return;
       stopWatch = clock.after(STATUS_CHECK_MS, tick);
-      void checkAll().catch((err) => console.error("shearim: a releitura da validade da Conta falhou", err));
+      void checkAll().catch((err) => console.error("regents: a releitura da validade da Conta falhou", err));
     };
     tick();
   }

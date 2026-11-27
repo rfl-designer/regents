@@ -1,4 +1,4 @@
-import { isChannelKind } from "@shearim/contracts";
+import { isChannelKind } from "@regents/contracts";
 import { and, asc, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import type { Agent } from "./agents";
 import { withBuiltinText } from "./articuladora";
@@ -51,7 +51,7 @@ export type Call =
  * Montagem de contexto (Spec, módulo 5). Lido na hora em que a execução começa (inclusive numa
  * nova tentativa), nunca guardado. De cima para baixo:
  *
- * 1. o preâmbulo fixo do Shearim (chat de time, pt-BR, as Ferramentas que ele tem ou nenhuma,
+ * 1. o preâmbulo fixo do Regents (chat de time, pt-BR, as Ferramentas que ele tem ou nenhuma,
  *    não promete ações, quem chamou);
  * 2. o Contexto do Workspace;
  * 3. as instruções do Agente;
@@ -76,7 +76,7 @@ export async function buildContext(
   call: Call = { kind: "mention" },
   /** As Ferramentas que o Agente tem nesta execução (o preâmbulo diz o que ele pode usar). */
   tools: readonly Pick<ToolSpec, "title">[] = [],
-  /** O orçamento do resumo da Memória, em caracteres (`SHEARIM_MEMORY_SUMMARY_CHARS`). */
+  /** O orçamento do resumo da Memória, em caracteres (`REGENTS_MEMORY_SUMMARY_CHARS`). */
   memoryBudget: number = DEFAULT_SUMMARY_CHARS,
 ): Promise<ResponseContext> {
   const agent = withBuiltinText(row);
@@ -129,7 +129,7 @@ export async function buildContext(
   }[call.kind]();
 
   const preamble = [
-    `Você é ${agent.name}, um Agente do Shearim, um chat de time em que pessoas e Agentes conversam juntos.`,
+    `Você é ${agent.name}, um Agente do Regents, um chat de time em que pessoas e Agentes conversam juntos.`,
     "Responda sempre em português do Brasil, como numa conversa de chat: direto e no tom do time.",
     ...(tools.length
       ? [

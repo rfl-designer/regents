@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, WikiDto, WikiPageDto, WikiSourceDto } from "@shearim/contracts";
+import type { AgentDto, WikiDto, WikiPageDto, WikiSourceDto } from "@regents/contracts";
 import { RETRY_DELAY_MS } from "../src/executions";
 import { STALL_MS } from "../src/model/call";
 import { scriptedBrain } from "./fakes/scripted-brain";

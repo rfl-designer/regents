@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { EVENTS_CLOSE_UPDATING, EVENTS_PATH } from "@shearim/contracts";
+import { EVENTS_CLOSE_UPDATING, EVENTS_PATH } from "@regents/contracts";
 import { onCleanup, throwawayAccounts } from "./harness";
 
 const MAIN = resolve(import.meta.dir, "../src/main.ts");
@@ -18,14 +18,14 @@ async function realServer() {
   const proc = Bun.spawn(["bun", MAIN, "serve"], {
     env: {
       ...process.env,
-      SHEARIM_IDENTITY: "dev",
+      REGENTS_IDENTITY: "dev",
       HOST: "127.0.0.1",
       PORT: "0",
-      SHEARIM_PGLITE_DIR: "memory://",
-      SHEARIM_WEB_DIST: join(secrets, "sem-pwa"),
-      SHEARIM_CLAUDE_BIN: config.claudeBin,
-      SHEARIM_ACCOUNTS_DIR: config.root,
-      SHEARIM_MASTER_KEY_FILE: masterKey,
+      REGENTS_PGLITE_DIR: "memory://",
+      REGENTS_WEB_DIST: join(secrets, "sem-pwa"),
+      REGENTS_CLAUDE_BIN: config.claudeBin,
+      REGENTS_ACCOUNTS_DIR: config.root,
+      REGENTS_MASTER_KEY_FILE: masterKey,
     },
     stdout: "pipe",
     stderr: "inherit",

@@ -1,5 +1,5 @@
 import { describe, test } from "@e2e-dev/web";
-import type { ChannelDto, MeDto } from "@shearim/contracts";
+import type { ChannelDto, MeDto } from "@regents/contracts";
 import { expect } from "e2e";
 import { addMember, as, newPerson } from "../support/people";
 

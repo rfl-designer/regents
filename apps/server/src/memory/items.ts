@@ -1,4 +1,4 @@
-import type { MemoryItemDto } from "@shearim/contracts";
+import type { MemoryItemDto } from "@regents/contracts";
 import { and, desc, eq, inArray, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { type Db, isUuid, schema, type Tx } from "../db/client";

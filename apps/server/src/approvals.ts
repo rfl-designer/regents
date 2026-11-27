@@ -1,8 +1,9 @@
-import type { ApprovalRequestDto, RejectApprovalInput } from "@shearim/contracts";
+import type { ApprovalRequestDto, RejectApprovalInput } from "@regents/contracts";
 import type { Server } from "bun";
 import { and, asc, eq, gt, isNull, type SQL } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import type { Clock } from "./clock";
+import { type Config, positiveNumber } from "./config";
 import { findVisibleConversation } from "./conversations";
 import { type Db, isUuid, schema, type Tx } from "./db/client";
 import type { EventHub } from "./events";
@@ -20,15 +21,12 @@ export const APPROVAL_TTL_MS = 24 * 60 * 60_000;
 export const APPROVAL_EXPIRED_REASON = "a aprovação expirou";
 
 /**
- * O prazo do Pedido que o `.env` ajusta (`SHEARIM_APPROVAL_TTL_H`, em horas; aceita fração, ex.
+ * O prazo do Pedido que o `.env` ajusta (`REGENTS_APPROVAL_TTL_H`, em horas; aceita fração, ex.
  * `0.5`). Valor que não é número maior que zero é erro (o servidor não sobe).
  */
-export function approvalTtlFromEnv(env: Record<string, string | undefined>): number | undefined {
-  const raw = env.SHEARIM_APPROVAL_TTL_H?.trim();
-  if (!raw) return undefined;
-  const h = Number(raw);
-  if (!Number.isFinite(h) || h <= 0) throw new Error(`SHEARIM_APPROVAL_TTL_H=${raw} não é um número maior que zero.`);
-  return Math.round(h * 60 * 60_000);
+export function approvalTtlFromConfig(config: Config): number | undefined {
+  const h = positiveNumber(config, "APPROVAL_TTL_H");
+  return h === undefined ? undefined : Math.round(h * 60 * 60_000);
 }
 const REASON_MAX = 500;
 
@@ -159,7 +157,7 @@ export async function continuationNote(db: Db, approvalRequestId: string) {
       return `${asked} ${r.authorName} aprovou, mas o resultado é incerto: ${r.failure}. Não peça de novo; diga a quem escreveu para conferir.`;
     }
     if (r.failure) return `${asked} ${r.authorName} aprovou, mas a ação falhou: ${r.failure}.`;
-    return `${asked} ${r.authorName} aprovou, e o Shearim fez: ${r.result}.`;
+    return `${asked} ${r.authorName} aprovou, e o Regents fez: ${r.result}.`;
   });
   return [
     "Você já começou esta resposta e pediu escritas, que passaram por Pedido de aprovação de quem escreveu:",
@@ -261,7 +259,7 @@ export function approvalRoutes(deps: {
       }
     } catch (err) {
       // Já aprovado: sem resultado nem falha gravados, o Pedido e a execução ficariam presos.
-      console.error("shearim: a ação aprovada falhou", err);
+      console.error("regents: a ação aprovada falhou", err);
       const cause = "erro inesperado ao executar a ação";
       outcome = performing
         ? {

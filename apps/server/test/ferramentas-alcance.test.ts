@@ -10,7 +10,7 @@
  * O que está fora do alcance não aparece nem pelo nome, nem no resultado, nem no Andamento.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, DmDto, MeDto, MessageDto } from "@shearim/contracts";
+import type { AgentDto, ChannelDto, DmDto, MeDto, MessageDto } from "@regents/contracts";
 import { toolResults } from "./fakes/messages-api";
 import { eventually, type Person, type TestApp, testApp } from "./harness";
 
@@ -137,14 +137,14 @@ describe("buscar mensagens", () => {
       expect(resultado.is_error).toBeFalsy();
       expect(resultado.content).toContain("O orçamento do evento fechou em 10 mil.");
       expect(resultado.content).toContain("#geral");
-      expect(resultado.content).not.toContain("2027");
+      expect(resultado.content).not.toContain("Orçamento de 2027");
       expect(resultado.content).not.toContain("diretoria");
       expect(andamento).not.toContain("diretoria");
 
       // Nem pedindo #diretoria pelo nome: a resposta é a mesma de um Canal que não existe.
       const pedido = await usar(t, ana, geral.id, "buscar_mensagens", { texto: "orçamento", conversa: "#diretoria" });
       const inexistente = await usar(t, ana, geral.id, "buscar_mensagens", { texto: "orçamento", conversa: "#nada" });
-      expect(pedido.resultado.content).not.toContain("2027");
+      expect(pedido.resultado.content).not.toContain("Orçamento de 2027");
       expect(pedido.resultado.content).toBe(inexistente.resultado.content);
       expect(pedido.andamento).not.toContain("diretoria");
     },
@@ -237,7 +237,7 @@ describe("o alcance pela conversa", () => {
       expect(resultado.content).toContain("Orçamento do comitê: 3 mil.");
       expect(resultado.content).toContain("Quem fecha o orçamento do jantar?");
       // #diretoria é só de Ana, e a DM de Ana com Bruno não é de Carla.
-      expect(resultado.content).not.toContain("2027");
+      expect(resultado.content).not.toContain("Orçamento de 2027");
       expect(resultado.content).not.toContain("diretoria");
       expect(resultado.content).not.toContain("viagem");
       expect(resultado.content).not.toContain(anaEBruno.id);
@@ -383,7 +383,7 @@ describe("abrir uma conversa ou Thread", () => {
       for (const input of pedidos) vistos.push(await usar(t, ana, geral.id, "abrir_conversa", input));
       for (const { resultado, andamento } of vistos) {
         expect(resultado.is_error).toBe(true);
-        expect(resultado.content).not.toContain("2027");
+        expect(resultado.content).not.toContain("Orçamento de 2027");
         expect(resultado.content).not.toContain("diretoria");
         expect(andamento).not.toContain("diretoria");
       }

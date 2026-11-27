@@ -8,7 +8,7 @@ import {
   MEMBER_REMOVED_CLOSE_CODE,
   type MemberSummaryDto,
   type MessageDto,
-} from "@shearim/contracts";
+} from "@regents/contracts";
 import { FAKE_LOGIN_CODE } from "./fake-claude";
 import { type EventSocket, eventually, type TestApp, testApp } from "./harness";
 

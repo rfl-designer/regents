@@ -9,8 +9,9 @@
  * roteiriza pela Chave, `memoryRuns` a roteiriza no `fake-claude`, e sem roteiro ela não guarda nada.
  */
 import { describe, expect, test } from "bun:test";
-import type { AgentDto, ChannelDto, ExecutionDto, MemoryItemDto, MessageDto } from "@shearim/contracts";
-import { DEFAULT_MEMORY_MODEL, MEMORY_SCHEMA, memoryFromEnv } from "../src/memory/extraction";
+import type { AgentDto, ChannelDto, ExecutionDto, MemoryItemDto, MessageDto } from "@regents/contracts";
+import { configFrom } from "../src/config";
+import { DEFAULT_MEMORY_MODEL, MEMORY_SCHEMA, memoryFromConfig } from "../src/memory/extraction";
 import { type ScriptedRun, scriptedBrain } from "./fakes/scripted-brain";
 import { type EventSocket, eventually, type Person, type TestApp, testApp } from "./harness";
 
@@ -128,9 +129,11 @@ describe("a extração depois da resposta", () => {
   });
 
   test("o modelo da extração é ajustável na Instalação (SHEARIM_MEMORY_MODEL)", async () => {
-    expect(memoryFromEnv({})).toEqual({});
-    expect(memoryFromEnv({ SHEARIM_MEMORY_MODEL: "claude-sonnet-5-5" })).toEqual({ model: "claude-sonnet-5-5" });
-    expect(() => memoryFromEnv({ SHEARIM_MEMORY_MODEL: "gpt" })).toThrow(
+    expect(memoryFromConfig(configFrom({}))).toEqual({});
+    expect(memoryFromConfig(configFrom({ SHEARIM_MEMORY_MODEL: "claude-sonnet-5-5" }))).toEqual({
+      model: "claude-sonnet-5-5",
+    });
+    expect(() => memoryFromConfig(configFrom({ SHEARIM_MEMORY_MODEL: "gpt" }))).toThrow(
       "SHEARIM_MEMORY_MODEL=gpt não é um modelo aceito",
     );
 
@@ -182,6 +185,8 @@ describe("só o que uma pessoa disse", () => {
 
     const extracao = (await t.anthropic.waitForExtractions(2, 5_000))[1]!;
     const system = typeof extracao.body.system === "string" ? extracao.body.system : "";
+    expect(system).toContain("Você é a extração da Memória do Regents");
+    expect(system).not.toContain("Shearim");
     expect(system).toContain("Guarde só o que uma pessoa disse");
     expect(system).toContain("nunca guarde algo só porque o Agente disse");
     const entrada = extracao.body.messages.map((m) => m.content).join("\n");

@@ -1,4 +1,4 @@
-import type { DmDto, MeDto } from "@shearim/contracts";
+import type { DmDto, MeDto } from "@regents/contracts";
 import { useState } from "react";
 import { Conversation } from "./ChannelView";
 

@@ -1,5 +1,5 @@
 {
-  "name": "@shearim/e2e",
+  "name": "@regents/e2e",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,6 +12,6 @@
     "e2e": "0.24.0"
   },
   "dependencies": {
-    "@shearim/contracts": "workspace:*"
+    "@regents/contracts": "workspace:*"
   }
 }

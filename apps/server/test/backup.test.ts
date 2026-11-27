@@ -7,8 +7,8 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { InstallationDto } from "@shearim/contracts";
-import { migrationsFolder } from "../src/db/client";
+import type { InstallationDto } from "@regents/contracts";
+import { migrationsFolder, schema } from "../src/db/client";
 import { createNightlyBackups } from "../src/installation/backups";
 import { writeAtomically } from "../src/installation/dumper";
 import { fakeDumper } from "./fakes/dumper";
@@ -50,11 +50,11 @@ describe("backup noturno", () => {
     expect(first).toEqual({
       at: "2026-11-24T12:00:00.000Z",
       ok: true,
-      file: "shearim-20261124T120000Z.dump",
+      file: "regents-20261124T120000Z.dump",
       bytes: expect.any(Number),
       error: null,
     });
-    expect(readdirSync(dir)).toEqual(["shearim-20261124T120000Z.dump"]);
+    expect(readdirSync(dir)).toEqual(["regents-20261124T120000Z.dump"]);
 
     t.clock.advance(DAY);
     await eventually("o backup da noite seguinte", async () => readdirSync(dir).length === 2);
@@ -68,7 +68,7 @@ describe("backup noturno", () => {
   test("os backups noturnos ficam 14 dias; os dumps de antes de migrar ou restaurar não são apagados", async () => {
     const t = await testApp();
     const dir = backupsDir();
-    writeFileSync(join(dir, "shearim-pre-migracao-20260901T120000Z.dump"), "antes de migrar");
+    writeFileSync(join(dir, "regents-pre-migracao-20260901T120000Z.dump"), "antes de migrar");
     writeFileSync(join(dir, "notas.txt"), "do Admin");
     const { job } = nightly(t, dir);
 
@@ -77,13 +77,42 @@ describe("backup noturno", () => {
       t.clock.advance(DAY);
     }
 
-    const nightlyFiles = readdirSync(dir).filter((f) => /^shearim-\d{8}T\d{6}Z\.dump$/.test(f));
+    const nightlyFiles = readdirSync(dir).filter((f) => /^regents-\d{8}T\d{6}Z\.dump$/.test(f));
     expect(nightlyFiles).toHaveLength(14);
     // Os 14 mais recentes: de 30/11 ao último, de 13/12.
-    expect(nightlyFiles.sort()[0]).toBe("shearim-20261130T120000Z.dump");
-    expect(nightlyFiles.at(-1)).toBe("shearim-20261213T120000Z.dump");
-    expect(readdirSync(dir)).toContain("shearim-pre-migracao-20260901T120000Z.dump");
+    expect(nightlyFiles.sort()[0]).toBe("regents-20261130T120000Z.dump");
+    expect(nightlyFiles.at(-1)).toBe("regents-20261213T120000Z.dump");
+    expect(readdirSync(dir)).toContain("regents-pre-migracao-20260901T120000Z.dump");
     expect(readdirSync(dir)).toContain("notas.txt");
+  }, 60_000);
+
+  test("os backups shearim-* de antes do nome Regents saem pela mesma regra de 14 dias; um arquivo sem nenhum dos dois prefixos fica", async () => {
+    const t = await testApp();
+    const dir = backupsDir();
+    // O relógio do teste começa em 24/11/2026 12:00. Os da versão Shearim, de 1/11 e de 20/11.
+    writeFileSync(join(dir, "shearim-20261101T030000Z.dump"), "de 23 dias");
+    writeFileSync(join(dir, "shearim-20261120T030000Z.dump"), "de 4 dias");
+    writeFileSync(join(dir, "shearim-pre-migracao-20261101T030000Z.dump"), "antes de migrar");
+    writeFileSync(join(dir, "outro-20261101T030000Z.dump"), "do Admin");
+    const { job } = nightly(t, dir);
+
+    await job.runNow();
+    expect(readdirSync(dir).sort()).toEqual([
+      "outro-20261101T030000Z.dump",
+      "regents-20261124T120000Z.dump",
+      "shearim-20261120T030000Z.dump",
+      "shearim-pre-migracao-20261101T030000Z.dump",
+    ]);
+
+    // Doze dias depois, o shearim-* de 20/11 faz 14 dias: sai como sairia um regents-*.
+    t.clock.advance(12 * DAY);
+    await job.runNow();
+    expect(readdirSync(dir).sort()).toEqual([
+      "outro-20261101T030000Z.dump",
+      "regents-20261124T120000Z.dump",
+      "regents-20261206T120000Z.dump",
+      "shearim-pre-migracao-20261101T030000Z.dump",
+    ]);
   }, 60_000);
 
   test("um backup que falha fica registrado com o motivo, e não deixa arquivo pela metade", async () => {
@@ -106,7 +135,7 @@ describe("backup noturno", () => {
       error: "pg_dump saiu com 1: connection refused",
     });
     expect(backup.lastGoodAt).toBe("2026-11-24T12:00:00.000Z");
-    expect(readdirSync(dir)).toEqual(["shearim-20261124T120000Z.dump"]);
+    expect(readdirSync(dir)).toEqual(["regents-20261124T120000Z.dump"]);
   }, 60_000);
 
   test("a pasta que o usuário do container não pode gravar: o motivo diz de quem ela tem que ser e o comando", async () => {
@@ -123,7 +152,7 @@ describe("backup noturno", () => {
     const { backup } = await installation(t);
     const uid = process.getuid!();
     expect(backup.last).toMatchObject({ ok: false, file: null });
-    expect(backup.last!.error).toContain(`não deixa o usuário do Shearim (uid ${uid}) gravar`);
+    expect(backup.last!.error).toContain(`não deixa o usuário do Regents (uid ${uid}) gravar`);
     expect(backup.last!.error).toContain(`sudo chown ${uid}:${uid} backups`);
     expect(dumper.dumps).toEqual([]);
   });
@@ -157,6 +186,34 @@ describe("seção Instalação", () => {
     expect(dto.backup).toEqual({ last: null, lastGoodAt: null });
   }, 60_000);
 
+  test("o backup shearim-* que a versão de antes do nome Regents gravou aparece como o último backup bom", async () => {
+    const t = await testApp();
+    await t.as(juliana).get("/api/me");
+    // A linha que o serviço `backup` da versão Shearim gravou na noite de 23/11.
+    const at = new Date("2026-11-23T03:00:00.000Z");
+    await t.db.insert(schema.backups).values({
+      id: crypto.randomUUID(),
+      startedAt: at,
+      finishedAt: at,
+      ok: true,
+      file: "shearim-20261123T030000Z.dump",
+      bytes: 2048,
+    });
+
+    const { backup } = await installation(t);
+
+    expect(backup).toEqual({
+      last: {
+        at: "2026-11-23T03:00:00.000Z",
+        ok: true,
+        file: "shearim-20261123T030000Z.dump",
+        bytes: 2048,
+        error: null,
+      },
+      lastGoodAt: "2026-11-23T03:00:00.000Z",
+    });
+  }, 60_000);
+
   test("só o Admin vê a seção Instalação", async () => {
     const t = await testApp();
     await t.addMember(bruno, { by: juliana });
@@ -185,7 +242,7 @@ describe("avisos ao Admin sobre o backup", () => {
 
     const push = await celularDaJuliana.next({ timeoutMs: 5_000 });
     expect(push.payload.notification).toMatchObject({
-      title: "O backup do Shearim falhou",
+      title: "O backup do Regents falhou",
       body: "pg_dump: error: connection to server failed",
       navigate: expect.stringMatching(/\/instalacao$/),
       tag: "instalacao-backup",
@@ -236,7 +293,7 @@ describe("avisos ao Admin sobre o backup", () => {
 
     // Os pushes saem em fila: quando o da Juliana chega, o do Bruno já teria chegado.
     expect((await celularDaJuliana.next({ timeoutMs: 5_000 })).payload.notification.title).toBe(
-      "O backup do Shearim falhou",
+      "O backup do Regents falhou",
     );
     expect(t.push.deliveries.filter((d) => d.endpoint === celularDoBruno.subscription.endpoint)).toEqual([]);
     expect((await t.as(bruno).get("/api/installation")).status).not.toBe(200);

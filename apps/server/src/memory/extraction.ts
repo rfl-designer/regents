@@ -1,5 +1,6 @@
-import { AGENT_MODELS } from "@shearim/contracts";
+import { AGENT_MODELS } from "@regents/contracts";
 import { and, desc, eq, gt, inArray, notInArray, or } from "drizzle-orm";
+import { type Config, positiveInt } from "../config";
 import { type ModelContext, recentMessages } from "../context";
 import { type Db, schema, type Tx } from "../db/client";
 import { inReach, insertExtracted, lockActiveItem, replaceItem } from "./items";
@@ -17,7 +18,7 @@ const { messages, channels, agents, memoryItems } = schema;
  * (`discarded`) aparece no Andamento dela: nada some calado.
  */
 
-/** O modelo pequeno da extração, se a Instalação não ajusta (`SHEARIM_MEMORY_MODEL`). */
+/** O modelo pequeno da extração, se a Instalação não ajusta (`REGENTS_MEMORY_MODEL`). */
 export const DEFAULT_MEMORY_MODEL = "claude-haiku-5-5";
 
 /** Quantas operações uma extração aplica, no máximo (o resto é descartado, à vista). */
@@ -26,29 +27,23 @@ export const MAX_OPERATIONS = 10;
 export const MAX_ITEM_LENGTH = 500;
 
 /**
- * O que a Instalação ajusta na Memória pelo `.env`: o modelo da extração (`SHEARIM_MEMORY_MODEL`,
+ * O que a Instalação ajusta na Memória pelo `.env`: o modelo da extração (`REGENTS_MEMORY_MODEL`,
  * um dos modelos aceitos) e o orçamento do resumo que entra em cada resposta, em caracteres
- * (`SHEARIM_MEMORY_SUMMARY_CHARS`; padrão `DEFAULT_SUMMARY_CHARS`). Valor inválido é erro (o
+ * (`REGENTS_MEMORY_SUMMARY_CHARS`; padrão `DEFAULT_SUMMARY_CHARS`). Valor inválido é erro (o
  * servidor não sobe).
  */
-export function memoryFromEnv(env: Record<string, string | undefined>): { model?: string; summaryChars?: number } {
-  const config: { model?: string; summaryChars?: number } = {};
-  const model = env.SHEARIM_MEMORY_MODEL?.trim();
+export function memoryFromConfig(config: Config): { model?: string; summaryChars?: number } {
+  const out: { model?: string; summaryChars?: number } = {};
+  const model = config.read("MEMORY_MODEL");
   if (model) {
-    if (!(AGENT_MODELS as readonly string[]).includes(model)) {
-      throw new Error(`SHEARIM_MEMORY_MODEL=${model} não é um modelo aceito (${AGENT_MODELS.join(", ")}).`);
+    if (!(AGENT_MODELS as readonly string[]).includes(model.value)) {
+      throw new Error(`${model.name}=${model.value} não é um modelo aceito (${AGENT_MODELS.join(", ")}).`);
     }
-    config.model = model;
+    out.model = model.value;
   }
-  const chars = env.SHEARIM_MEMORY_SUMMARY_CHARS?.trim();
-  if (chars) {
-    const n = Number(chars);
-    if (!Number.isInteger(n) || n < 1) {
-      throw new Error(`SHEARIM_MEMORY_SUMMARY_CHARS=${chars} não é um número inteiro maior que zero.`);
-    }
-    config.summaryChars = n;
-  }
-  return config;
+  const chars = positiveInt(config, "MEMORY_SUMMARY_CHARS");
+  if (chars !== undefined) out.summaryChars = chars;
+  return out;
 }
 
 /**
@@ -328,7 +323,7 @@ const MAX_READ_ONLY = 50;
 const SCOPE_NAMES = { workspace: "Workspace", conversation: "Conversa", agent: "Agente" } as const;
 
 const INSTRUCTIONS = [
-  "Você é a extração da Memória do Shearim, um chat de time em que pessoas e Agentes conversam juntos.",
+  "Você é a extração da Memória do Regents, um chat de time em que pessoas e Agentes conversam juntos.",
   "Um Agente acabou de responder numa conversa. Leia a troca e decida o que vale os Agentes lembrarem em respostas futuras nesta conversa: decisões, correções, fatos e pedidos de lembrar ou guardar algo.",
   "Cada item novo vai para um escopo:",
   "- conversa: os fatos e as decisões (o que vale para todos os Agentes que falam nesta conversa).",
