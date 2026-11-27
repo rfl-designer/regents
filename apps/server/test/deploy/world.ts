@@ -58,8 +58,8 @@ export type World = Sandbox & {
   installDir: string;
 };
 
-/** O começo de um dublê: a falha ou a interrupção que o teste pediu para esta chamada. */
-const hooks = (name: string) => `call="${name} $*"
+/** A injeção de falha e de interrupção, no começo de um dublê: o que o teste pediu para esta chamada. */
+const faultInjection = (name: string) => `call="${name} $*"
 if [ -f "$STATE/interrupt-on" ]; then
   pat=$(cat "$STATE/interrupt-on")
   case "$call" in $pat) rm -f "$STATE/interrupt-on"; kill -9 "$PPID"; exit 137 ;; esac
@@ -81,7 +81,7 @@ export async function world({ os = "Darwin" }: { os?: "Darwin" | "Linux" } = {})
   s.fake("sleep");
   s.fake(
     "docker",
-    `${hooks("docker")}
+    `${faultInjection("docker")}
 up() {
   [ -f "$STATE/docker-up" ] || { echo "Cannot connect to the Docker daemon. Is the docker daemon running?" >&2; exit 1; }
   if [ -f "$STATE/docker-needs-sudo" ] && [ -z "\${AS_ROOT:-}" ]; then echo "permission denied while trying to connect to the Docker daemon socket" >&2; exit 1; fi
@@ -131,7 +131,7 @@ esac`,
   );
   s.fake(
     "launchctl",
-    `${hooks("launchctl")}
+    `${faultInjection("launchctl")}
 case "$1" in
   print) [ -f "$STATE/launchagent" ] ;;
   bootstrap) touch "$STATE/launchagent" ;;
@@ -160,7 +160,7 @@ esac`,
   // releases pelo nome antigo do repositório vêm das mesmas: o GitHub redireciona o nome antigo.
   s.fake(
     "curl",
-    `${hooks("curl")}
+    `${faultInjection("curl")}
 out="" url=""
 while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift ;; -*) ;; *) url=$1 ;; esac; shift; done
 case "$url" in ${OLD_RELEASES}/*) url=${RELEASES}\${url#${OLD_RELEASES}} ;; esac
