@@ -37,11 +37,11 @@ import { resolve } from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { createApp } from "./app";
-import { approvalTtlFromEnv } from "./approvals";
+import { approvalTtlFromConfig } from "./approvals";
 import { systemClock } from "./clock";
-import { configFrom, PREFIX } from "./config";
+import { configFrom, PREFIX, type Suffix } from "./config";
 import { connect, MEMORY } from "./db/connect";
-import { limitsFromEnv } from "./executions";
+import { limitsFromConfig } from "./executions";
 import { createDevIdentity } from "./identity/dev";
 import type { IdentityPort } from "./identity/port";
 import { createWhoisIdentity } from "./identity/whois";
@@ -55,10 +55,10 @@ import {
 } from "./installation/commands";
 import { migrationState, NewerDatabaseError } from "./installation/migrations";
 import { localApiNodeKey, type NodeKeyPort, noNodeKey } from "./installation/node-key";
-import { memoryFromEnv } from "./memory/extraction";
+import { memoryFromConfig } from "./memory/extraction";
 import { loadMasterKey, secretBox } from "./secrets";
-import { toolMaxTurnsFromEnv, toolTimeoutFromEnv } from "./tools/port";
-import { wikiFromEnv } from "./wiki/sources";
+import { toolMaxTurnsFromConfig, toolTimeoutFromConfig } from "./tools/port";
+import { wikiFromConfig } from "./wiki/sources";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 
@@ -74,11 +74,11 @@ const DEV_VAPID_CONTACT = "mailto:regents@example.com";
 const config = configFrom(process.env, (line) => console.warn(`regents: ${line}`));
 
 /** O valor da configuração `suffix`, ou `undefined`. */
-const setting = (suffix: string) => config.read(suffix)?.value;
+const setting = (suffix: Suffix) => config.read(suffix)?.value;
 
 const DEFAULT_TS_SOCKET = "/var/run/tailscale/tailscaled.sock";
 
-function identityFromEnv(): { identity: IdentityPort; routes?: Hono; describe: string; nodeKey: NodeKeyPort } {
+function identityFromConfig(): { identity: IdentityPort; routes?: Hono; describe: string; nodeKey: NodeKeyPort } {
   const read = config.read("IDENTITY");
   const mode = read?.value;
   if (mode === "dev") {
@@ -114,7 +114,7 @@ function secretFromFile(path: string | undefined) {
 }
 
 /** `memory://` é um PGlite em memória, que some ao parar (o e2e usa para começar do zero). */
-function pgliteDirFromEnv(raw: string | undefined) {
+function pgliteDirFromConfig(raw: string | undefined) {
   if (raw === MEMORY) return raw;
   return resolve(raw ?? resolve(repoRoot, ".data/pglite"));
 }
@@ -181,7 +181,7 @@ async function main(command: string | undefined) {
   const conn = connect({
     DATABASE_URL: process.env.DATABASE_URL,
     DATABASE_PASSWORD: secretFromFile(process.env.DATABASE_PASSWORD_FILE),
-    pgliteDir: pgliteDirFromEnv(setting("PGLITE_DIR")),
+    pgliteDir: pgliteDirFromConfig(setting("PGLITE_DIR")),
     pgBinDir: setting("PG_BIN_DIR") || undefined,
   });
 
@@ -216,7 +216,7 @@ async function main(command: string | undefined) {
     fail(`comando desconhecido: ${command ?? "(nenhum)"}. Use "serve", "migrate" ou "restore <arquivo>".`);
   }
 
-  const who = identityFromEnv();
+  const who = identityFromConfig();
   const masterKeyFile = setting("MASTER_KEY_FILE");
   let secrets: Awaited<ReturnType<typeof secretBox>>;
   try {
@@ -234,19 +234,19 @@ async function main(command: string | undefined) {
   if (!/^(mailto:|https:)/.test(vapidContact)) {
     fail(`${vapid?.name ?? `${PREFIX}_VAPID_CONTACT`}=${vapidContact} não é mailto: nem https:.`);
   }
-  let limits: ReturnType<typeof limitsFromEnv>;
+  let limits: ReturnType<typeof limitsFromConfig>;
   let toolTimeoutMs: number | undefined;
   let toolMaxTurns: number | undefined;
   let approvalTtlMs: number | undefined;
-  let memory: ReturnType<typeof memoryFromEnv> = {};
-  let wiki: ReturnType<typeof wikiFromEnv> = {};
+  let memory: ReturnType<typeof memoryFromConfig> = {};
+  let wiki: ReturnType<typeof wikiFromConfig> = {};
   try {
-    limits = limitsFromEnv(config);
-    toolTimeoutMs = toolTimeoutFromEnv(config);
-    toolMaxTurns = toolMaxTurnsFromEnv(config);
-    approvalTtlMs = approvalTtlFromEnv(config);
-    memory = memoryFromEnv(config);
-    wiki = wikiFromEnv(config);
+    limits = limitsFromConfig(config);
+    toolTimeoutMs = toolTimeoutFromConfig(config);
+    toolMaxTurns = toolMaxTurnsFromConfig(config);
+    approvalTtlMs = approvalTtlFromConfig(config);
+    memory = memoryFromConfig(config);
+    wiki = wikiFromConfig(config);
   } catch (err) {
     fail((err as Error).message);
   }

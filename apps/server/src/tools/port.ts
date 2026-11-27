@@ -9,7 +9,7 @@ import type {
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { lockLiveAgent } from "../agents";
 import type { Clock } from "../clock";
-import type { Config } from "../config";
+import { type Config, positiveInt } from "../config";
 import { type Db, schema } from "../db/client";
 
 const { agentTools, executionToolCalls } = schema;
@@ -18,24 +18,14 @@ const { agentTools, executionToolCalls } = schema;
 export const TOOL_TIMEOUT_MS = 60_000;
 
 /** O prazo padrão das Ferramentas que o `.env` ajusta (`REGENTS_TOOL_TIMEOUT_S`, em segundos). */
-export function toolTimeoutFromEnv(config: Config): number | undefined {
+export function toolTimeoutFromConfig(config: Config): number | undefined {
   const n = positiveInt(config, "TOOL_TIMEOUT_S");
   return n === undefined ? undefined : n * 1000;
 }
 
 /** O teto de turnos de Ferramenta de uma resposta que o `.env` ajusta (`REGENTS_TOOL_MAX_TURNS`). */
-export function toolMaxTurnsFromEnv(config: Config): number | undefined {
+export function toolMaxTurnsFromConfig(config: Config): number | undefined {
   return positiveInt(config, "TOOL_MAX_TURNS");
-}
-
-function positiveInt(config: Config, suffix: string): number | undefined {
-  const setting = config.read(suffix);
-  if (!setting) return undefined;
-  const n = Number(setting.value);
-  if (!Number.isInteger(n) || n < 1) {
-    throw new Error(`${setting.name}=${setting.value} não é um número inteiro maior que zero.`);
-  }
-  return n;
 }
 
 /** A execução em que uma Ferramenta roda: de onde saem o alcance e o catálogo efetivo. */
