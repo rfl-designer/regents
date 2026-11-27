@@ -218,12 +218,12 @@ export interface Executions {
    */
   cancel(originMessageId: string): Promise<ExecutionDto[]>;
   /**
-   * Cancela, pelo Shearim, tudo o que as mensagens desse Membro ainda têm aberto (o Admin o
+   * Cancela, pelo Regents, tudo o que as mensagens desse Membro ainda têm aberto (o Admin o
    * removeu), com o motivo à vista de quem vê a conversa. Devolve as canceladas.
    */
   cancelAuthoredBy(memberId: string, reason: string): Promise<ExecutionDto[]>;
   /**
-   * Cancela, pelo Shearim, tudo o que o Agente ainda tem aberto (o Admin o apagou, #65), a
+   * Cancela, pelo Regents, tudo o que o Agente ainda tem aberto (o Admin o apagou, #65), a
    * extração da Memória inclusive, com `AGENT_DELETED_REASON`. Devolve as canceladas.
    */
   cancelAgent(agentId: string): Promise<ExecutionDto[]>;
@@ -838,7 +838,7 @@ export function createExecutions(deps: {
 
   /**
    * Cancela, em qualquer passo, as execuções abertas que atendem a `where`: a que está rodando é
-   * interrompida. `reason` nulo é o cancelamento por quem escreveu; com motivo, foi o Shearim.
+   * interrompida. `reason` nulo é o cancelamento por quem escreveu; com motivo, foi o Regents.
    */
   async function cancelWhere(where: SQL, reason: string | null): Promise<ExecutionDto[]> {
     const now = clock.now();

@@ -51,7 +51,7 @@ export type Call =
  * Montagem de contexto (Spec, módulo 5). Lido na hora em que a execução começa (inclusive numa
  * nova tentativa), nunca guardado. De cima para baixo:
  *
- * 1. o preâmbulo fixo do Shearim (chat de time, pt-BR, as Ferramentas que ele tem ou nenhuma,
+ * 1. o preâmbulo fixo do Regents (chat de time, pt-BR, as Ferramentas que ele tem ou nenhuma,
  *    não promete ações, quem chamou);
  * 2. o Contexto do Workspace;
  * 3. as instruções do Agente;

@@ -936,7 +936,7 @@ function Progress({
     );
   }
   if (e.state === "cancelled") {
-    // Sem motivo, foi quem escreveu; com motivo, o Shearim (ex.: quem escreveu saiu do Workspace).
+    // Sem motivo, foi quem escreveu; com motivo, o Regents (ex.: quem escreveu saiu do Workspace).
     return <p className="cancelled">{e.reason ? `cancelada: ${e.reason}` : "cancelada por quem escreveu"}</p>;
   }
   if (e.waitingTurn) {

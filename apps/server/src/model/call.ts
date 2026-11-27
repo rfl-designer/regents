@@ -2,7 +2,7 @@ import type { Clock } from "../clock";
 import type { ModelEvent, ModelPort, ModelRequest, ModelUsage, TerminalModelEvent } from "./port";
 
 /**
- * Uma chamada de modelo do Shearim sob a vigia (ADR 0003): o que as execuções (`executions.ts`) e
+ * Uma chamada de modelo do Regents sob a vigia (ADR 0003): o que as execuções (`executions.ts`) e
  * a Sincronização da Wiki (`wiki/sync.ts`) dividem. Quem chama decide o que cada evento mostra
  * (`onEvent`) e o que fazer com o fim; aqui ficam a vigia, o texto e o que a API informou que a
  * chamada gastou.

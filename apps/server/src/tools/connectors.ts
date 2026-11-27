@@ -2,7 +2,7 @@
  * Os Conectores (Spec #44): servidores MCP remotos que o Admin liga ao Workspace, com a credencial
  * do Workspace (um token colado, cifrado com a chave mestra como a Chave). As Ferramentas de cada
  * um saem do `tools/list` dele e entram no catálogo da porta de Ferramentas; quem fala com o
- * servidor é sempre o Shearim (os cérebros chamam a porta), nunca o modelo.
+ * servidor é sempre o Regents (os cérebros chamam a porta), nunca o modelo.
  *
  * - Só o que o servidor marca como "só leitura" (`readOnlyHint`) é leitura; o resto é escrita e
  *   passa pelo Pedido de aprovação.
@@ -776,7 +776,7 @@ export function createConnectors(deps: {
 
   /**
    * Começa um login: confere o endereço da Instalação, descobre o login do servidor, registra o
-   * Shearim e guarda o fluxo (cifrado) até o retorno. `422 oauth_unavailable` sem login no servidor.
+   * Regents e guarda o fluxo (cifrado) até o retorno. `422 oauth_unavailable` sem login no servidor.
    */
   async function startLogin(
     c: Context<Env>,

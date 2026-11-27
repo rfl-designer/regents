@@ -125,7 +125,7 @@ type Picked = { kind: "file"; file: File } | { kind: "folder"; files: File[] };
 
 /**
  * Importar um `SKILL.md`, o `.zip` da skill ou a pasta dela: o nome e a descrição saem do
- * frontmatter. Do `.zip` e da pasta, a tela lista o que ficou de fora, porque os Agentes do Shearim
+ * frontmatter. Do `.zip` e da pasta, a tela lista o que ficou de fora, porque os Agentes do Regents
  * não executam código.
  */
 function ImportSkill(props: { onImported(skill: SkillDto): void }) {

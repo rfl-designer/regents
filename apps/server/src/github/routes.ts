@@ -107,7 +107,7 @@ export function githubRoutes(deps: { db: Db; github: GitHub }) {
       redirect_url: `${origin}/api/github/manifest/callback`,
       setup_url: `${origin}/api/github/installation/callback`,
       setup_on_update: true,
-      // O Shearim não recebe webhooks (fica na tailnet); o GitHub exige o endereço mesmo assim.
+      // O Regents não recebe webhooks (fica na tailnet); o GitHub exige o endereço mesmo assim.
       hook_attributes: { url: `${origin}/api/github/webhook`, active: false },
       default_permissions: APP_PERMISSIONS,
       default_events: [],

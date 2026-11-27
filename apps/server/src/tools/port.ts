@@ -108,7 +108,7 @@ export const WRITE_NOTE =
 
 /**
  * Uma Ferramenta que escreve (ADR 0011): não roda durante a resposta. A porta confere a entrada e o
- * alcance (`prepare`), cria o Pedido de aprovação com a ação exata e encerra a execução; o Shearim
+ * alcance (`prepare`), cria o Pedido de aprovação com a ação exata e encerra a execução; o Regents
  * só executa a ação (`perform`) quando o autor aprova.
  */
 export interface WriteTool extends ToolBase {
@@ -355,7 +355,7 @@ export function createToolPort(deps: {
     },
 
     /**
-     * O motivo de uma escrita que pode ter sido feita sem o Shearim saber ("o servidor reiniciou
+     * O motivo de uma escrita que pode ter sido feita sem o Regents saber ("o servidor reiniciou
      * durante a ação"): a causa e onde conferir.
      */
     async uncertainReason(tool: string, cause: string) {

@@ -7,7 +7,7 @@
  * - As tools nativas, os settings e os slash commands ficam desligados, menos o WebSearch e o
  *   WebFetch quando o Agente tem as Ferramentas da web (os blocos de tool deles viram passos no
  *   Andamento, `nativeWebSteps`). O MCP também, menos o
- *   endpoint do próprio Shearim (`tools/mcp.ts`) quando a execução tem Ferramentas: ele vai sozinho
+ *   endpoint do próprio Regents (`tools/mcp.ts`) quando a execução tem Ferramentas: ele vai sozinho
  *   no `--mcp-config` (com `--strict-mcp-config`), e as Ferramentas dele são liberadas sem pergunta
  *   de permissão (`--allowedTools mcp__regents`). O roteamento nunca tem Ferramentas (ADR 0009).
  * - O `env` é o de `accountEnv`: `CLAUDE_CONFIG_DIR`, as novas tentativas (3) e as esperas (90 s).
@@ -51,7 +51,7 @@ export function accountBrain(opts: {
   procs: ProcessTracker;
   /** Os prazos do encerramento. Padrão: 10 s e 5 s; os testes injetam limites curtos. */
   stopGrace?: StopGrace;
-  /** O endpoint MCP do Shearim, por onde vão as Ferramentas da execução (`request.tools`). */
+  /** O endpoint MCP do Regents, por onde vão as Ferramentas da execução (`request.tools`). */
   mcp?: McpEndpoint;
 }): ModelBrain {
   const grace = opts.stopGrace ?? { sigintMs: SIGINT_GRACE_MS, sigtermMs: SIGTERM_GRACE_MS };
@@ -71,7 +71,7 @@ export function accountBrain(opts: {
       }
 
       const offered = request.tools ? await request.tools.list() : [];
-      // As da web são as tools nativas do Claude Code; as outras vão pelo endpoint MCP do Shearim.
+      // As da web são as tools nativas do Claude Code; as outras vão pelo endpoint MCP do Regents.
       const viaMcp = request.tools && offered.some((t) => t.origin !== "web") ? request.tools : undefined;
       // O WebFetch abre qualquer URL que o modelo monte (o `web_fetch` da Chave só as do contexto): junto
       // com dado da porta, uma injeção levaria o dado para fora na URL. Nessa resposta, ele não liga.
@@ -259,7 +259,7 @@ function argsFor(request: ModelRequest, mcp: McpConfig | undefined, native: stri
   ];
   if (request.output) args.push("--json-schema", JSON.stringify(request.output.schema));
   if (mcp) args.push("--mcp-config", JSON.stringify(mcp));
-  // Liberadas sem pergunta de permissão: as do Shearim e as nativas ligadas, nenhuma outra.
+  // Liberadas sem pergunta de permissão: as do Regents e as nativas ligadas, nenhuma outra.
   const allowed = [...(mcp ? [`mcp__${MCP_SERVER_NAME}`] : []), ...native];
   if (allowed.length) args.push("--allowedTools", allowed.join(","));
   return args;

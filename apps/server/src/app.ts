@@ -309,7 +309,7 @@ export function createApp(deps: AppDeps) {
    * `start()` faz a subida e põe a fila para andar; `executions.stop()` a para; `close` encerra o
    * que o app deixou rodando (os processos do `claude`).
    *
-   * `drain` é o SIGTERM: fecha os WebSockets com 1012 (o PWA mostra "Atualizando o Shearim") e
+   * `drain` é o SIGTERM: fecha os WebSockets com 1012 (o PWA mostra "Atualizando o Regents") e
    * espera a fila até `ms`. `halt` é o SIGINT: fecha os WebSockets igual e para a fila na hora.
    */
   return {

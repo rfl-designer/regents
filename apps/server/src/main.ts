@@ -305,7 +305,7 @@ async function main(command: string | undefined) {
 
   // SIGTERM (o `docker compose stop`, com 30 s de folga): dreno, até 20 s para o que está rodando
   // terminar. SIGINT (Ctrl-C no dev): para na hora. Nos dois, os WebSockets fecham com 1012 logo
-  // de início, e o PWA mostra "Atualizando o Shearim" até reconectar. O que não terminou vira "o servidor
+  // de início, e o PWA mostra "Atualizando o Regents" até reconectar. O que não terminou vira "o servidor
   // reiniciou" na próxima subida, com a nova tentativa automática.
   let stopping = false;
   const stop = (drain: boolean) => async () => {

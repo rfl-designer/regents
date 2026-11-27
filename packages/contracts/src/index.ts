@@ -31,7 +31,7 @@ export const NO_IDENTITY_TEXT: Record<NoIdentityReason, { why: string; whatToDo:
 
 export type MemberRole = "admin" | "member";
 
-/** `GET /api/me`: quem está usando o Shearim. */
+/** `GET /api/me`: quem está usando o Regents. */
 export interface MeDto {
   id: string;
   login: string;
@@ -404,9 +404,9 @@ export interface AgentDto {
   description: string;
   model: AgentModel;
   /**
-   * A Articuladora (ADR 0004): o Agente embutido do Shearim, em todo Canal. Não se apaga nem sai
+   * A Articuladora (ADR 0004): o Agente embutido do Regents, em todo Canal. Não se apaga nem sai
    * de um Canal; o Admin muda o nome, a foto e o modelo, mas a descrição, as instruções e o
-   * contrato de roteamento dela são do Shearim.
+   * contrato de roteamento dela são do Regents.
    */
   builtin: boolean;
   /** As Ferramentas concedidas a ele, na ordem do catálogo, para todo Membro (Spec #44). */
@@ -590,7 +590,7 @@ export interface ConnectorDto {
 
 /** Uma Ferramenta do catálogo de um Conector. Só o que o servidor marca como "só leitura" é `read`. */
 export interface ConnectorToolDto {
-  /** O id da Ferramenta no Shearim (o que se concede e o que o modelo recebe), ex. `crm__buscar_cliente`. */
+  /** O id da Ferramenta no Regents (o que se concede e o que o modelo recebe), ex. `crm__buscar_cliente`. */
   id: string;
   /** O nome dela no servidor. */
   name: string;
@@ -744,7 +744,7 @@ export type InstallationAlertDto =
 
 /** A seção Instalação (Spec, módulo 13; `GET /api/installation`), só para o Admin. */
 export interface InstallationDto {
-  /** A versão do Shearim que está rodando (a tag da imagem). */
+  /** A versão do Regents que está rodando (a tag da imagem). */
   version: string;
   /** A última migração aplicada no banco. */
   migration: string;
@@ -806,7 +806,7 @@ export interface WorkspaceContextDto {
  * motivo, e volta sozinha em `retryAt`), `done` com a resposta em `replyMessageId`, `failed` com
  * o motivo (depois da nova tentativa; o autor pode "Tentar de novo"), `not_acting` ("Agentes não
  * agem", com o motivo; não é falha), `cancelled` (sem motivo: "cancelada por quem escreveu"; com
- * motivo, cancelada pelo Shearim, ex. "quem escreveu saiu do Workspace") e `awaiting_approval`
+ * motivo, cancelada pelo Regents, ex. "quem escreveu saiu do Workspace") e `awaiting_approval`
  * (o Pedido de aprovação espera o autor).
  */
 export type ExecutionState =
@@ -944,7 +944,7 @@ export interface MemoryItemDto {
   agent: { id: string; name: string } | null;
   text: string;
   /**
-   * Quem guardou: a extração (o Shearim, ao fim da resposta de um Agente: o Andamento da mensagem
+   * Quem guardou: a extração (o Regents, ao fim da resposta de um Agente: o Andamento da mensagem
    * de origem mostra "guardou na Memória: …"), um Membro ou um Admin.
    */
   createdBy: "extraction" | "member" | "admin";
@@ -1007,7 +1007,7 @@ export const SKILL_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
 /**
  * A resposta de `POST /api/skills/import` (só Admin, multipart, campo `file`): a Habilidade criada
  * do `SKILL.md` e, de um `.zip`, os arquivos que ficaram de fora (scripts, referências, assets),
- * porque os Agentes do Shearim não executam código. Erros: `400 invalid_skill` (com o motivo),
+ * porque os Agentes do Regents não executam código. Erros: `400 invalid_skill` (com o motivo),
  * `409 name_taken`, `413 file_too_large`.
  */
 export interface ImportSkillResultDto {
@@ -1038,7 +1038,7 @@ export interface AgentSkillDto {
   description: string;
   active: boolean;
   /**
-   * Uma Habilidade do Shearim, e não do Workspace ("Sincronizar a Wiki", na Articuladora): sempre
+   * Uma Habilidade do Regents, e não do Workspace ("Sincronizar a Wiki", na Articuladora): sempre
    * ativa, só para leitura (não se ativa, desativa nem edita).
    */
   builtin?: true;
@@ -1047,7 +1047,7 @@ export interface AgentSkillDto {
 // ---------- Pedido de aprovação (ADR 0011) ----------
 
 /**
- * Em que pé está um Pedido de aprovação: `pending` (o autor decide), `approved` (o Shearim fez a
+ * Em que pé está um Pedido de aprovação: `pending` (o autor decide), `approved` (o Regents fez a
  * escrita, ou ela falhou: `failure`), `rejected` (com o motivo opcional), `expired` (24 h sem
  * decisão) ou `cancelled` (a mensagem foi cancelada).
  */
@@ -1080,7 +1080,7 @@ export interface ApprovalRequestDto {
   /** Na aprovação: o motivo de a ação ter falhado (ex. o autor perdeu o acesso), ou nulo. */
   failure: string | null;
   /**
-   * Na aprovação: a ação pode ter sido feita sem o Shearim saber (não terminou no prazo, o servidor
+   * Na aprovação: a ação pode ter sido feita sem o Regents saber (não terminou no prazo, o servidor
    * reiniciou no meio). `failure` diz por quê e onde conferir; o cartão diz "resultado incerto".
    */
   uncertain: boolean;
@@ -1158,7 +1158,7 @@ export interface AccountValidityDto {
  * O fluxo "Ligar minha Conta do Claude" em andamento, ou o fim dele que a tela ainda mostra.
  * - `starting`: o Claude Code está abrindo o login.
  * - `waiting_code`: a pessoa abre `url`, entra na Anthropic e cola o código até `expiresAt`.
- * - `checking`: o código foi entregue; o Shearim confere a Conta com uma chamada mínima.
+ * - `checking`: o código foi entregue; o Regents confere a Conta com uma chamada mínima.
  * - `duplicate`: essa assinatura já está ligada a outra pessoa; "Ligar mesmo assim" ou "Cancelar".
  * - `failed`: não ligou; `message` explica em linguagem simples.
  * - `expired`: passaram os 10 minutos; "Começar de novo".
@@ -1281,7 +1281,7 @@ export const MEMBER_REMOVED_CLOSE_CODE = 4403;
 
 /**
  * Código de fechamento do WebSocket quando o servidor vai reiniciar (1012, "service restart"):
- * o dreno de uma atualização. O PWA mostra "Atualizando o Shearim" e reconecta sozinho.
+ * o dreno de uma atualização. O PWA mostra "Atualizando o Regents" e reconecta sozinho.
  * Qualquer outro fechamento é queda de conexão ("Reconectando…").
  */
 export const EVENTS_CLOSE_UPDATING = 1012;
@@ -1394,7 +1394,7 @@ export type ApiError =
   /** O servidor está no dreno de uma atualização (503 no upgrade do WebSocket): já vai voltar. */
   | { error: "updating" }
   | { error: "not_admin" }
-  /** Mexer no que é do Shearim na Articuladora (descrição, instruções). */
+  /** Mexer no que é do Regents na Articuladora (descrição, instruções). */
   | { error: "builtin_locked"; message: string }
   | { error: "already_member" }
   | { error: "already_decided"; status: JoinRequestStatus }

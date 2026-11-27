@@ -149,7 +149,7 @@ export function AgentsSettings() {
 
 /**
  * Um Agente da lista, com "Editar". Da Articuladora (`builtin`), a descrição e as instruções são
- * do Shearim; o resto, inclusive a Memória ligada, o Admin muda.
+ * do Regents; o resto, inclusive a Memória ligada, o Admin muda.
  */
 function AgentItem({ agent: a, onChanged }: { agent: AgentDto; onChanged(agent: AgentDto): void }) {
   const [editing, setEditing] = useState(false);
@@ -395,7 +395,7 @@ function AgentSkills({ agent }: { agent: AgentDto }) {
       <legend>Habilidades</legend>
       {skills === null && !error && <p className="hint">Carregando…</p>}
       {skills?.map((s) =>
-        // A Habilidade do Shearim ("Sincronizar a Wiki", na Articuladora): sempre ativa, só para leitura.
+        // A Habilidade do Regents ("Sincronizar a Wiki", na Articuladora): sempre ativa, só para leitura.
         s.builtin ? (
           <label key={s.id} className="hint">
             <input type="checkbox" checked disabled /> {s.name} <span className="tag">do Regents</span>

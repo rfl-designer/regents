@@ -1,9 +1,9 @@
 import { WIKI_INDEX_SLUG, WIKI_LOG_SLUG } from "@regents/contracts";
 
 /**
- * As regras da Wiki (o schema do padrão LLM Wiki, ADR 0014 e 0015): texto fixo do Shearim, como
+ * As regras da Wiki (o schema do padrão LLM Wiki, ADR 0014 e 0015): texto fixo do Regents, como
  * as instruções da Articuladora. Toda Wiki tem a mesma forma, e a consulta dos Agentes é previsível.
- * Mudam só com uma versão nova do Shearim.
+ * Mudam só com uma versão nova do Regents.
  */
 
 /**
@@ -12,7 +12,7 @@ import { WIKI_INDEX_SLUG, WIKI_LOG_SLUG } from "@regents/contracts";
  */
 export const SYNC_MARKER = "[Regents] Sincronização da Wiki";
 
-/** A Habilidade do Shearim que a tela da Articuladora mostra, só para leitura. */
+/** A Habilidade do Regents que a tela da Articuladora mostra, só para leitura. */
 export const SYNC_SKILL = {
   id: "regents:sincronizar-a-wiki",
   name: "Sincronizar a Wiki",
@@ -80,7 +80,7 @@ export function syncPrompt(input: {
 
 /**
  * A mensagem da chamada de uma Fonte removida (#88): o índice do rascunho, o nome da Fonte e as
- * páginas que ela tocava. O Shearim já tirou do rascunho as páginas que vinham só dela e tirou a
+ * páginas que ela tocava. O Regents já tirou do rascunho as páginas que vinham só dela e tirou a
  * Fonte das outras; a Articuladora reescreve estas sem o que vinha dela e arruma o índice e os links.
  */
 export function removalPrompt(input: {
