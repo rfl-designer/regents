@@ -68,7 +68,7 @@ function fail(message: string): never {
 }
 
 /** Só desenvolvimento: a Apple recusa o push com `sub` sem domínio real. */
-const DEV_VAPID_CONTACT = "mailto:shearim@example.com";
+const DEV_VAPID_CONTACT = "mailto:regents@example.com";
 
 /** A configuração da Instalação: `REGENTS_*`, com `SHEARIM_*` como reserva (o aviso sai no log). */
 const config = configFrom(process.env, (line) => console.warn(`regents: ${line}`));
@@ -147,7 +147,7 @@ async function nightlyBackups(conn: ReturnType<typeof connect>) {
   const at = backupAt?.value || "03:00";
   const [hour, minute] = at.split(":").map(Number);
   if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour! > 23 || minute! > 59) {
-    fail(`${backupAt?.name}=${backupAt?.value} não é uma hora (HH:MM).`);
+    fail(`${backupAt?.name ?? `${PREFIX}_BACKUP_AT`}=${at} não é uma hora (HH:MM).`);
   }
   let warned = false;
   for (;;) {
@@ -231,7 +231,9 @@ async function main(command: string | undefined) {
   await migrateOrFail(conn);
   const vapid = config.read("VAPID_CONTACT");
   const vapidContact = vapid?.value || DEV_VAPID_CONTACT;
-  if (!/^(mailto:|https:)/.test(vapidContact)) fail(`${vapid?.name}=${vapidContact} não é mailto: nem https:.`);
+  if (!/^(mailto:|https:)/.test(vapidContact)) {
+    fail(`${vapid?.name ?? `${PREFIX}_VAPID_CONTACT`}=${vapidContact} não é mailto: nem https:.`);
+  }
   let limits: ReturnType<typeof limitsFromEnv>;
   let toolTimeoutMs: number | undefined;
   let toolMaxTurns: number | undefined;
@@ -248,7 +250,9 @@ async function main(command: string | undefined) {
   } catch (err) {
     fail((err as Error).message);
   }
-  const shearim = createApp({
+  const githubUrl = setting("GITHUB_URL");
+  const githubApiUrl = setting("GITHUB_API_URL");
+  const regents = createApp({
     db: conn.db,
     identity: who.identity,
     clock: systemClock,
@@ -259,8 +263,8 @@ async function main(command: string | undefined) {
     secrets,
     anthropicBaseUrl: setting("ANTHROPIC_BASE_URL"),
     github: {
-      ...(setting("GITHUB_URL") ? { webUrl: setting("GITHUB_URL") } : {}),
-      ...(setting("GITHUB_API_URL") ? { apiUrl: setting("GITHUB_API_URL") } : {}),
+      ...(githubUrl ? { webUrl: githubUrl } : {}),
+      ...(githubApiUrl ? { apiUrl: githubApiUrl } : {}),
     },
     devRoutes: who.routes,
     push: { contact: vapidContact },
@@ -278,11 +282,11 @@ async function main(command: string | undefined) {
     wiki,
   });
   // O par VAPID nasce na primeira subida (e daí em diante é sempre o mesmo, guardado no banco).
-  await shearim.push.ensureKeys();
-  await shearim.start();
+  await regents.push.ensureKeys();
+  await regents.start();
 
   const root = new Hono();
-  root.route("/", shearim.app);
+  root.route("/", regents.app);
   // Rota de API desconhecida não cai no fallback do PWA.
   root.all("/api/*", (c) => c.json({ error: "not_found" }, 404));
   const webDist = resolve(setting("WEB_DIST") ?? resolve(repoRoot, "apps/web/dist"));
@@ -295,7 +299,7 @@ async function main(command: string | undefined) {
     hostname: process.env.HOST ?? "0.0.0.0",
     port: Number(process.env.PORT ?? 3000),
     fetch: root.fetch,
-    websocket: shearim.websocket,
+    websocket: regents.websocket,
   });
   console.log(`regents: ouvindo em http://${server.hostname}:${server.port} (${conn.describe}; ${who.describe})`);
 
@@ -307,12 +311,12 @@ async function main(command: string | undefined) {
   const stop = (drain: boolean) => async () => {
     if (stopping) return;
     stopping = true;
-    await (drain ? shearim.drain() : shearim.halt());
+    await (drain ? regents.drain() : regents.halt());
     // No Bun 1.3.11, depois que o servidor fecha um WebSocket (o 1012 acima, ou o 4403 de um Membro
     // removido), a promessa do `stop()` nunca resolve, embora a porta feche na hora: espera as
     // requisições em curso até 1 s.
     await Promise.race([server.stop(), Bun.sleep(1_000)]);
-    await shearim.close();
+    await regents.close();
     await conn.close();
     process.exit(0);
   };
